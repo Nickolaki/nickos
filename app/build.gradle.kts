@@ -70,6 +70,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Cameras: Tapo/go2rtc RTSP feeds (and plain HLS/HTTP video) on the Master.
+    implementation("androidx.media3:media3-exoplayer:1.9.0")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.9.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
     // Lucide: the icon set the design handoff was drawn with.
     implementation("com.composables:icons-lucide:1.1.0")
 

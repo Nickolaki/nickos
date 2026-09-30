@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Cctv
 import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.House
 import com.composables.icons.lucide.LayoutGrid
@@ -98,6 +99,7 @@ sealed interface MScreen {
     data class Control(val nodeId: String, val tab: Int = 0) : MScreen
     data class Settings(val section: Int = 0) : MScreen
     data object Drawer : MScreen
+    data object Cameras : MScreen
 }
 
 /** Everything a node card / control header needs, gathered once. */
@@ -133,6 +135,7 @@ fun MasterApp() {
                 onSettings = { screen = MScreen.Settings() },
                 onDrawer = { screen = MScreen.Drawer },
                 onUpdate = { screen = MScreen.Settings(4) },
+                onCameras = { screen = MScreen.Cameras },
             )
             MScreen.AddTablet -> AddTabletScreen(back = { screen = MScreen.Home }, step = "Master · Add tablet") { screen = MScreen.Linked(it) }
             is MScreen.Linked -> LinkedScreen(s.r, onAnother = { screen = MScreen.AddTablet }, onContinue = { screen = MScreen.Home }, continueLabel = "Done")
@@ -143,6 +146,7 @@ fun MasterApp() {
                 onSettings = { screen = MScreen.Settings(it) },
             )
             is MScreen.Settings -> SettingsScreen(s.section, onSection = { screen = MScreen.Settings(it) }, onBack = { screen = MScreen.Home }, onAdd = { screen = MScreen.AddTablet })
+            MScreen.Cameras -> CamerasScreen(onBack = { screen = MScreen.Home })
             MScreen.Drawer -> {
                 val ctx = LocalContext.current
                 val pinned by app.store.quickApps.collectAsState()
@@ -173,7 +177,7 @@ private fun Toast(text: String, modifier: Modifier) {
 // ---------------- Home ----------------
 
 @Composable
-private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit) {
+private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
     val app = App.get(LocalContext.current)
     val views = rememberNodeViews()
     val account by app.store.jellyfin.collectAsState()
@@ -182,7 +186,7 @@ private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: 
     val portrait = LocalConfiguration.current.let { it.screenHeightDp > it.screenWidthDp }
     val pad = if (portrait) 32.dp else 40.dp
     Column(Modifier.fillMaxSize()) {
-        TopBar(pad, onSettings, onDrawer, onUpdate)
+        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
             return@Column
@@ -212,7 +216,7 @@ private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: 
 }
 
 @Composable
-private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit) {
+private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
     val ctx = LocalContext.current
     val app = App.get(ctx)
     val now = rememberNow(1000)
@@ -254,6 +258,7 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
             Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(20.dp).rotate90())
             Text("${name.ifBlank { "Parent's Tablet" }} · Master", style = body(16.sp, 700), color = C.text, maxLines = 1)
         }
+        IconCircle(Lucide.Cctv, onCameras)
         IconCircle(Lucide.Settings, onSettings)
     }
 }

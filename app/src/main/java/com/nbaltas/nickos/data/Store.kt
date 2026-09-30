@@ -42,6 +42,15 @@ data class LinkedNode(
     }
 }
 
+/** A camera feed on the Master. [rotation] is 0/90/180/270 (portrait baby cams). */
+data class Camera(val id: String, val name: String, val url: String, val rotation: Int = 0) {
+    fun toJson() = JSONObject().put("id", id).put("name", name).put("url", url).put("rotation", rotation)
+
+    companion object {
+        fun from(o: JSONObject) = Camera(o.getString("id"), o.getString("name"), o.getString("url"), o.optInt("rotation"))
+    }
+}
+
 /** A Master as a Node remembers it. */
 data class LinkedMaster(val id: String, val name: String, val token: String) {
     fun toJson() = JSONObject().put("id", id).put("name", name).put("token", token)
@@ -141,6 +150,18 @@ class Store(context: Context) {
     val quickApps: StateFlow<List<String>> = _quickApps
     fun setQuickApps(v: List<String>) { writeStrings("quickApps", v); _quickApps.value = v }
 
+    private val _cameras = MutableStateFlow(readList("cameras") { Camera.from(it) })
+    val cameras: StateFlow<List<Camera>> = _cameras
+    @Synchronized fun saveCamera(c: Camera) {
+        val cur = _cameras.value
+        val list = if (cur.any { it.id == c.id }) cur.map { if (it.id == c.id) c else it } else cur + c
+        writeList("cameras", list) { it.toJson() }; _cameras.value = list
+    }
+    @Synchronized fun removeCamera(id: String) {
+        val list = _cameras.value.filterNot { it.id == id }
+        writeList("cameras", list) { it.toJson() }; _cameras.value = list
+    }
+
     // ---- Node ----
     private val _masters = MutableStateFlow(readList("masters") { LinkedMaster.from(it) })
     val masters: StateFlow<List<LinkedMaster>> = _masters
@@ -182,7 +203,7 @@ class Store(context: Context) {
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
-        _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"
+        _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
     }
 
     // ---- helpers ----
