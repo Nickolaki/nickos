@@ -145,19 +145,28 @@ class NodeDevice(private val ctx: Context) {
 
     fun jellyfinPackage(): String? = JELLYFIN_PACKAGES.firstOrNull { label(it) != null }
 
-    /** Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened. */
+    private var usageCursor = 0L
+    private var usageLast: String? = null
+
+    /**
+     * Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened.
+     * Reads usage events incrementally: 6h back the first time, then only what's new.
+     */
+    @Synchronized
     fun foregroundPackage(homeVisible: Boolean): String? {
         if (homeVisible) return null
         if (hasUsageAccess()) {
             val usm = ctx.getSystemService(UsageStatsManager::class.java)
             val now = System.currentTimeMillis()
-            val events = usm.queryEvents(now - 6 * 60 * 60 * 1000L, now)
-            var last: String? = null
+            val from = if (usageCursor == 0L) now - 6 * 60 * 60 * 1000L else usageCursor - 2000
+            val events = usm.queryEvents(from, now)
             val e = UsageEvents.Event()
             while (events.hasNextEvent()) {
                 events.getNextEvent(e)
-                if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) last = e.packageName
+                if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) usageLast = e.packageName
             }
+            usageCursor = now
+            val last = usageLast
             if (last != null) return if (last == ctx.packageName || isLauncher(last)) null else last
         }
         return lastLaunched

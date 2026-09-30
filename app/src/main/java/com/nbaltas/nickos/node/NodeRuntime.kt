@@ -131,6 +131,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                     }
                     val m = LinkedMaster(first.getString("masterId"), first.optString("masterName", "Parent's Tablet"), Store.randomHex(16))
                     store.addMaster(m)
+                    // A fresh kid tablet starts with Jellyfin on its home screen, if it has it.
+                    if (store.allowed.value.isEmpty()) device.jellyfinPackage()?.let { store.setAllowed(listOf(it)) }
                     first.optString("pin").takeIf { it.length == 4 }?.let { store.setPin(it) }
                     c.send(status().put("t", "paired").put("token", m.token).put("nodeId", store.deviceId))
                     masterId = m.id

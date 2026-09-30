@@ -120,6 +120,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** One-line feedback for the UI ("Starting on Hailey's Tablet…"). */
     val toast: StateFlow<String?> = _toast
     fun clearToast() { _toast.value = null }
+    fun say(msg: String) { _toast.value = msg }
 
     val displayName get() = store.name.value.ifBlank { "Parent's Tablet" }
 
@@ -234,6 +235,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         _online.update { it + n.id }
         send(n.id, cmd("pin").put("pin", store.pin.value))
         scope.launch { pushResume(n.id) }
+        send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
@@ -342,16 +344,20 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      * remote-controllable session of the tablet's Jellyfin user.
      */
     private fun matchSession(n: LinkedNode, sessions: List<JfSession>): JfSession? {
-        val names = _status.value[n.id]?.names.orEmpty().map { it.lowercase() }
+        val names = _status.value[n.id]?.names.orEmpty().map(::normName)
         val remote = sessions.filter { it.remote && (n.jfUserId == null || it.userId == n.jfUserId) }
-        remote.firstOrNull { it.deviceName.lowercase() in names }?.let { return it }
+        remote.firstOrNull { normName(it.deviceName) in names }?.let { return it }
         if (n.jfUserId == null) return null
         // Don't claim a session another linked tablet owns by name.
-        val claimed = store.nodes.value.filter { it.id != n.id }.flatMap { _status.value[it.id]?.names.orEmpty() }.map { it.lowercase() }.toSet()
-        return remote.filterNot { it.deviceName.lowercase() in claimed }
+        val claimed = store.nodes.value.filter { it.id != n.id }.flatMap { _status.value[it.id]?.names.orEmpty() }.map(::normName).toSet()
+        return remote.filterNot { normName(it.deviceName) in claimed }
             .sortedWith(compareByDescending<JfSession> { it.item != null }.thenByDescending { it.lastActivity })
             .firstOrNull()
     }
+
+    /** "Jellyfin for Android" reports the device name form-encoded ("Nothing+Phone+(3)"). */
+    private fun normName(s: String): String =
+        (try { java.net.URLDecoder.decode(s, "UTF-8") } catch (e: Exception) { s.replace('+', ' ') }).trim().lowercase()
 
     suspend fun findSession(id: String): JfSession? {
         val n = store.nodes.value.firstOrNull { it.id == id } ?: return null

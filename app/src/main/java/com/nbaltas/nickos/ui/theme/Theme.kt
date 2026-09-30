@@ -26,6 +26,8 @@ data class NickColors(
     val line: Color,
     val text: Color,
     val muted: Color,
+    /** Settings side panel. */
+    val panel: Color,
     val accent: Color = Color(0xFFFFB547),
     val onAccent: Color = Color(0xFF1C1305),
     val online: Color = Color(0xFF3DDC84),
@@ -42,6 +44,7 @@ val DarkColors = NickColors(
     line = Color(0xFF2A3140),
     text = Color(0xFFEEF1F6),
     muted = Color(0xFFA0A8B6),
+    panel = Color(0xFF10141A),
     isDark = true,
 )
 
@@ -54,6 +57,7 @@ val LightColors = NickColors(
     line = Color(0xFFD6D2C8),
     text = Color(0xFF151A22),
     muted = Color(0xFF5E6573),
+    panel = Color(0xFFE9E6DF),
     dangerLine = Color(0xFFE9C4BE),
     danger = Color(0xFFD2503C),
     isDark = false,
