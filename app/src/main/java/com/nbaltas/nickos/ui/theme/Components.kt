@@ -463,18 +463,19 @@ fun Modifier.dashed(color: Color, radius: Dp, width: Dp = 3.dp): Modifier = draw
 
 // ---- Artwork ----
 
-private val posterGradients = listOf(
-    Color(0xFF12305C) to Color(0xFFE86F4A),
-    Color(0xFF402A5E) to Color(0xFFFF9F68),
-    Color(0xFF1D4B3A) to Color(0xFF8BC34A),
-    Color(0xFF0F3D4F) to Color(0xFF2EC4B6),
-    Color(0xFF3A1C5C) to Color(0xFFE0568F),
-    Color(0xFF4A2511) to Color(0xFFF2A541),
+/** The design's placeholder art: (top colour, bottom colour, sun colour). */
+private val posterArt = listOf(
+    Triple(Color(0xFF12305C), Color(0xFFE86F4A), Color(0xFFFFD27A)),
+    Triple(Color(0xFF402A5E), Color(0xFFFF9F68), Color(0xFFFFE08A)),
+    Triple(Color(0xFF1D4B3A), Color(0xFF8BC34A), Color(0xFFF7F3C6)),
+    Triple(Color(0xFF0F3D4F), Color(0xFF2EC4B6), Color(0xFFFFE9A8)),
+    Triple(Color(0xFF3A1C5C), Color(0xFFE0568F), Color(0xFFFFC1D8)),
+    Triple(Color(0xFF4A2511), Color(0xFFF2A541), Color(0xFFFFF1D0)),
 )
 
 /**
  * Poster/thumbnail. Shows the real Jellyfin image when there is one; underneath (and as the
- * fallback) the design's gradient card with the title in white, so a missing image still reads.
+ * fallback) the design's placeholder: gradient, sun, hill and the title in white.
  */
 @Composable
 fun Artwork(
@@ -485,8 +486,24 @@ fun Artwork(
     titleSize: Int = 17,
     showTitle: Boolean = true,
 ) {
-    val (a, b) = posterGradients[(title.hashCode() and 0x7fffffff) % posterGradients.size]
-    Box(modifier.clip(RoundedCornerShape(radius)).background(Brush.linearGradient(listOf(a, b)))) {
+    val (top, bottom, sun) = posterArt[(title.hashCode() and 0x7fffffff) % posterArt.size]
+    Box(
+        modifier.clip(RoundedCornerShape(radius))
+            .background(Brush.verticalGradient(listOf(top, bottom)))
+            .drawBehind {
+                val w = size.width; val h = size.height
+                val landscape = w > h
+                val d = minOf(w, h) * 0.52f
+                val cx = if (landscape) w / 2 else w * 0.36f + d / 2
+                drawCircle(sun.copy(alpha = 0.92f), radius = d / 2, center = Offset(cx, h * 0.12f + d / 2))
+                // Hill: a wide ellipse across the bottom, 130% of the width.
+                drawOval(
+                    top.copy(alpha = 0.88f),
+                    topLeft = Offset(-0.15f * w, h - h * 0.62f + h * 0.296f),
+                    size = Size(1.3f * w, h * 0.62f),
+                )
+            },
+    ) {
         if (showTitle) {
             Text(
                 title, style = disp(titleSize.sp, 800, 0.95f).copy(shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.45f), Offset(0f, 2f), 14f)),

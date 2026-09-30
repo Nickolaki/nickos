@@ -174,7 +174,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 _discovered.value = found.keys.toSet()
             }
         }
-        nsd.discoverServices(Wire.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, l)
+        try { nsd.discoverServices(Wire.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, l) } catch (e: Exception) { Log.w(TAG, "discovery unavailable", e) }
     }
 
     // ---- pairing ----

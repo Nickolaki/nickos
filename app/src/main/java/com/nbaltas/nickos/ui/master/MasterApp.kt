@@ -49,7 +49,6 @@ import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Link
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Play
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.Tablet
@@ -71,6 +70,7 @@ import com.nbaltas.nickos.ui.theme.Avatar
 import com.nbaltas.nickos.ui.theme.Battery
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
+import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Dot
 import com.nbaltas.nickos.ui.theme.EyebrowText
@@ -179,7 +179,7 @@ private fun Toast(text: String, modifier: Modifier) {
 // ---------------- Home ----------------
 
 @Composable
-private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
+internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
     val app = App.get(LocalContext.current)
     val views = rememberNodeViews()
     val account by app.store.jellyfin.collectAsState()
@@ -341,7 +341,7 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
                 Artwork(poster?.invoke(item), item.displayTitle, Modifier.size(124.dp, 186.dp), radius = 14.dp)
                 Column(Modifier.weight(1f).height(186.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Lucide.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
+                        Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
                         EyebrowText(if (pb.session.paused) "Paused" else "Now playing", C.accent)
                     }
                     Title(item.displayTitle, 32, lineHeight = 1.05f, maxLines = 1)

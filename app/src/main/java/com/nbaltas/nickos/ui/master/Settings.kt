@@ -161,7 +161,8 @@ private fun TabletsSection(onAdd: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             views.forEach { v ->
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 96.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
+                    // Design: min-height 96 on the content box, plus 16 padding top and bottom.
+                    Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
                     Avatar(v.node.name, v.node.color, v.node.avatar, 60.dp)

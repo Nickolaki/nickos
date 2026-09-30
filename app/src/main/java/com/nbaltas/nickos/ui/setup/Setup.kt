@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -127,7 +128,7 @@ fun SetupFlow() {
 }
 
 @Composable
-private fun Welcome(onStart: () -> Unit) {
+internal fun Welcome(onStart: () -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -145,13 +146,14 @@ private fun Welcome(onStart: () -> Unit) {
 }
 
 @Composable
-private fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit) {
+internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Step 1 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrow = maxWidth < 800.dp
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = if (narrow) 32.dp else 80.dp, end = if (narrow) 32.dp else 80.dp, top = 8.dp, bottom = 64.dp),
+                Modifier.fillMaxSize().then(if (narrow) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                    .padding(start = if (narrow) 32.dp else 80.dp, end = if (narrow) 32.dp else 80.dp, top = 8.dp, bottom = 64.dp),
                 verticalArrangement = Arrangement.spacedBy(36.dp),
             ) {
                 Title("What is this tablet?", 56)
@@ -162,7 +164,7 @@ private fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> U
                         "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode)
                 }
                 if (narrow) Column(verticalArrangement = Arrangement.spacedBy(24.dp)) { cards(Modifier.fillMaxWidth()) }
-                else Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) { cards(Modifier.weight(1f)) }
+                else Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(32.dp)) { cards(Modifier.weight(1f).fillMaxHeight()) }
             }
         }
     }
@@ -186,7 +188,7 @@ private fun RoleCard(
             Text(sub, style = body(24.sp, 700), color = subColor)
         }
         Muted(desc, 20)
-        Spacer(Modifier.weight(1f, fill = false).heightIn(min = 24.dp))
+        Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(cta, style = body(19.sp, 700), color = C.text)
             Icon(Lucide.ChevronRight, null, tint = C.text, modifier = Modifier.size(20.dp))
@@ -199,7 +201,7 @@ fun Modifier.rotate90() = rotate(90f)
 // ---------------- Node ----------------
 
 @Composable
-private fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
+internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     val store = App.get(LocalContext.current).store
     val name by store.name.collectAsState()
     val color by store.color.collectAsState()
@@ -269,7 +271,7 @@ private fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
 }
 
 @Composable
-private fun NodeCodeScreen(onBack: () -> Unit, onPaired: () -> Unit) {
+internal fun NodeCodeScreen(onBack: () -> Unit, onPaired: () -> Unit) {
     val ctx = LocalContext.current
     val app = App.get(ctx)
     val name by app.store.name.collectAsState()
@@ -372,7 +374,7 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                 }
             }
             val pad: @Composable () -> Unit = {
-                Column(Modifier.width(520.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                Column(Modifier.width(520.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         (0 until 6).forEach { i ->
                             if (i == 3) Spacer(Modifier.width(10.dp))
@@ -384,10 +386,10 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                             ) { Text(digits.getOrNull(i)?.toString() ?: "", style = disp(56.sp), color = C.text) }
                         }
                     }
-                    Box(Modifier.height(24.dp)) {
+                    Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
                         when {
-                            busy -> Text("Looking for the tablet…", style = body(18.sp, 600), color = C.muted)
-                            error != null -> Text(error!!, style = body(18.sp, 600), color = C.danger)
+                            busy -> Text("Looking for the tablet…", style = body(16.sp, 600), color = C.muted)
+                            error != null -> Text(error!!, style = body(16.sp, 600), color = C.danger)
                         }
                     }
                     Keypad(
@@ -453,7 +455,7 @@ private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeS
 }
 
 @Composable
-private fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
+internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · Step 3 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {

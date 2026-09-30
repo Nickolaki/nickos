@@ -61,16 +61,12 @@ import com.composables.icons.lucide.LockOpen
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.MonitorOff
-import com.composables.icons.lucide.Pause
 import com.composables.icons.lucide.Pencil
-import com.composables.icons.lucide.Play
 import com.composables.icons.lucide.Power
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.RotateCcw
 import com.composables.icons.lucide.RotateCw
 import com.composables.icons.lucide.Settings
-import com.composables.icons.lucide.SkipForward
-import com.composables.icons.lucide.Square
 import com.composables.icons.lucide.Sun
 import com.composables.icons.lucide.Tablet
 import com.composables.icons.lucide.Unlink
@@ -88,6 +84,7 @@ import com.nbaltas.nickos.ui.theme.BackButton
 import com.nbaltas.nickos.ui.theme.Battery
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
+import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.EyebrowText
 import com.nbaltas.nickos.ui.theme.Muted
@@ -137,7 +134,7 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
 
 @Composable
 private fun ControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBack: () -> Unit) {
-    val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Lucide.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet)
+    val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet)
     BoxWithConstraints(Modifier.fillMaxWidth().background(C.bg)) {
         val narrow = maxWidth < 1100.dp
         val who: @Composable () -> Unit = {
@@ -222,7 +219,7 @@ private fun NowPlaying(v: NodeView) {
                     Artwork(jf?.poster(item, 600), item.displayTitle, Modifier.size(h * 2 / 3, h), radius = 20.dp, titleSize = 35)
                     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Lucide.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
+                            Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
                             EyebrowText(if (pb.session.paused) "Paused" else "Playing now", C.accent)
                         }
                         Title(item.displayTitle, 64, lineHeight = 0.98f, maxLines = 3)
@@ -250,11 +247,11 @@ private fun NowPlaying(v: NodeView) {
                         Modifier.size(104.dp).clip(CircleShape).background(C.accent)
                             .clickable { m.control(v.node.id, if (pb.session.paused) "Unpause" else "Pause") },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(if (pb.session.paused) Lucide.Play else Lucide.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(44.dp)) }
+                    ) { Icon(if (pb.session.paused) Solid.Play else Solid.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(44.dp)) }
                     SkipButton(back = false) { m.control(v.node.id, "Seek", (pos + 10 * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
                     Spacer(Modifier.weight(1f))
-                    next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, Modifier.height(68.dp), leading = Lucide.SkipForward) }
-                    NickButton("Stop", { m.control(v.node.id, "Stop") }, Modifier.height(68.dp), leading = Lucide.Square)
+                    next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, Modifier.height(68.dp), leading = Solid.Next) }
+                    NickButton("Stop", { m.control(v.node.id, "Stop") }, Modifier.height(68.dp), leading = Solid.Stop)
                 }
             }
         }

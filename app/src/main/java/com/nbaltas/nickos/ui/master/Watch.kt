@@ -58,7 +58,6 @@ import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Play
 import com.composables.icons.lucide.RotateCcw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Server
@@ -71,6 +70,7 @@ import com.nbaltas.nickos.ui.theme.Artwork
 import com.nbaltas.nickos.ui.theme.Avatar
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
+import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
@@ -359,7 +359,7 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                     val sub = if (t.inProgress) "${t.epCode} · ${minutesText(t.leftMin)} left" else "${t.epCode} · ${t.name}"
                     NickButton(
                         "${if (t.inProgress) "Resume" else "Play"} on ${v.node.name}", { play(t, false) },
-                        Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.Play, sub = sub,
+                        Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Solid.Play, sub = sub,
                     )
                     if (t.inProgress) NickButton("Play episode from start", { play(t, true) }, Modifier.fillMaxWidth().height(64.dp), leading = Lucide.RotateCcw)
                 }
@@ -412,7 +412,7 @@ private fun EpisodeRow(e: JfItem, jf: Jellyfin, highlight: Boolean, onClick: () 
         }
         when {
             e.inProgress -> Chip(height = 40.dp, bg = C.accent) {
-                Icon(Lucide.Play, null, tint = C.onAccent, modifier = Modifier.size(14.dp))
+                Icon(Solid.Play, null, tint = C.onAccent, modifier = Modifier.size(14.dp))
                 Text("Resume", style = body(16.sp, 700), color = C.onAccent)
             }
             e.played -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -420,7 +420,7 @@ private fun EpisodeRow(e: JfItem, jf: Jellyfin, highlight: Boolean, onClick: () 
                 Text("Watched", style = body(15.sp, 600), color = C.muted)
             }
             else -> Box(Modifier.size(48.dp).clip(CircleShape).background(C.surface2), contentAlignment = Alignment.Center) {
-                Icon(Lucide.Play, "Play", tint = C.text, modifier = Modifier.size(18.dp))
+                Icon(Solid.Play, "Play", tint = C.text, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -463,7 +463,7 @@ private fun MovieDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onBa
                 Column(Modifier.padding(top = 12.dp).widthIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NickButton(
                         "${if (m.inProgress) "Resume" else "Play"} on ${v.node.name}", { play(m, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY,
-                        big = true, leading = Lucide.Play, sub = if (m.inProgress) "from ${fmtTicks(m.posTicks)}" else null,
+                        big = true, leading = Solid.Play, sub = if (m.inProgress) "from ${fmtTicks(m.posTicks)}" else null,
                     )
                     if (m.inProgress) NickButton("Play from start", { play(m, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.RotateCcw)
                 }

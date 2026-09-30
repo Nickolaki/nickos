@@ -54,7 +54,6 @@ import com.composables.icons.lucide.Link
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Moon
-import com.composables.icons.lucide.Play
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
@@ -63,6 +62,7 @@ import com.nbaltas.nickos.ui.theme.Artwork
 import com.nbaltas.nickos.ui.theme.Avatar
 import com.nbaltas.nickos.ui.theme.Battery
 import com.nbaltas.nickos.ui.theme.C
+import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Dot
 import com.nbaltas.nickos.ui.theme.Keypad
@@ -233,7 +233,7 @@ private fun JellyfinTile(app: HomeApp, resume: List<ResumeCard>, modifier: Modif
                 Modifier.size(72.dp).clip(CircleShape).background(C.accent)
                     .tap { resume.firstOrNull()?.let(onWant) ?: onOpen(app.pkg) },
                 contentAlignment = Alignment.Center,
-            ) { Icon(Lucide.Play, "Play", tint = C.onAccent, modifier = Modifier.size(30.dp)) }
+            ) { Icon(Solid.Play, "Play", tint = C.onAccent, modifier = Modifier.size(30.dp)) }
         }
     }
 }
