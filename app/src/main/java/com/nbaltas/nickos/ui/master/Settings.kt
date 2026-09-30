@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Contrast
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
@@ -56,6 +58,9 @@ import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.jellyfin.JfUser
+import com.nbaltas.nickos.update.UpdateState
+import com.nbaltas.nickos.update.Updater
+import kotlinx.coroutines.launch
 import com.nbaltas.nickos.ui.setup.JellyfinForm
 import com.nbaltas.nickos.ui.setup.rotate90
 import com.nbaltas.nickos.ui.theme.Avatar
@@ -364,22 +369,53 @@ private fun ThemePreview(key: String) {
 @Composable
 private fun AboutSection() {
     val app = App.get(LocalContext.current)
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val name by app.store.name.collectAsState()
     val nodes by app.store.nodes.collectAsState()
+    val update by Updater.state.collectAsState()
+    val views = rememberNodeViews()
     var confirmReset by remember { mutableStateOf(false) }
-    var updateMsg by remember { mutableStateOf<String?>(null) }
     SectionPage("About") {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(32.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             NickLogo(96.dp)
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Title("NickOS", 40)
                 Muted("Version ${BuildConfig.VERSION_NAME}", 18)
-                updateMsg?.let { Muted(it, 16) }
+                when (val u = update) {
+                    UpdateState.Checking -> Muted("Checking…", 16)
+                    UpdateState.UpToDate -> Muted("You're up to date.", 16)
+                    is UpdateState.Available -> Text("Version ${u.info.versionName} is ready" + (u.info.notes?.let { ": $it" } ?: ""), style = body(16.sp, 700), color = C.accent)
+                    is UpdateState.Downloading -> Muted("Downloading ${u.pct}%…", 16)
+                    is UpdateState.Installing -> Muted("Installing…", 16)
+                    is UpdateState.Failed -> Text(u.message, style = body(16.sp, 700), color = C.danger)
+                    UpdateState.Idle -> {}
+                }
             }
-            NickButton("Check for updates", { updateMsg = "Updates aren't set up yet. Install new versions by hand for now." }, leading = Lucide.RefreshCw)
+            val available = update as? UpdateState.Available
+            if (available != null) NickButton("Install ${available.info.versionName}", { scope.launch { Updater.install(ctx, available.info) } }, style = BtnStyle.PRIMARY, leading = Lucide.Download)
+            else NickButton("Check for updates", { scope.launch { Updater.check() } }, leading = Lucide.RefreshCw, enabled = update !is UpdateState.Checking && update !is UpdateState.Downloading)
+        }
+        if (views.isNotEmpty()) {
+            val latest = (update as? UpdateState.Available)?.info?.versionName ?: if (update == UpdateState.UpToDate) BuildConfig.VERSION_NAME else null
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 12.dp)) {
+                views.forEachIndexed { i, v ->
+                    if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
+                    Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Avatar(v.node.name, v.node.color, v.node.avatar, 44.dp)
+                        Column(Modifier.weight(1f)) {
+                            Text(v.node.name, style = body(19.sp, 700), color = C.text, maxLines = 1)
+                            Muted(v.status?.version?.let { "Version $it" } ?: if (v.online) "Version unknown" else statusText(v), 15)
+                        }
+                        val behind = v.status?.version != null && latest != null && v.status.version != latest
+                        if (v.online && behind) NickButton("Update", { app.master.updateNode(v.node.id); app.master.say("Updating ${v.node.name}…") }, Modifier.height(52.dp), leading = Lucide.Download)
+                        else if (v.online && latest != null) Muted("Up to date", 15)
+                    }
+                }
+            }
         }
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp)) {
             InfoRow("This tablet", "${name.ifBlank { "Parent's Tablet" }} · Master")

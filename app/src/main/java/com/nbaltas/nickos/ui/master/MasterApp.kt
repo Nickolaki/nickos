@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.House
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Link
@@ -131,6 +132,7 @@ fun MasterApp() {
                 onAdd = { screen = MScreen.AddTablet },
                 onSettings = { screen = MScreen.Settings() },
                 onDrawer = { screen = MScreen.Drawer },
+                onUpdate = { screen = MScreen.Settings(4) },
             )
             MScreen.AddTablet -> AddTabletScreen(back = { screen = MScreen.Home }, step = "Master · Add tablet") { screen = MScreen.Linked(it) }
             is MScreen.Linked -> LinkedScreen(s.r, onAnother = { screen = MScreen.AddTablet }, onContinue = { screen = MScreen.Home }, continueLabel = "Done")
@@ -171,7 +173,7 @@ private fun Toast(text: String, modifier: Modifier) {
 // ---------------- Home ----------------
 
 @Composable
-private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit) {
+private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit) {
     val app = App.get(LocalContext.current)
     val views = rememberNodeViews()
     val account by app.store.jellyfin.collectAsState()
@@ -180,7 +182,7 @@ private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: 
     val portrait = LocalConfiguration.current.let { it.screenHeightDp > it.screenWidthDp }
     val pad = if (portrait) 32.dp else 40.dp
     Column(Modifier.fillMaxSize()) {
-        TopBar(pad, onSettings, onDrawer)
+        TopBar(pad, onSettings, onDrawer, onUpdate)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
             return@Column
@@ -210,7 +212,7 @@ private fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: 
 }
 
 @Composable
-private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit) {
+private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit) {
     val ctx = LocalContext.current
     val app = App.get(ctx)
     val now = rememberNow(1000)
@@ -241,6 +243,13 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit) {
             }
         }
         Spacer(Modifier.weight(1f))
+        val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
+        if (update is com.nbaltas.nickos.update.UpdateState.Available) {
+            Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable { onUpdate() }, height = 48.dp, bg = C.accent) {
+                Icon(Lucide.Download, null, tint = C.onAccent, modifier = Modifier.size(20.dp))
+                Text("Update", style = body(16.sp, 700), color = C.onAccent)
+            }
+        }
         Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onSettings), height = 48.dp) {
             Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(20.dp).rotate90())
             Text("${name.ifBlank { "Parent's Tablet" }} · Master", style = body(16.sp, 700), color = C.text, maxLines = 1)

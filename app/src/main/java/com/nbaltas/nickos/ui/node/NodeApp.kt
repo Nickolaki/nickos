@@ -13,6 +13,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +43,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val warn by rt.bedtimeWarning.collectAsState()
     val pin by store.pin.collectAsState()
     var screen by remember { mutableStateOf(NodeScreen.HOME) }
+    val scope = rememberCoroutineScope()
 
     BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU) screen = NodeScreen.HOME }
 
@@ -86,6 +89,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onAllApps = { screen = NodeScreen.DRAWER },
             onSettings = { ctx.startActivity(androidSettingsIntent()) },
             onPairAnother = { screen = NodeScreen.PAIR },
+            onUpdate = { scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) } },
             onReset = {
                 rt.device.releaseLockdown()
                 (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }

@@ -140,6 +140,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             }
         }
         scope.launch { sessionLoop() }
+        scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }
         scope.launch {
             var last = store.pin.value
@@ -298,6 +299,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
     fun lockToApp(id: String, pkg: String?) { send(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
     fun requestApps(id: String) = send(id, cmd("apps"))
+    /** The Node checks the update track itself and installs (silently when it has the kid lock). */
+    fun updateNode(id: String) = send(id, cmd("update"))
     fun restartJellyfin(id: String) = send(id, cmd("restart"))
 
     /** Lock also pauses whatever is playing, so the show doesn't carry on behind the wall. */

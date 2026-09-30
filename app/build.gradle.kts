@@ -22,6 +22,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1"
+
+        // Public NickOS update track on nickflix-config (see its nickos.js). Overridable for a
+        // friend's own server via local.properties.
+        buildConfigField("String", "UPDATE_BASE", "\"${localProperties.getProperty("nickos.updateBase", "https://nickflix-config.nbaltas.org")}\"")
     }
 
     signingConfigs {

@@ -383,9 +383,11 @@ fun ParentMenu(
     onAllApps: () -> Unit,
     onSettings: () -> Unit,
     onPairAnother: () -> Unit,
+    onUpdate: () -> Unit,
     onReset: () -> Unit,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
+    val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color(0xC7080918)).tap {}, contentAlignment = Alignment.Center) {
         Column(
             Modifier.width(560.dp).clip(RoundedCornerShape(40.dp)).background(NodePalette.pinCard).padding(horizontal = 40.dp, vertical = 36.dp),
@@ -401,6 +403,17 @@ fun ParentMenu(
             MenuButton("All apps", onClick = onAllApps)
             MenuButton("Android settings", onClick = onSettings)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
+            MenuButton(
+                when (val u = update) {
+                    com.nbaltas.nickos.update.UpdateState.Checking -> "Checking for updates…"
+                    com.nbaltas.nickos.update.UpdateState.UpToDate -> "Up to date (${com.nbaltas.nickos.BuildConfig.VERSION_NAME})"
+                    is com.nbaltas.nickos.update.UpdateState.Downloading -> "Downloading ${u.pct}%…"
+                    is com.nbaltas.nickos.update.UpdateState.Installing -> "Installing…"
+                    is com.nbaltas.nickos.update.UpdateState.Failed -> u.message
+                    else -> "Check for updates"
+                },
+                onClick = onUpdate,
+            )
             MenuButton(if (confirmReset) "Tap again to reset this tablet" else "Reset this tablet", danger = true) {
                 if (confirmReset) onReset() else confirmReset = true
             }

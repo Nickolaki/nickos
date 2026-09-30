@@ -230,6 +230,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             }
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
+            "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
             "unlink" -> store.removeMaster(masterId)
         }
         broadcast(status())
