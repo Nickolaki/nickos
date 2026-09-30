@@ -37,6 +37,8 @@ data class JfItem(
     val hasBackdrop: Boolean,
     val parentThumbId: String?,
     val parentBackdropId: String?,
+    /** ISO time this user last played it (UserData.LastPlayedDate), for History. */
+    val lastPlayed: String? = null,
 ) {
     val isEpisode get() = type == "Episode"
     val isSeries get() = type == "Series"
@@ -80,6 +82,7 @@ data class JfItem(
                 hasBackdrop = (o.optJSONArray("BackdropImageTags")?.length() ?: 0) > 0,
                 parentThumbId = o.optStr("ParentThumbItemId"),
                 parentBackdropId = o.optStr("ParentBackdropItemId"),
+                lastPlayed = ud?.optStr("LastPlayedDate"),
             )
         }
     }
@@ -155,6 +158,16 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
 
     suspend fun search(uid: String, q: String) =
         items("/Users/$uid/Items", "SearchTerm" to q, "IncludeItemTypes" to "Movie,Series", "Recursive" to true, "Limit" to 60)
+
+    /** What this user watched lately: finished items plus ones still in progress, newest first. */
+    suspend fun history(uid: String, limit: Int = 80): List<JfItem> {
+        val played = items(
+            "/Users/$uid/Items", "IncludeItemTypes" to "Movie,Episode", "Recursive" to true, "Filters" to "IsPlayed",
+            "SortBy" to "DatePlayed", "SortOrder" to "Descending", "Limit" to limit,
+        )
+        return (played + resume(uid, 30)).filter { it.lastPlayed != null }.distinctBy { it.id }
+            .sortedByDescending { it.lastPlayed }.take(limit)
+    }
 
     suspend fun item(uid: String, id: String): JfItem = JfItem.from(get("/Users/$uid/Items/$id"))
 

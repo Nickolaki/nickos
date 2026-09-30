@@ -144,7 +144,7 @@ private fun LibraryHome(v: NodeView, jf: Jellyfin, uid: String, open: (JfItem) -
     var query by remember(v.node.id) { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(top = 26.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         Row(Modifier.padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Segmented(listOf("Home" to null, "Movies" to null, "Shows" to null), mode, { mode = it; query = "" }, height = 52.dp)
+            Segmented(listOf("Home" to null, "Movies" to null, "Shows" to null, "History" to null), mode, { mode = it; query = "" }, height = 52.dp)
             Muted("${v.node.jfUserName ?: "Their"}'s library", 16, weight = 600, maxLines = 1)
             Spacer(Modifier.weight(1f))
             SearchBox(query, { query = it }, Modifier.widthIn(max = 420.dp).weight(1f, fill = false))
@@ -166,6 +166,7 @@ private fun LibraryHome(v: NodeView, jf: Jellyfin, uid: String, open: (JfItem) -
             }
             mode == 1 -> LoadGrid(jf, uid, "Movie", open)
             mode == 2 -> LoadGrid(jf, uid, "Series", open)
+            mode == 3 -> HistoryList(jf, uid, open)
             else -> HomeRows(jf, uid, open, onSeeAll)
         }
     }
@@ -269,6 +270,56 @@ private fun PosterCard(item: JfItem, jf: Jellyfin, onClick: () -> Unit) {
     Box(Modifier.clickable(onClick = onClick)) {
         Artwork(jf.poster(item, 450), item.displayTitle, Modifier.size(150.dp, 225.dp), radius = 16.dp, titleSize = 22)
         if (item.inProgress) ProgressBar(item.progress, Modifier.align(Alignment.BottomStart).padding(10.dp), height = 6.dp)
+    }
+}
+
+// ---------------- History ----------------
+
+@Composable
+private fun HistoryList(jf: Jellyfin, uid: String, open: (JfItem) -> Unit) {
+    val items by produceState<List<JfItem>?>(null, uid) { value = try { jf.history(uid) } catch (e: Exception) { emptyList() } }
+    val list = items
+    when {
+        list == null -> Muted("Loading…", 18, Modifier.padding(horizontal = 40.dp))
+        list.isEmpty() -> Muted("Nothing watched yet.", 18, Modifier.padding(horizontal = 40.dp))
+        else -> {
+            val zone = java.time.ZoneId.systemDefault()
+            val today = java.time.LocalDate.now(zone)
+            fun whenOf(i: JfItem) = try { java.time.Instant.parse(i.lastPlayed).atZone(zone) } catch (e: Exception) { null }
+            val groups = list.groupBy { whenOf(it)?.toLocalDate() }
+            LazyColumn(contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                groups.forEach { (day, dayItems) ->
+                    item(key = "h-$day") {
+                        val label = when (day) {
+                            null -> "Earlier"
+                            today -> "Today"
+                            today.minusDays(1) -> "Yesterday"
+                            else -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM"))
+                        }
+                        Title(label, 24, Modifier.padding(top = 14.dp, bottom = 6.dp))
+                    }
+                    items(dayItems, key = { it.id }) { item ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { open(item) }.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
+                        ) {
+                            Box {
+                                Artwork(jf.landscape(item, 300), item.displayTitle, Modifier.size(144.dp, 81.dp), radius = 12.dp, titleSize = 14)
+                                if (item.inProgress) ProgressBar(item.progress, Modifier.align(Alignment.BottomStart).padding(8.dp), height = 5.dp)
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(item.displayTitle, style = body(19.sp, 700), color = C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Muted(if (item.isEpisode) episodeLine(item) else listOfNotNull("Movie", item.year?.toString()).joinToString(" · "), 15, maxLines = 1)
+                            }
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                whenOf(item)?.let { Text(it.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a")), style = body(16.sp, 700), color = C.text) }
+                                Muted(if (item.inProgress) "${minutesText(item.leftMin)} left" else "Watched", 15)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
