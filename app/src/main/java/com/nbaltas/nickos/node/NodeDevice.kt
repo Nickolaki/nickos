@@ -1,0 +1,222 @@
+package com.nbaltas.nickos.node
+
+import android.app.ActivityManager
+import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.media.AudioManager
+import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Base64
+import android.util.Log
+import androidx.core.graphics.drawable.toBitmap
+import com.nbaltas.nickos.MainActivity
+import java.io.ByteArrayOutputStream
+import kotlin.math.roundToInt
+
+/** Needed for Device Owner. Set once over adb: see SETUP.md. */
+class AdminReceiver : DeviceAdminReceiver()
+
+data class InstalledApp(val pkg: String, val label: String)
+
+/** Everything a Node can do to its own tablet. */
+class NodeDevice(private val ctx: Context) {
+    private val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
+    private val audio = ctx.getSystemService(AudioManager::class.java)
+    private val power = ctx.getSystemService(PowerManager::class.java)
+    private val admin = ComponentName(ctx, AdminReceiver::class.java)
+
+    /** Package most recently launched by NickOS, the fallback when usage access isn't granted. */
+    @Volatile var lastLaunched: String? = null
+
+    val isDeviceOwner get() = dpm.isDeviceOwnerApp(ctx.packageName)
+    private val isAdmin get() = dpm.isAdminActive(admin)
+
+    // ---- battery / screen ----
+    fun battery(): Pair<Int, Boolean> {
+        val i = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val status = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        return (if (level < 0) 0 else level * 100 / scale) to charging
+    }
+
+    val screenOn get() = power.isInteractive
+
+    fun screenOff() {
+        if (isAdmin) try { dpm.lockNow() } catch (e: Exception) { Log.w(TAG, "lockNow", e) }
+    }
+
+    @Suppress("DEPRECATION")
+    fun wake() {
+        val wl = power.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "nickos:wake",
+        )
+        wl.acquire(3000)
+    }
+
+    // ---- volume / brightness (0-100) ----
+    fun volume(): Int {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        return (audio.getStreamVolume(AudioManager.STREAM_MUSIC) * 100f / max).roundToInt()
+    }
+
+    fun setVolume(pct: Int) {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, (pct.coerceIn(0, 100) * max / 100f).roundToInt(), 0)
+    }
+
+    fun brightness(): Int = try {
+        (Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS) * 100f / 255f).roundToInt()
+    } catch (e: Exception) { 50 }
+
+    fun setBrightness(pct: Int) {
+        val v = (pct.coerceIn(1, 100) * 255f / 100f).roundToInt().toString()
+        try {
+            if (isDeviceOwner && Build.VERSION.SDK_INT >= 28) {
+                dpm.setSystemSetting(admin, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL.toString())
+                dpm.setSystemSetting(admin, Settings.System.SCREEN_BRIGHTNESS, v)
+            } else if (Settings.System.canWrite(ctx)) {
+                Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, v.toInt())
+            }
+        } catch (e: Exception) { Log.w(TAG, "brightness", e) }
+    }
+
+    // ---- apps ----
+    fun installedApps(): List<InstalledApp> {
+        val pm = ctx.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return pm.queryIntentActivities(intent, 0)
+            .map { InstalledApp(it.activityInfo.packageName, it.loadLabel(pm).toString()) }
+            .filter { it.pkg != ctx.packageName }
+            .distinctBy { it.pkg }
+            .sortedBy { it.label.lowercase() }
+    }
+
+    fun label(pkg: String): String? = try {
+        val pm = ctx.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: PackageManager.NameNotFoundException) { null }
+
+    fun iconBase64(pkg: String, px: Int = 96): String? = try {
+        val bmp = ctx.packageManager.getApplicationIcon(pkg).toBitmap(px, px, Bitmap.Config.ARGB_8888)
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    } catch (e: Exception) { null }
+
+    fun launch(pkg: String): Boolean {
+        val i = ctx.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        lastLaunched = pkg
+        return try { ctx.startActivity(i); true } catch (e: Exception) { Log.w(TAG, "launch $pkg", e); false }
+    }
+
+    fun goHome() {
+        lastLaunched = null
+        ctx.startActivity(
+            Intent(ctx, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+    }
+
+    /** Jellyfin can't be force-stopped without root, so: home, kill its background process, reopen. */
+    fun restart(pkg: String) {
+        goHome()
+        Thread {
+            Thread.sleep(800)
+            ctx.getSystemService(ActivityManager::class.java).killBackgroundProcesses(pkg)
+            Thread.sleep(1200)
+            launch(pkg)
+        }.start()
+    }
+
+    fun jellyfinPackage(): String? = JELLYFIN_PACKAGES.firstOrNull { label(it) != null }
+
+    /** Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened. */
+    fun foregroundPackage(homeVisible: Boolean): String? {
+        if (homeVisible) return null
+        if (hasUsageAccess()) {
+            val usm = ctx.getSystemService(UsageStatsManager::class.java)
+            val now = System.currentTimeMillis()
+            val events = usm.queryEvents(now - 6 * 60 * 60 * 1000L, now)
+            var last: String? = null
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) last = e.packageName
+            }
+            if (last != null) return if (last == ctx.packageName || isLauncher(last)) null else last
+        }
+        return lastLaunched
+    }
+
+    private fun isLauncher(pkg: String): Boolean {
+        val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return ctx.packageManager.queryIntentActivities(i, 0).any { it.activityInfo.packageName == pkg }
+    }
+
+    fun hasUsageAccess(): Boolean {
+        val ops = ctx.getSystemService(android.app.AppOpsManager::class.java)
+        @Suppress("DEPRECATION")
+        val mode = ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), ctx.packageName)
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
+    }
+
+    fun canOverlay() = Settings.canDrawOverlays(ctx)
+
+    // ---- lockdown ----
+    /**
+     * Kiosk mode, the same Android feature Fully Kiosk Plus uses. Only works as Device Owner.
+     * [packages] are the apps the kid may enter; everything else (home, recents, settings,
+     * notifications) is blocked while the Node activity runs in lock task.
+     */
+    fun applyLockdown(packages: List<String>) {
+        if (!isDeviceOwner) return
+        try {
+            dpm.setLockTaskPackages(admin, (listOf(ctx.packageName) + packages).distinct().toTypedArray())
+            if (Build.VERSION.SDK_INT >= 28) dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+            val home = IntentFilter(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME); addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            dpm.addPersistentPreferredActivity(admin, home, ComponentName(ctx, MainActivity::class.java))
+            dpm.setKeyguardDisabled(admin, true)
+            dpm.setStatusBarDisabled(admin, true)
+        } catch (e: Exception) { Log.w(TAG, "lockdown", e) }
+    }
+
+    /** Undo everything [applyLockdown] did and give up Device Owner, so the tablet is normal again. */
+    fun releaseLockdown() {
+        if (!isDeviceOwner) return
+        try {
+            dpm.setStatusBarDisabled(admin, false)
+            dpm.setKeyguardDisabled(admin, false)
+            dpm.clearPackagePersistentPreferredActivities(admin, ctx.packageName)
+            dpm.setLockTaskPackages(admin, arrayOf())
+            @Suppress("DEPRECATION")
+            dpm.clearDeviceOwnerApp(ctx.packageName)
+        } catch (e: Exception) { Log.w(TAG, "release", e) }
+    }
+
+    fun deviceNames(): List<String> = listOfNotNull(
+        Settings.Global.getString(ctx.contentResolver, Settings.Global.DEVICE_NAME),
+        Build.MODEL,
+    ).distinct()
+
+    companion object {
+        private const val TAG = "NickOS.Device"
+        val JELLYFIN_PACKAGES = listOf("org.jellyfin.mobile", "org.jellyfin.androidtv")
+    }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Now playing</title>
+
+</head>
+<body>
+
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&amp;family=Figtree:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;color:#EEF1F6;background:#0B0E13;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0;margin:0}
+input{font:inherit;color:inherit}
+.disp{font-family:'Bricolage Grotesque','Figtree',system-ui,sans-serif;letter-spacing:-0.01em}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#A0A8B6}
+.muted{color:#A0A8B6}
+.btn{height:60px;padding:0 28px;border-radius:18px;background:#1E2430;font-weight:700;font-size:19px;display:inline-flex;align-items:center;justify-content:center;gap:12px;box-sizing:border-box;white-space:nowrap}
+.btn.primary{background:#FFB547;color:#1C1305}
+.btn.ghost{background:transparent;border:2px solid #2A3140}
+.btn.danger{background:transparent;border:2px solid #4A2A2A;color:#FF8A7A}
+.btn.big{height:72px;font-size:21px;padding:0 36px;border-radius:22px}
+.iconbtn{width:60px;height:60px;border-radius:50%;background:#1E2430;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tab{height:56px;padding:0 18px;border-radius:15px;display:inline-flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:#A0A8B6}
+.tab.on{background:#FFB547;color:#1C1305}
+.field{height:68px;border-radius:18px;background:#1E2430;border:2px solid #2A3140;padding:0 22px;font-size:21px;box-sizing:border-box;width:100%;outline:none}
+.field:focus{border-color:#FFB547}
+.lbl{font-size:15px;font-weight:700;color:#A0A8B6;display:block;margin-bottom:10px}
+input[type=range].rng{-webkit-appearance:none;appearance:none;width:100%;height:14px;border-radius:7px;background:#2A3140;outline:none;margin:0;cursor:pointer}
+input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;width:38px;height:38px;border-radius:50%;background:#FFFFFF;box-shadow:0 2px 10px rgba(0,0,0,.45)}
+input[type=range].rng::-moz-range-thumb{width:38px;height:38px;border:0;border-radius:50%;background:#FFFFFF}
+.sw{position:relative;display:inline-block;width:60px;height:34px;flex-shrink:0}
+.sw input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+.sw span{position:absolute;inset:0;border-radius:17px;background:#2A3140;pointer-events:none}
+.sw span::after{content:"";position:absolute;left:4px;top:4px;width:26px;height:26px;border-radius:50%;background:#C5CBD6}
+.sw input:checked+span{background:#FFB547}
+.sw input:checked+span::after{left:30px;background:#1C1305}
+.key{height:84px;border-radius:22px;background:#1E2430;font-size:34px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.chip{height:44px;padding:0 18px;border-radius:22px;background:#1E2430;display:inline-flex;align-items:center;gap:10px;font-weight:600;font-size:16px;white-space:nowrap}
+</style>
+
+<div style="width: 1280px; height: 800px; box-sizing: border-box; background: #0B0E13; position: relative; overflow: hidden; display: flex; flex-direction: column">
+
+<div style="height: 104px; padding: 0 32px; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid #1E2430; flex-shrink: 0; position: relative; z-index: 2; background: #0B0E13">
+<div style="display: flex; align-items: center; gap: 16px; min-width: 0">
+<a href="Master-Home.dc.html" class="iconbtn" aria-label="Back to all tablets"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M15 5l-7 7 7 7"/></svg></a>
+<div style="width: 52px; height: 52px; border-radius: 50%; background: #FF7A59; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><span class="disp" style="font-size: 23px; font-weight: 800; color: #10131F; line-height: 1">H</span></div>
+<div style="display: flex; flex-direction: column; gap: 3px; min-width: 0"><div class="disp" style="font-size: 25px; font-weight: 800; white-space: nowrap">Hailey's Tablet</div><div style="display: flex; align-items: center; gap: 7px; font-size: 15px; color: #A0A8B6; font-weight: 600; white-space: nowrap"><span style="width: 10px; height: 10px; border-radius: 50%; background: #3DDC84; flex-shrink: 0; display: inline-block"></span> Online · Screen on</div></div>
+</div>
+<nav aria-label="Tablet controls" style="display: flex; gap: 4px; background: #151A22; padding: 6px; border-radius: 21px"><a href="Control-NowPlaying.dc.html" class="tab on"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/></svg> Now Playing</a><a href="Control-Watch.dc.html" class="tab"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg> Watch</a><a href="Control-Apps.dc.html" class="tab"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="4" y="4" width="6.5" height="6.5" rx="1.8"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.8"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.8"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.8"/></svg> Apps</a><a href="Control-Device.dc.html" class="tab"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M18.2 11v2"/></svg> Device</a></nav>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; color: #EEF1F6"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M22 10.5v3"/><rect x="5" y="9.5" width="10" height="5" rx="1" fill="currentColor" stroke="none"/></svg><span class="disp" style="font-size: 38px; font-weight: 800">82%</span></div>
+</div>
+<div style="flex-grow: 1; position: relative; display: flex; gap: 32px; padding: 32px 32px 32px 40px">
+<div style="position: absolute; inset: 0; opacity: 0.35"><div role="img" aria-label=" artwork" style="width: 1280px; height: 696px; flex-shrink: 0; border-radius: 0px; position: relative; overflow: hidden; background: linear-gradient(165deg, #12305C 0%, #E86F4A 100%)"><div style="position: absolute; width: 361px; height: 361px; border-radius: 50%; background: #FFD27A; left: 557px; top: 83px; opacity: 0.92"></div><div style="position: absolute; left: -15%; width: 130%; bottom: -208px; height: 431px; border-radius: 50%; background: #12305C; opacity: 0.88"></div></div></div>
+<div style="position: absolute; inset: 0; background: linear-gradient(90deg, rgba(11,14,19,.55) 0%, rgba(11,14,19,.92) 62%, #0B0E13 78%)"></div>
+<div style="position: relative; flex-grow: 1; display: flex; flex-direction: column; gap: 28px; min-width: 0">
+<div style="display: flex; gap: 32px; flex-grow: 1">
+<div role="img" aria-label="Star Harbour artwork" style="width: 250px; height: 375px; flex-shrink: 0; border-radius: 20px; position: relative; overflow: hidden; background: linear-gradient(165deg, #12305C 0%, #E86F4A 100%)"><div style="position: absolute; width: 130px; height: 130px; border-radius: 50%; background: #FFD27A; left: 91px; top: 45px; opacity: 0.92"></div><div style="position: absolute; left: -15%; width: 130%; bottom: -112px; height: 232px; border-radius: 50%; background: #12305C; opacity: 0.88"></div><div class="disp" style="position: absolute; left: 17px; right: 17px; bottom: 17px; font-size: 35px; line-height: 0.95; font-weight: 800; color: #FFFFFF; text-shadow: 0 2px 14px rgba(0,0,0,.45)">Star Harbour</div></div>
+<div style="display: flex; flex-direction: column; gap: 10px; padding-top: 8px">
+<div class="eyebrow" style="color: #FFB547; display: flex; align-items: center; gap: 8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/></svg> Playing now</div>
+<div class="disp" style="font-size: 64px; font-weight: 800; line-height: 0.98">Star Harbour</div>
+<div style="font-size: 24px; font-weight: 700">Season 2 · Episode 5</div>
+<div class="muted" style="font-size: 22px">The Lighthouse</div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<input class="rng" type="range" min="0" max="100" value="74" aria-label="Playback position" style="background: linear-gradient(90deg, #FFB547 74%, #2A3140 74%)">
+<div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums"><span>18:02</span><span class="muted">24:10</span></div>
+</div>
+<div style="display: flex; align-items: center; gap: 18px">
+<button class="iconbtn" aria-label="Back 10 seconds" style="width: 76px; height: 76px"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 3.5v4h4"/><text x="12.4" y="15.3" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-weight="800" font-family="sans-serif">10</text></svg></button>
+<button aria-label="Pause" style="width: 104px; height: 104px; border-radius: 50%; background: #FFB547; color: #1C1305; display: flex; align-items: center; justify-content: center"><svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="6" y="4.5" width="4.2" height="15" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.2" fill="currentColor" stroke="none"/></svg></button>
+<button class="iconbtn" aria-label="Forward 10 seconds" style="width: 76px; height: 76px"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v4h-4"/><text x="11.6" y="15.3" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-weight="800" font-family="sans-serif">10</text></svg></button>
+<div style="flex-grow: 1"></div>
+<button class="btn" style="height: 68px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M5 5v14l10-7z" fill="currentColor" stroke="none"/><path d="M18.5 5v14"/></svg> Next episode</button>
+<button class="btn" style="height: 68px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" stroke="none"/></svg> Stop</button>
+</div>
+</div>
+<div style="position: relative"><div style="width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 18px">
+<div class="eyebrow">On Hailey's Tablet</div>
+<div style="border-radius: 26px; background: #151A22; padding: 22px 24px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box">
+<div style="display: flex; align-items: center; gap: 12px"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg><span style="font-size: 19px; font-weight: 700; flex-grow: 1">Volume</span><span class="disp" style="font-size: 34px; font-weight: 800">60%</span></div>
+<div style="padding: 12px 0"><input class="rng" type="range" min="0" max="100" value="60" aria-label="Volume" style="background: linear-gradient(90deg, #FFB547 60%, #2A3140 60%)"></div>
+</div>
+<div style="border-radius: 26px; background: #151A22; padding: 22px 24px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box">
+<div style="display: flex; align-items: center; gap: 12px"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span style="font-size: 19px; font-weight: 700; flex-grow: 1">Brightness</span><span class="disp" style="font-size: 34px; font-weight: 800">75%</span></div>
+<div style="padding: 12px 0"><input class="rng" type="range" min="0" max="100" value="75" aria-label="Brightness" style="background: linear-gradient(90deg, #FFB547 75%, #2A3140 75%)"></div>
+</div>
+<div style="border-radius: 26px; background: #151A22; padding: 18px; display: flex; gap: 16px; align-items: center">
+<div role="img" aria-label=" artwork" style="width: 128px; height: 72px; flex-shrink: 0; border-radius: 12px; position: relative; overflow: hidden; background: linear-gradient(165deg, #12305C 0%, #E86F4A 100%)"><div style="position: absolute; width: 37px; height: 37px; border-radius: 50%; background: #FFD27A; left: 55px; top: 8px; opacity: 0.92"></div><div style="position: absolute; left: -15%; width: 130%; bottom: -21px; height: 44px; border-radius: 50%; background: #12305C; opacity: 0.88"></div></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><div class="eyebrow">Up next</div><div style="font-size: 18px; font-weight: 700">E6 — Fog Horn</div></div>
+</div>
+</div></div>
+</div>
+</div>
+
+
+</body>
+</html>

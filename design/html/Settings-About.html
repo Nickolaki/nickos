@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — About</title>
+
+</head>
+<body>
+
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&amp;family=Figtree:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;color:#EEF1F6;background:#0B0E13;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0;margin:0}
+input{font:inherit;color:inherit}
+.disp{font-family:'Bricolage Grotesque','Figtree',system-ui,sans-serif;letter-spacing:-0.01em}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#A0A8B6}
+.muted{color:#A0A8B6}
+.btn{height:60px;padding:0 28px;border-radius:18px;background:#1E2430;font-weight:700;font-size:19px;display:inline-flex;align-items:center;justify-content:center;gap:12px;box-sizing:border-box;white-space:nowrap}
+.btn.primary{background:#FFB547;color:#1C1305}
+.btn.ghost{background:transparent;border:2px solid #2A3140}
+.btn.danger{background:transparent;border:2px solid #4A2A2A;color:#FF8A7A}
+.btn.big{height:72px;font-size:21px;padding:0 36px;border-radius:22px}
+.iconbtn{width:60px;height:60px;border-radius:50%;background:#1E2430;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tab{height:56px;padding:0 18px;border-radius:15px;display:inline-flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:#A0A8B6}
+.tab.on{background:#FFB547;color:#1C1305}
+.field{height:68px;border-radius:18px;background:#1E2430;border:2px solid #2A3140;padding:0 22px;font-size:21px;box-sizing:border-box;width:100%;outline:none}
+.field:focus{border-color:#FFB547}
+.lbl{font-size:15px;font-weight:700;color:#A0A8B6;display:block;margin-bottom:10px}
+input[type=range].rng{-webkit-appearance:none;appearance:none;width:100%;height:14px;border-radius:7px;background:#2A3140;outline:none;margin:0;cursor:pointer}
+input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;width:38px;height:38px;border-radius:50%;background:#FFFFFF;box-shadow:0 2px 10px rgba(0,0,0,.45)}
+input[type=range].rng::-moz-range-thumb{width:38px;height:38px;border:0;border-radius:50%;background:#FFFFFF}
+.sw{position:relative;display:inline-block;width:60px;height:34px;flex-shrink:0}
+.sw input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+.sw span{position:absolute;inset:0;border-radius:17px;background:#2A3140;pointer-events:none}
+.sw span::after{content:"";position:absolute;left:4px;top:4px;width:26px;height:26px;border-radius:50%;background:#C5CBD6}
+.sw input:checked+span{background:#FFB547}
+.sw input:checked+span::after{left:30px;background:#1C1305}
+.key{height:84px;border-radius:22px;background:#1E2430;font-size:34px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.chip{height:44px;padding:0 18px;border-radius:22px;background:#1E2430;display:inline-flex;align-items:center;gap:10px;font-weight:600;font-size:16px;white-space:nowrap}
+</style>
+
+<div style="width: 1280px; height: 800px; box-sizing: border-box; background: #0B0E13; position: relative; overflow: hidden; display: flex; flex-direction: column">
+
+<div style="flex-grow: 1; display: flex; min-height: 0">
+<div style="width: 320px; flex-shrink: 0; background: #10141A; padding: 28px 20px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box">
+<div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px"><a href="Master-Home.dc.html" class="iconbtn" aria-label="Back to home"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M15 5l-7 7 7 7"/></svg></a><span class="disp" style="font-size: 34px; font-weight: 800">Settings</span></div>
+<nav aria-label="Settings sections" style="display: flex; flex-direction: column; gap: 6px"><a href="Settings-Tablets.dc.html" style="height: 64px; border-radius: 18px; padding: 0 18px; display: flex; align-items: center; gap: 14px; font-size: 19px; font-weight: 700; color: #A0A8B6"><span style="color: #A0A8B6; display: flex"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M18.2 11v2"/></svg></span>Linked tablets</a><a href="Settings-Jellyfin.dc.html" style="height: 64px; border-radius: 18px; padding: 0 18px; display: flex; align-items: center; gap: 14px; font-size: 19px; font-weight: 700; color: #A0A8B6"><span style="color: #A0A8B6; display: flex"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg></span>Jellyfin server</a><a href="Settings-PIN.dc.html" style="height: 64px; border-radius: 18px; padding: 0 18px; display: flex; align-items: center; gap: 14px; font-size: 19px; font-weight: 700; color: #A0A8B6"><span style="color: #A0A8B6; display: flex"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/></svg></span>Parent PIN</a><a href="Settings-Theme.dc.html" style="height: 64px; border-radius: 18px; padding: 0 18px; display: flex; align-items: center; gap: 14px; font-size: 19px; font-weight: 700; color: #A0A8B6"><span style="color: #A0A8B6; display: flex"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></span>Theme</a><a href="Settings-About.dc.html" style="height: 64px; border-radius: 18px; padding: 0 18px; display: flex; align-items: center; gap: 14px; font-size: 19px; font-weight: 700; background: #1E2430; color: #EEF1F6"><span style="color: #FFB547; display: flex"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>About</a></nav>
+<div style="flex-grow: 1"></div>
+<div class="muted" style="font-size: 15px; padding: 0 18px">NickOS [VERSION]</div>
+</div>
+<div style="flex-grow: 1; padding: 40px 48px; display: flex; flex-direction: column; gap: 28px; min-width: 0">
+<div style="display: flex; align-items: center; gap: 16px"><h1 class="disp" style="margin: 0; font-size: 46px; font-weight: 800; flex-grow: 1">About</h1></div>
+
+<div style="border-radius: 28px; background: #151A22; padding: 32px; display: flex; align-items: center; gap: 24px">
+<div style="width: 96px; height: 96px; border-radius: 28px; background: #FFB547; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 19px; box-sizing: border-box; flex-shrink: 0"><div style="width: 28px; height: 28px; border-radius: 8px; background: #1C1305"></div><div style="width: 28px; height: 28px; border-radius: 8px; background: rgba(28,19,5,.35)"></div><div style="width: 28px; height: 28px; border-radius: 8px; background: rgba(28,19,5,.35)"></div><div style="width: 28px; height: 28px; border-radius: 8px; background: rgba(28,19,5,.35)"></div></div>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px"><div class="disp" style="font-size: 40px; font-weight: 800">NickOS</div><div class="muted" style="font-size: 18px">Version [VERSION]</div></div>
+<button class="btn"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0"><path d="M20 11a8 8 0 0 0-14.8-3.5M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.8 3.5M20 20v-4h-4"/></svg> Check for updates</button>
+</div>
+<div style="border-radius: 28px; background: #151A22; padding: 8px 28px">
+<div style="height: 64px; display: flex; align-items: center; font-size: 19px"><span class="muted" style="flex-grow: 1">This tablet</span><strong>Dad's Tablet · Master</strong></div>
+<div style="height: 64px; display: flex; align-items: center; font-size: 19px; border-top: 1px solid #1E2430"><span class="muted" style="flex-grow: 1">Linked tablets</span><strong>3</strong></div>
+<div style="height: 64px; display: flex; align-items: center; font-size: 19px; border-top: 1px solid #1E2430"><span class="muted" style="flex-grow: 1">Connection</span><strong>Local WiFi only</strong></div>
+</div>
+<div><button class="btn danger">Reset this tablet</button></div>
+</div>
+</div>
+</div>
+
+
+</body>
+</html>
