@@ -93,13 +93,16 @@ private enum class Step { WELCOME, ROLE, NODE_NAME, NODE_CODE, MASTER_ADD, MASTE
 @Composable
 fun SetupFlow() {
     val app = App.get(LocalContext.current)
-    var step by rememberSaveable { mutableStateOf(Step.WELCOME) }
+    // A tablet set up from the Master's QR code is already known to be a kid tablet.
+    val provisioned = remember { com.nbaltas.nickos.node.Provisioning.provisionedAsNode(app) }
+    var step by rememberSaveable { mutableStateOf(if (provisioned) Step.NODE_NAME else Step.WELCOME) }
     var linked by remember { mutableStateOf<MasterRuntime.PairResult?>(null) }
 
     val back: (() -> Unit)? = when (step) {
         Step.WELCOME -> null
         Step.ROLE -> { { step = Step.WELCOME } }
-        Step.NODE_NAME, Step.MASTER_ADD -> { { step = Step.ROLE } }
+        Step.NODE_NAME -> if (provisioned) null else { { step = Step.ROLE } }
+        Step.MASTER_ADD -> { { step = Step.ROLE } }
         Step.NODE_CODE -> { { step = Step.NODE_NAME } }
         Step.MASTER_LINKED -> null
         Step.MASTER_JELLYFIN -> { { step = Step.MASTER_LINKED } }
@@ -110,7 +113,7 @@ fun SetupFlow() {
         when (step) {
             Step.WELCOME -> Welcome { step = Step.ROLE }
             Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_ADD }, onNode = { step = Step.NODE_NAME })
-            Step.NODE_NAME -> NodeNameScreen(back!!) { step = Step.NODE_CODE }
+            Step.NODE_NAME -> NodeNameScreen(back) { step = Step.NODE_CODE }
             Step.NODE_CODE -> NodeCodeScreen(back!!) { app.store.setRole(Role.NODE) }
             Step.MASTER_ADD -> AddTabletScreen(back = back!!, step = "Master · Add tablet") { linked = it; step = Step.MASTER_LINKED }
             Step.MASTER_LINKED -> {
@@ -196,7 +199,7 @@ fun Modifier.rotate90() = rotate(90f)
 // ---------------- Node ----------------
 
 @Composable
-private fun NodeNameScreen(onBack: () -> Unit, onContinue: () -> Unit) {
+private fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     val store = App.get(LocalContext.current).store
     val name by store.name.collectAsState()
     val color by store.color.collectAsState()
@@ -328,7 +331,7 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?) {
 
 /** Enter a Node's 6-digit code. Used in setup, from the home "Add tablet" card and Settings. */
 @Composable
-fun AddTabletScreen(back: () -> Unit, step: String, onLinked: (MasterRuntime.PairResult) -> Unit) {
+fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, onLinked: (MasterRuntime.PairResult) -> Unit) {
     val app = App.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var digits by remember { mutableStateOf("") }
@@ -353,6 +356,10 @@ fun AddTabletScreen(back: () -> Unit, step: String, onLinked: (MasterRuntime.Pai
                 Column(m, verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Title("Add tablet", 56)
                     Muted("Enter the 6-digit code showing on the kid's tablet. Both tablets need to be on the same WiFi.", 22, Modifier.widthIn(max = 460.dp))
+                    if (onQr != null) Text(
+                        "Brand-new or reset tablet? Set it up with a QR code",
+                        style = body(19.sp, 700), color = C.accent, modifier = Modifier.clickable(onClick = onQr),
+                    )
                     if (!narrow) {
                         Column(
                             Modifier.padding(top = 20.dp).size(300.dp, 200.dp).border(3.dp, C.line, RoundedCornerShape(28.dp)),

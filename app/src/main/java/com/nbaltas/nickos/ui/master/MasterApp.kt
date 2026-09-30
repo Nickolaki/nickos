@@ -100,6 +100,7 @@ sealed interface MScreen {
     data class Settings(val section: Int = 0) : MScreen
     data object Drawer : MScreen
     data object Cameras : MScreen
+    data object QrSetup : MScreen
 }
 
 /** Everything a node card / control header needs, gathered once. */
@@ -137,7 +138,8 @@ fun MasterApp() {
                 onUpdate = { screen = MScreen.Settings(4) },
                 onCameras = { screen = MScreen.Cameras },
             )
-            MScreen.AddTablet -> AddTabletScreen(back = { screen = MScreen.Home }, step = "Master · Add tablet") { screen = MScreen.Linked(it) }
+            MScreen.AddTablet -> AddTabletScreen(back = { screen = MScreen.Home }, step = "Master · Add tablet", onQr = { screen = MScreen.QrSetup }) { screen = MScreen.Linked(it) }
+            MScreen.QrSetup -> QrSetupScreen(onBack = { screen = MScreen.AddTablet })
             is MScreen.Linked -> LinkedScreen(s.r, onAnother = { screen = MScreen.AddTablet }, onContinue = { screen = MScreen.Home }, continueLabel = "Done")
             is MScreen.Control -> ControlScreen(
                 s.nodeId, s.tab,

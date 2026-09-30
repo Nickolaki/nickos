@@ -23,8 +23,15 @@ import com.nbaltas.nickos.MainActivity
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
-/** Needed for Device Owner. Set once over adb: see SETUP.md. */
-class AdminReceiver : DeviceAdminReceiver()
+/** Needed for Device Owner. Set by the QR setup or once over adb: see SETUP.md. */
+class AdminReceiver : DeviceAdminReceiver() {
+    /** Pre-Android-12 QR setup finishes here: remember the role and open NickOS's own setup. */
+    override fun onProfileProvisioningComplete(ctx: Context, intent: Intent) {
+        @Suppress("DEPRECATION")
+        Provisioning.remember(ctx, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}
 
 data class InstalledApp(val pkg: String, val label: String)
 
@@ -202,6 +209,9 @@ class NodeDevice(private val ctx: Context) {
             }
             dpm.addPersistentPreferredActivity(admin, home, ComponentName(ctx, MainActivity::class.java))
             dpm.setKeyguardDisabled(admin, true)
+            if (Build.VERSION.SDK_INT >= 33) dpm.setPermissionGrantState(
+                admin, ctx.packageName, android.Manifest.permission.POST_NOTIFICATIONS, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
+            )
             dpm.setStatusBarDisabled(admin, true)
         } catch (e: Exception) { Log.w(TAG, "lockdown", e) }
     }
