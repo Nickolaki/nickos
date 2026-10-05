@@ -98,6 +98,7 @@ data class JfSession(
     val posTicks: Long,
     val paused: Boolean,
     val lastActivity: String,
+    val deviceId: String = "",
 )
 
 class JellyfinException(msg: String) : Exception(msg)
@@ -197,6 +198,7 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
                 posTicks = ps?.optLong("PositionTicks") ?: 0,
                 paused = ps?.optBoolean("IsPaused") ?: false,
                 lastActivity = s.optString("LastActivityDate"),
+                deviceId = s.optString("DeviceId"),
             )
         }
     }

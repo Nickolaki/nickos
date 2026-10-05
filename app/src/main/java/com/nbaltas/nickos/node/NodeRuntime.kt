@@ -180,6 +180,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private fun command(masterId: String, m: JSONObject) {
         val master = store.masters.value.firstOrNull { it.id == masterId }
         when (m.getString("c")) {
+            "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))
             "screen" -> if (m.getBoolean("on")) device.wake() else device.screenOff()

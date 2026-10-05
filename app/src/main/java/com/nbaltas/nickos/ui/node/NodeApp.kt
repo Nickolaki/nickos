@@ -49,7 +49,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU) screen = NodeScreen.HOME }
 
-    val jfPkg = remember { rt.device.jellyfinPackage() }
+    // Re-checked when the allowlist changes: Jellyfin may be installed after NickOS started.
+    val jfPkg = remember(allowed) { rt.device.jellyfinPackage() }
     val apps by produceState(emptyList<HomeApp>(), allowed) {
         value = withContext(Dispatchers.IO) { allowed.mapNotNull { loadHomeApp(ctx, it) } }
     }

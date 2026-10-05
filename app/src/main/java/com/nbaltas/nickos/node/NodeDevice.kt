@@ -18,6 +18,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
 import com.nbaltas.nickos.MainActivity
 import java.io.ByteArrayOutputStream
@@ -84,6 +85,20 @@ class NodeDevice(private val ctx: Context) {
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, (pct.coerceIn(0, 100) * max / 100f).roundToInt(), 0)
     }
 
+    /** Reach the integrated player's media session when Jellyfin remote commands are ignored. */
+    fun mediaKey(key: String) {
+        val code = when (key) {
+            "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            "play" -> KeyEvent.KEYCODE_MEDIA_PLAY
+            "stop" -> KeyEvent.KEYCODE_MEDIA_STOP
+            "rewind" -> KeyEvent.KEYCODE_MEDIA_REWIND
+            "forward" -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+            else -> return
+        }
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+    }
+
     fun brightness(): Int = try {
         (Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS) * 100f / 255f).roundToInt()
     } catch (e: Exception) { 50 }
@@ -139,12 +154,19 @@ class NodeDevice(private val ctx: Context) {
         )
     }
 
-    /** Jellyfin can't be force-stopped without root, so: home, kill its background process, reopen. */
+    /**
+     * Home, stop Jellyfin, reopen. killBackgroundProcesses can't stop it while its playback service
+     * runs, but hiding an app stops all its processes, so the kid lock (Device Owner) uses that.
+     */
     fun restart(pkg: String) {
         goHome()
         Thread {
             Thread.sleep(800)
-            ctx.getSystemService(ActivityManager::class.java).killBackgroundProcesses(pkg)
+            if (isDeviceOwner) try {
+                dpm.setApplicationHidden(admin, pkg, true)
+                dpm.setApplicationHidden(admin, pkg, false)
+            } catch (e: Exception) { Log.w(TAG, "restart $pkg", e) }
+            else ctx.getSystemService(ActivityManager::class.java).killBackgroundProcesses(pkg)
             Thread.sleep(1200)
             launch(pkg)
         }.start()

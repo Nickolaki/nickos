@@ -76,7 +76,7 @@ data class NodeStatus(
 data class RemoteApp(val pkg: String, val label: String, val icon: Bitmap?)
 
 /** A Node's Jellyfin session as last polled, with the time we polled it to extrapolate position. */
-data class Playback(val session: JfSession, val at: Long) {
+data class Playback(val session: JfSession, val at: Long, val remoteSessionId: String = session.id) {
     val item get() = session.item
     fun positionTicks(now: Long = System.currentTimeMillis()): Long {
         val run = session.item?.runTicks ?: 0
@@ -315,7 +315,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     fun lock(id: String, on: Boolean) {
         send(id, cmd("lock").put("on", on))
         patch(id) { it.copy(lockedBy = if (on) displayName else null) }
-        if (on) _playback.value[id]?.let { pb -> if (!pb.session.paused) scope.launch { jf { it.playstate(pb.session.id, "Pause") } } }
+        if (on) _playback.value[id]?.let { pb -> if (!pb.session.paused) control(id, "Pause") }
     }
 
     fun rename(id: String, name: String) {
@@ -344,7 +344,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             val sessions = jf { it.sessions() } ?: continue
             val now = System.currentTimeMillis()
             _playback.value = store.nodes.value.mapNotNull { n ->
-                matchSession(n, sessions)?.takeIf { it.item != null }?.let { n.id to Playback(it, now) }
+                matchSession(n, sessions)?.let { remote ->
+                    playbackSession(remote, sessions).takeIf { it.item != null }?.let { n.id to Playback(it, now, remote.id) }
+                }
             }.toMap()
         }
     }
@@ -365,6 +367,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             .sortedWith(compareByDescending<JfSession> { it.item != null }.thenByDescending { it.lastActivity })
             .firstOrNull()
     }
+
+    /** Android's integrated player reports playback in a separate session from its remote UI. */
+    private fun playbackSession(remote: JfSession, sessions: List<JfSession>): JfSession =
+        sessions.filter {
+            (normName(remote.deviceName).isNotEmpty() && normName(it.deviceName) == normName(remote.deviceName)) ||
+                (remote.deviceId.isNotEmpty() && it.deviceId.startsWith(remote.deviceId))
+        }.sortedWith(compareByDescending<JfSession> { it.item != null }.thenByDescending { it.lastActivity })
+            .firstOrNull() ?: remote
 
     /** "Jellyfin for Android" reports the device name form-encoded ("Nothing+Phone+(3)"). */
     private fun normName(s: String): String =
@@ -409,17 +419,31 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     fun control(id: String, cmd: String, seekTicks: Long? = null) = scope.launch {
         val pb = _playback.value[id] ?: return@launch
-        jf { it.playstate(pb.session.id, cmd, seekTicks) }
+        // The integrated player ignores Jellyfin playstate commands but accepts Android media keys.
+        if (!pb.session.remote) {
+            val key = when (cmd) {
+                "Pause" -> "pause"
+                "Unpause" -> "play"
+                "PlayPause" -> if (pb.session.paused) "play" else "pause"
+                "Stop" -> "stop"
+                // Only relative skips exist as keys (its player jumps back 10 s, forward 30 s); scrubbing can't reach it.
+                "Seek" -> if ((seekTicks ?: 0) < pb.positionTicks()) "rewind" else "forward"
+                else -> null
+            }
+            if (key != null) send(id, this@MasterRuntime.cmd("media").put("key", key))
+        }
+        jf { it.playstate(pb.remoteSessionId, cmd, seekTicks) }
         // Reflect immediately; the next poll corrects it.
         val s = pb.session
         val now = System.currentTimeMillis()
         val next = when (cmd) {
             "Pause" -> s.copy(paused = true, posTicks = pb.positionTicks(now))
             "Unpause" -> s.copy(paused = false, posTicks = pb.positionTicks(now))
+            "PlayPause" -> s.copy(paused = !s.paused, posTicks = pb.positionTicks(now))
             "Seek" -> s.copy(posTicks = seekTicks ?: s.posTicks)
             else -> null
         }
-        if (next != null) _playback.update { it + (id to Playback(next, now)) }
+        if (next != null) _playback.update { it + (id to Playback(next, now, pb.remoteSessionId)) }
         if (cmd == "Stop") _playback.update { it - id }
     }
 

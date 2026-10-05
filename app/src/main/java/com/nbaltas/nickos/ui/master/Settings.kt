@@ -160,21 +160,31 @@ private fun TabletsSection(onAdd: () -> Unit) {
         }
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             views.forEach { v ->
-                Row(
-                    // Design: min-height 96 on the content box, plus 16 padding top and bottom.
-                    Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    Avatar(v.node.name, v.node.color, v.node.avatar, 60.dp)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(v.node.name, style = body(22.sp, 800), color = C.text, maxLines = 1)
-                        StatusLine(v, 16, 10.dp, if (v.online) "Online" else statusText(v))
-                    }
-                    Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                val buttons: @Composable () -> Unit = {
                     NickButton("Rename", { renaming = v.node.id }, Modifier.height(52.dp), leading = Lucide.Pencil)
                     NickButton(if (confirmUnlink == v.node.id) "Sure?" else "Unlink", {
                         if (confirmUnlink == v.node.id) { app.master.unlink(v.node.id); confirmUnlink = null } else confirmUnlink = v.node.id
                     }, Modifier.height(52.dp), BtnStyle.DANGER, leading = Lucide.Unlink)
+                }
+                // Portrait tablets/phones: the buttons go on their own line, or they squeeze the name to nothing.
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val narrow = maxWidth < 680.dp
+                    Column(
+                        // Design: min-height 96 on the content box, plus 16 padding top and bottom.
+                        Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                            Avatar(v.node.name, v.node.color, v.node.avatar, 60.dp)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(v.node.name, style = body(22.sp, 800), color = C.text, maxLines = 1)
+                                StatusLine(v, 16, 10.dp, if (v.online) "Online" else statusText(v))
+                            }
+                            Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                            if (!narrow) buttons()
+                        }
+                        if (narrow) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+                    }
                 }
             }
             if (views.isEmpty()) Muted("No tablets linked yet.", 18)
