@@ -267,7 +267,7 @@ private fun LandscapeCard(item: JfItem, jf: Jellyfin, nextUp: Boolean, onClick: 
 
 @Composable
 private fun PosterCard(item: JfItem, jf: Jellyfin, onClick: () -> Unit) {
-    Box(Modifier.clickable(onClick = onClick)) {
+    Box(Modifier.size(150.dp, 225.dp).clickable(onClick = onClick)) {
         Artwork(jf.poster(item, 450), item.displayTitle, Modifier.size(150.dp, 225.dp), radius = 16.dp, titleSize = 22)
         if (item.inProgress) ProgressBar(item.progress, Modifier.align(Alignment.BottomStart).padding(10.dp), height = 6.dp)
     }
@@ -303,7 +303,8 @@ private fun HistoryList(jf: Jellyfin, uid: String, open: (JfItem) -> Unit) {
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { open(item) }.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
                         ) {
-                            Box {
+                            // Sized: the progress bar fills its width and would stretch an unsized Box across the row.
+                            Box(Modifier.size(144.dp, 81.dp)) {
                                 Artwork(jf.landscape(item, 300), item.displayTitle, Modifier.size(144.dp, 81.dp), radius = 12.dp, titleSize = 14)
                                 if (item.inProgress) ProgressBar(item.progress, Modifier.align(Alignment.BottomStart).padding(8.dp), height = 5.dp)
                             }
@@ -399,7 +400,7 @@ private fun EpisodeRow(e: JfItem, jf: Jellyfin, highlight: Boolean, onClick: () 
             .clickable(onClick = onClick).padding(start = 10.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Box {
+        Box(Modifier.size(144.dp, 81.dp)) {
             Artwork(jf.landscape(e, 300), "", Modifier.size(144.dp, 81.dp), radius = 12.dp, showTitle = false)
             when {
                 e.played -> ProgressBar(1f, Modifier.align(Alignment.BottomStart).padding(8.dp), height = 5.dp, fill = Color.White.copy(alpha = 0.8f))

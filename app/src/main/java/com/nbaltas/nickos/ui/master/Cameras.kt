@@ -107,8 +107,9 @@ fun CamerasScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             BackButton(onBack)
-            Title("Cameras", 40, Modifier.weight(1f))
-            NickButton("Add camera", { editing = Camera(Store.randomHex(6), "", "rtsp://") }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
+            Title("Cameras", 40, Modifier.weight(1f), maxLines = 1)
+            // Phone width: "Add camera" leaves the title no room.
+            NickButton(if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) "Add" else "Add camera", { editing = Camera(Store.randomHex(6), "", "rtsp://") }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
         }
         if (cams.isEmpty()) {
             Column(
