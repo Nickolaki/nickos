@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
                             onKidMode = { app.node.parentUntil = 0; enterKidMode() },
                             onParentMode = {
                                 app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
+                                app.node.device.pauseLockdown()
                                 try { stopLockTask() } catch (_: Exception) {}
                             },
                         )

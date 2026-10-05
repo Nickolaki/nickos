@@ -239,6 +239,15 @@ class NodeDevice(private val ctx: Context) {
     }
 
     /** Undo everything [applyLockdown] did and give up Device Owner, so the tablet is normal again. */
+    /**
+     * Parent mode: end lock task for every task. stopLockTask() only releases the caller's task, so
+     * Jellyfin (or any app the kid opened) kept the tablet locked. Kid mode re-applies the allowlist.
+     */
+    fun pauseLockdown() {
+        if (!isDeviceOwner) return
+        try { dpm.setLockTaskPackages(admin, arrayOf()) } catch (e: Exception) { Log.w(TAG, "pause lockdown", e) }
+    }
+
     fun releaseLockdown() {
         if (!isDeviceOwner) return
         try {
