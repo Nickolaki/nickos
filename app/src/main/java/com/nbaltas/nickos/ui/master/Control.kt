@@ -220,17 +220,22 @@ private fun NowPlaying(v: NodeView) {
                 }
             }
         }
+        val nextAndStop: @Composable () -> Unit = {
+            next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, Modifier.height(68.dp), leading = Solid.Next) }
+            NickButton("Stop", { m.control(v.node.id, "Stop") }, Modifier.height(68.dp), leading = Solid.Stop)
+        }
         val main: @Composable (Modifier) -> Unit = { mod ->
             Column(mod, verticalArrangement = Arrangement.spacedBy(28.dp)) {
-                Row(Modifier.weight(1f, fill = !narrow), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                    val h = if (narrow) 300.dp else 375.dp
+                // No weight when narrow: inside the scrolling column it would collapse the poster and title to nothing.
+                Row(if (narrow) Modifier else Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(if (narrow) 20.dp else 32.dp)) {
+                    val h = if (narrow) 210.dp else 375.dp
                     Artwork(jf?.poster(item, 600), item.displayTitle, Modifier.size(h * 2 / 3, h), radius = 20.dp, titleSize = 35)
                     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
                             EyebrowText(if (pb.session.paused) "Paused" else "Playing now", C.accent)
                         }
-                        Title(item.displayTitle, 64, lineHeight = 0.98f, maxLines = 3)
+                        Title(item.displayTitle, if (narrow) 40 else 64, lineHeight = 0.98f, maxLines = 3)
                         if (item.isEpisode) {
                             if (item.season != null && item.index != null) Text("Season ${item.season} · Episode ${item.index}", style = body(24.sp, 700), color = C.text)
                             Muted(item.name, 22, maxLines = 2)
@@ -257,10 +262,9 @@ private fun NowPlaying(v: NodeView) {
                         contentAlignment = Alignment.Center,
                     ) { Icon(if (pb.session.paused) Solid.Play else Solid.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(44.dp)) }
                     SkipButton(back = false) { m.control(v.node.id, "Seek", (pos + 10 * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
-                    Spacer(Modifier.weight(1f))
-                    next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, Modifier.height(68.dp), leading = Solid.Next) }
-                    NickButton("Stop", { m.control(v.node.id, "Stop") }, Modifier.height(68.dp), leading = Solid.Stop)
+                    if (!narrow) { Spacer(Modifier.weight(1f)); nextAndStop() }
                 }
+                if (narrow) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { nextAndStop() }
             }
         }
         if (narrow) {
