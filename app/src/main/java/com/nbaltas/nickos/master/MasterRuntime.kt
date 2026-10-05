@@ -180,11 +180,19 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     // ---- pairing ----
     data class PairResult(val node: LinkedNode, val status: NodeStatus)
 
-    /** Tries the code against every NickOS tablet on the WiFi; only the one showing it accepts. */
-    suspend fun pair(code: String): PairResult? = withContext(Dispatchers.IO) {
+    /**
+     * Tries the code against every NickOS tablet on the WiFi; only the one showing it accepts.
+     * [manual] ("192.168.1.23" or "host:port") is tried too, for networks where mDNS doesn't get through.
+     */
+    suspend fun pair(code: String, manual: String? = null): PairResult? = withContext(Dispatchers.IO) {
+        val typed = manual?.trim()?.takeIf { it.isNotEmpty() }?.let { a ->
+            val host = a.substringBeforeLast(':').takeIf { ':' in a } ?: a
+            host to (a.substringAfterLast(':', "").toIntOrNull() ?: Wire.PORT)
+        }
         withTimeoutOrNull(15_000) {
             while (true) {
-                val tries = found.entries.map { (id, addr) -> async { tryPair(id, addr, code) } }
+                val targets = found.entries.map { it.key to it.value } + listOfNotNull(typed?.let { "" to it })
+                val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code) } }
                 tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
                 delay(1500)
             }

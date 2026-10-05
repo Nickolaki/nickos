@@ -6,9 +6,14 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -17,6 +22,7 @@ import com.nbaltas.nickos.node.NodeService
 import com.nbaltas.nickos.ui.master.MasterApp
 import com.nbaltas.nickos.ui.node.NodeApp
 import com.nbaltas.nickos.ui.setup.SetupFlow
+import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
 import com.nbaltas.nickos.ui.theme.ThemeMode
 
@@ -31,16 +37,20 @@ class MainActivity : ComponentActivity() {
             val theme by app.store.theme.collectAsState()
             LaunchedEffect(role) { onRoleChanged(role) }
             NickTheme(if (role == Role.MASTER) ThemeMode.valueOf(theme) else ThemeMode.DARK) {
-                when (role) {
-                    Role.NONE -> SetupFlow()
-                    Role.MASTER -> MasterApp()
-                    Role.NODE -> NodeApp(
-                        onKidMode = { app.node.parentUntil = 0; enterKidMode() },
-                        onParentMode = {
-                            app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
-                            try { stopLockTask() } catch (_: Exception) {}
-                        },
-                    )
+                // Android 15 always draws edge to edge: keep setup and Master screens clear of the
+                // status/navigation bars. The kid home hides the bars instead.
+                Box(Modifier.fillMaxSize().background(C.bg).then(if (role == Role.NODE) Modifier else Modifier.safeDrawingPadding())) {
+                    when (role) {
+                        Role.NONE -> SetupFlow()
+                        Role.MASTER -> MasterApp()
+                        Role.NODE -> NodeApp(
+                            onKidMode = { app.node.parentUntil = 0; enterKidMode() },
+                            onParentMode = {
+                                app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
+                                try { stopLockTask() } catch (_: Exception) {}
+                            },
+                        )
+                    }
                 }
             }
         }

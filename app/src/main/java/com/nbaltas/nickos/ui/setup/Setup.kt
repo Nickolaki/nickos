@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -96,7 +98,11 @@ fun SetupFlow() {
     val app = App.get(LocalContext.current)
     // A tablet set up from the Master's QR code is already known to be a kid tablet.
     val provisioned = remember { com.nbaltas.nickos.node.Provisioning.provisionedAsNode(app) }
-    var step by rememberSaveable { mutableStateOf(if (provisioned) Step.NODE_NAME else Step.WELCOME) }
+    // A Master that already linked a tablet but was closed before finishing picks up at Jellyfin.
+    val resumeMaster = remember { app.store.nodes.value.isNotEmpty() }
+    var step by rememberSaveable {
+        mutableStateOf(if (provisioned) Step.NODE_NAME else if (resumeMaster) Step.MASTER_JELLYFIN else Step.WELCOME)
+    }
     var linked by remember { mutableStateOf<MasterRuntime.PairResult?>(null) }
 
     val back: (() -> Unit)? = when (step) {
@@ -326,8 +332,16 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?) {
             Icon(Lucide.Wifi, null, tint = C.muted, modifier = Modifier.size(22.dp))
             Text("Waiting for the Master tablet on this WiFi…", style = body(18.sp), color = C.muted)
         }
+        val address = remember { wifiAddress() }
+        if (address != null) Text("Address: $address", style = body(16.sp, 600), color = C.muted)
     }
 }
+
+/** This tablet's LAN IPv4, for typing on the Master when the tablets can't find each other. */
+private fun wifiAddress(): String? = try {
+    java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+        .flatMap { it.inetAddresses.toList() }.firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }?.hostAddress
+} catch (e: Exception) { null }
 
 // ---------------- Master ----------------
 
@@ -339,12 +353,15 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
     var digits by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Typed address for networks where the tablets can't find each other by themselves.
+    var typing by rememberSaveable { mutableStateOf(false) }
+    var address by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) { app.master.start() }
 
     fun submit(code: String) {
         busy = true; error = null
         scope.launch {
-            val r = app.master.pair(code)
+            val r = app.master.pair(code, address)
             busy = false
             if (r != null) onLinked(r) else { error = "No tablet on this WiFi is showing $code"; digits = "" }
         }
@@ -362,6 +379,13 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                         "Brand-new or reset tablet? Set it up with a QR code",
                         style = body(19.sp, 700), color = C.accent, modifier = Modifier.clickable(onClick = onQr),
                     )
+                    if (typing) Column {
+                        FieldLabel("Kid's tablet address (shown under its code)")
+                        NickField(address, { address = it.trim() }, Modifier.widthIn(max = 460.dp), keyboard = androidx.compose.ui.text.input.KeyboardType.Uri, placeholder = "192.168.1.23")
+                    } else Text(
+                        "Tablet not found? Type its address",
+                        style = body(19.sp, 700), color = C.accent, modifier = Modifier.clickable { typing = true },
+                    )
                     if (!narrow) {
                         Column(
                             Modifier.padding(top = 20.dp).size(300.dp, 200.dp).border(3.dp, C.line, RoundedCornerShape(28.dp)),
@@ -373,17 +397,19 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                     }
                 }
             }
+            // Phones: six 76dp boxes don't fit in ~410dp, so shrink them.
+            val phone = maxWidth < 600.dp
             val pad: @Composable () -> Unit = {
-                Column(Modifier.width(520.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.widthIn(max = 520.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 12.dp)) {
                         (0 until 6).forEach { i ->
-                            if (i == 3) Spacer(Modifier.width(10.dp))
+                            if (i == 3) Spacer(Modifier.width(if (phone) 4.dp else 10.dp))
                             val active = i == digits.length && !busy
                             Box(
-                                Modifier.size(76.dp, 100.dp).clip(RoundedCornerShape(20.dp)).background(C.surface)
+                                Modifier.size(if (phone) 48.dp else 76.dp, if (phone) 68.dp else 100.dp).clip(RoundedCornerShape(20.dp)).background(C.surface)
                                     .border(3.dp, if (active) C.accent else C.line, RoundedCornerShape(20.dp)),
                                 contentAlignment = Alignment.Center,
-                            ) { Text(digits.getOrNull(i)?.toString() ?: "", style = disp(56.sp), color = C.text) }
+                            ) { Text(digits.getOrNull(i)?.toString() ?: "", style = disp(if (phone) 36.sp else 56.sp), color = C.text) }
                         }
                     }
                     Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
@@ -395,7 +421,7 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                     Keypad(
                         onDigit = { d -> if (!busy && digits.length < 6) { digits += d; error = null; if (digits.length == 6) submit(digits) } },
                         onDelete = { if (!busy) digits = digits.dropLast(1) },
-                        modifier = Modifier.width(480.dp),
+                        modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
                         keyHeight = 76.dp,
                     )
                 }
@@ -414,6 +440,7 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue: () -> Unit, continueLabel: String = "Continue") {
     Column(Modifier.fillMaxSize()) {
@@ -428,7 +455,12 @@ fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue:
             }
             Title("${r.node.name} is linked", 56, lineHeight = 1f)
             TabletSummaryRow(r.node.name, r.node.color, r.node.avatar, r.status)
-            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Wraps to two lines on a phone instead of squashing Continue.
+            FlowRow(
+                Modifier.padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 NickButton("Add another tablet", onAnother, style = BtnStyle.GHOST, big = true, leading = Lucide.Plus)
                 NickButton(continueLabel, onContinue, Modifier.widthIn(min = 220.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
             }
@@ -439,7 +471,7 @@ fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue:
 @Composable
 private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeStatus) {
     Row(
-        Modifier.width(520.dp).clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp),
+        Modifier.widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Avatar(name, color, avatar, 64.dp)
