@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -143,12 +144,17 @@ private fun LibraryHome(v: NodeView, jf: Jellyfin, uid: String, open: (JfItem) -
     var mode by remember(v.node.id) { mutableIntStateOf(0) }
     var query by remember(v.node.id) { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(top = 26.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+        // Phone width: the tabs fill the row, so search gets a full-width row of its own.
+        val phone = LocalConfiguration.current.screenWidthDp < 600
         Row(Modifier.padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Segmented(listOf("Home" to null, "Movies" to null, "Shows" to null, "History" to null), mode, { mode = it; query = "" }, height = 52.dp)
             Muted("${v.node.jfUserName ?: "Their"}'s library", 16, weight = 600, maxLines = 1)
-            Spacer(Modifier.weight(1f))
-            SearchBox(query, { query = it }, Modifier.widthIn(max = 420.dp).weight(1f, fill = false))
+            if (!phone) {
+                Spacer(Modifier.weight(1f))
+                SearchBox(query, { query = it }, Modifier.widthIn(max = 420.dp).weight(1f, fill = false))
+            }
         }
+        if (phone) SearchBox(query, { query = it }, Modifier.padding(horizontal = 40.dp).fillMaxWidth())
         when {
             query.isNotBlank() -> {
                 val results by produceState<List<JfItem>?>(null, query) {

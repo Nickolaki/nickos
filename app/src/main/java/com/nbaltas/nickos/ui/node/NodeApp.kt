@@ -94,10 +94,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onPairAnother = { screen = NodeScreen.PAIR },
             onUpdate = { scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) } },
             onReset = {
-                rt.device.releaseLockdown()
-                (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
-                NodeService.stop(ctx)
-                store.resetAll()
+                scope.launch {
+                    rt.sayGoodbye()
+                    rt.device.releaseLockdown()
+                    (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
+                    NodeService.stop(ctx)
+                    store.resetAll()
+                }
             },
         )
 

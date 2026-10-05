@@ -242,9 +242,14 @@ private fun NowPlaying(v: NodeView) {
                         } else Muted(episodeLine(item), 22)
                     }
                 }
+                // Jellyfin's integrated player only takes media keys (back 10 s, forward 30 s), so it
+                // can't be scrubbed: show progress only. The Web player setting gives a real scrub bar.
+                val integrated = !pb.session.remote
+                val fwdSecs = if (integrated) 30 else 10
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val frac = scrub ?: if (item.runTicks > 0) pos.toFloat() / item.runTicks else 0f
-                    NickSlider(
+                    if (integrated) ProgressBar(frac, Modifier.padding(vertical = 12.dp), height = 14.dp, track = C.line)
+                    else NickSlider(
                         value = frac,
                         onChange = { scrub = it },
                         onCommit = { f -> scrub = null; m.control(v.node.id, "Seek", (f * item.runTicks).toLong()) },
@@ -261,7 +266,7 @@ private fun NowPlaying(v: NodeView) {
                             .clickable { m.control(v.node.id, if (pb.session.paused) "Unpause" else "Pause") },
                         contentAlignment = Alignment.Center,
                     ) { Icon(if (pb.session.paused) Solid.Play else Solid.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(44.dp)) }
-                    SkipButton(back = false) { m.control(v.node.id, "Seek", (pos + 10 * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
+                    SkipButton(back = false, secs = fwdSecs) { m.control(v.node.id, "Seek", (pos + fwdSecs * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
                     if (!narrow) { Spacer(Modifier.weight(1f)); nextAndStop() }
                 }
                 if (narrow) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { nextAndStop() }
@@ -280,10 +285,10 @@ private fun NowPlaying(v: NodeView) {
 }
 
 @Composable
-private fun SkipButton(back: Boolean, onClick: () -> Unit) {
+private fun SkipButton(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
     Box(Modifier.size(76.dp).clip(CircleShape).background(C.surface2).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back 10 seconds" else "Forward 10 seconds", tint = C.text, modifier = Modifier.size(34.dp))
-        Text("10", style = body(10.sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
+        Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(34.dp))
+        Text("$secs", style = body(10.sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
@@ -385,6 +390,12 @@ private fun OfflineBody(v: NodeView, onAll: () -> Unit) {
             NickButton("Try again", { m.reconnect(v.node.id) }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
             NickButton("All tablets", onAll, style = BtnStyle.GHOST, big = true)
         }
+        // A tablet reset while this one was away never said goodbye: let the parent forget it here.
+        var confirmUnlink by remember { mutableStateOf(false) }
+        Muted("Reset or gave it away? Unlink it so it stops showing here.", 17, Modifier.padding(top = 10.dp))
+        NickButton(if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", {
+            if (confirmUnlink) { m.unlink(v.node.id); onAll() } else confirmUnlink = true
+        }, style = BtnStyle.DANGER, leading = Lucide.Unlink)
     }
 }
 
@@ -507,7 +518,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
             { mod ->
                 DeviceCard(mod, Lucide.Moon, "Bedtime") {
                     val at = st?.bedtimeAt ?: 0
-                    val left = if (at > 0) ((at - now) / 60_000 + 1).toInt().coerceAtLeast(0) else 0
+                    val left = if (at > 0) com.nbaltas.nickos.ui.theme.minutesLeft(at - now) else 0
                     var chosen by remember { mutableStateOf<Int?>(null) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(15, 30, 45, 60).forEach { min ->

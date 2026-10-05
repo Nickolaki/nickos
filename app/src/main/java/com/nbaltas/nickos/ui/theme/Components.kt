@@ -240,6 +240,9 @@ fun Battery(pct: Int?, charging: Boolean, textSize: Int, iconSize: Dp = 28.dp, d
     }
 }
 
+/** Whole minutes left, rounded up: the Master's bedtime countdown and the kid's toast both use it. */
+fun minutesLeft(ms: Long): Int = ((ms.coerceAtLeast(0) + 59_999) / 60_000).toInt()
+
 // ---- Eyebrow / labels ----
 
 @Composable

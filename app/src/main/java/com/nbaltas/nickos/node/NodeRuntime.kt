@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetSocketAddress
@@ -175,6 +177,15 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         device.jellyfinPackage()?.let { device.launch(it) }
         // Called from a tap: socket writes on the main thread throw, and Conn.send then closes the link.
         scope.launch { broadcast(JSONObject().put("t", "want").put("itemId", itemId)) }
+    }
+
+    /**
+     * "Reset this tablet": tell the connected Masters first, so they unlink it instead of showing
+     * it Offline forever. Best effort: a Master that's away has to unlink it by hand.
+     */
+    suspend fun sayGoodbye() = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(2000) { broadcast(JSONObject().put("t", "reset")) }
+        delay(300)
     }
 
     // ---- commands from a Master ----

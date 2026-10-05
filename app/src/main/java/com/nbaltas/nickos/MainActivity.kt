@@ -1,6 +1,7 @@
 package com.nbaltas.nickos
 
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -59,6 +60,9 @@ class MainActivity : ComponentActivity() {
                                 app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
                                 app.node.device.pauseLockdown()
                                 try { stopLockTask() } catch (_: Exception) {}
+                                // A screen-off (lockNow) leaves the keyguard pending behind lock task;
+                                // it would pop up as soon as the parent leaves kid mode.
+                                getSystemService(KeyguardManager::class.java).requestDismissKeyguard(this@MainActivity, null)
                             },
                         )
                     }

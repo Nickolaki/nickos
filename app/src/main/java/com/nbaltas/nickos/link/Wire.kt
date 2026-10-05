@@ -26,7 +26,7 @@ import java.net.Socket
  *
  * Master → Node: {"t":"pair",code,...} | {"t":"hello",masterId,token} | {"t":"cmd","c":...}
  * Node → Master: {"t":"paired",token,...} | {"t":"welcome"} | {"t":"denied"} | {"t":"status",...}
- *                | {"t":"apps",list} | {"t":"want",itemId}
+ *                | {"t":"apps",list} | {"t":"want",itemId} | {"t":"reset"} (about to wipe itself)
  */
 object Wire {
     const val SERVICE_TYPE = "_nickos._tcp."

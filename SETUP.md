@@ -25,6 +25,9 @@ Android's rule for kid lock, same as the adb route below.
 1. Install NickOS, open it, pick **Node**, name the tablet, then leave the 6-digit code on screen.
 2. When Android asks, make NickOS the **Home app** ("Always").
 3. Install the **Jellyfin** app (`org.jellyfin.mobile`) and sign it in as the kid's Jellyfin user.
+   Leave its player on the default **Integrated** player: it plays more file types directly. From the
+   Master you get play/pause/stop and skip (back 10 s, forward 30 s) but no dragging to a spot.
+   Jellyfin's **Web player** setting gives full scrubbing from the Master, at the cost of codec support.
 
 ### Kid lock (one time, over adb)
 

@@ -363,7 +363,7 @@ fun BedtimeToast(secondsLeft: Int) {
             Box(Modifier.size(76.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
                 Icon(Lucide.Moon, null, tint = C.onAccent, modifier = Modifier.size(34.dp))
             }
-            val mins = (secondsLeft + 59) / 60
+            val mins = com.nbaltas.nickos.ui.theme.minutesLeft(secondsLeft * 1000L)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Bedtime in $mins minute${if (mins == 1) "" else "s"}", style = disp(32.sp), color = C.onAccent)
                 Text("Find a good spot to stop.", style = body(19.sp, 600), color = NodePalette.toastSub)

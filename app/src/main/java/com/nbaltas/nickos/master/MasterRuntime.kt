@@ -251,6 +251,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "status" -> onStatus(n.id, m)
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
+                "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }
     }
@@ -325,8 +326,15 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     fun unlink(id: String) {
         send(id, cmd("unlink"))
-        scope.launch { delay(500); conns.remove(id)?.close(); store.removeNode(id) }
+        scope.launch { delay(500); forget(id) }
         _status.update { it - id }
+    }
+
+    private fun forget(id: String) {
+        conns.remove(id)?.close()
+        store.removeNode(id)
+        _status.update { it - id }
+        _online.update { it - id }
     }
 
     private fun patch(id: String, f: (NodeStatus) -> NodeStatus) = _status.update { m -> m[id]?.let { m + (id to f(it)) } ?: m }

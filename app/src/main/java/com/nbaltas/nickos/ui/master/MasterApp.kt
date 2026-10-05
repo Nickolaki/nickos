@@ -325,7 +325,9 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
                 Title(v.node.name, 28, maxLines = 1, lineHeight = 1.05f)
                 StatusLine(v, 16, 12.dp)
             }
-            Battery(v.battery, v.status?.charging == true && v.online, 40, 30.dp)
+            // Phone width: a smaller battery leaves room for the kid's name.
+            val phone = LocalConfiguration.current.screenWidthDp < 600
+            Battery(v.battery, v.status?.charging == true && v.online, if (phone) 24 else 40, if (phone) 22.dp else 30.dp)
         }
         val pb = v.playback
         val item = pb?.item
@@ -336,7 +338,7 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Title("Can't reach this tablet", 28, lineHeight = 1.1f)
-                    Muted("Check it's switched on and on the same WiFi.", 18)
+                    Muted("Check it's switched on and on the same WiFi. Reset it? Tap to unlink.", 18)
                 }
             }
             pb != null && item != null -> Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
