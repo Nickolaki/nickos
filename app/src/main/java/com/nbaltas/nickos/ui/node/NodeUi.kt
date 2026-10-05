@@ -145,8 +145,8 @@ fun NodeHome(
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Box(Modifier.hiddenHold(onHold = onHold)) { Avatar(name, color, avatar, 68.dp) }
-            Text("Hi ${kidName(name)}", style = disp(40.sp), color = NodeText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            Spacer(Modifier.weight(1f))
+            // One weighted item: a second weighted Spacer would split the free space and leave a gap at the right edge.
+            Text("Hi ${kidName(name)}", style = disp(40.sp), color = NodeText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (!portrait) chip()
             Battery(battery.first, battery.second, 30, 26.dp, color = NodeText)
             Text(clockText(now), style = disp(48.sp), color = NodeText)

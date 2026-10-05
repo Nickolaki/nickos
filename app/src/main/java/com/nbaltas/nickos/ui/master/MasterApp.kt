@@ -229,16 +229,18 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
             quick.mapNotNull { pkg -> try { pkg to ctx.packageManager.getApplicationIcon(pkg).toSmallBitmap(120) } catch (e: Exception) { null } }
         }
     }
+    // Phone-width Master: drop the name chip so Cameras and Settings stay on screen.
+    val phone = LocalConfiguration.current.screenWidthDp < 600
     Row(
         Modifier.fillMaxWidth().height(104.dp).padding(horizontal = pad),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 28.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(SimpleDateFormat("h:mm", Locale.getDefault()).format(Date(now)), style = disp(48.sp, 800, 1f), color = C.text)
             Text(SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(now)), style = body(16.sp, 600), color = C.muted)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            icons.forEach { (pkg, bmp) ->
+            icons.take(if (phone) 0 else icons.size).forEach { (pkg, bmp) ->
                 Box(
                     Modifier.size(60.dp).clip(RoundedCornerShape(16.dp)).background(C.surface2).clickable { launchLocal(ctx, pkg) },
                     contentAlignment = Alignment.Center,
@@ -256,7 +258,7 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
                 Text("Update", style = body(16.sp, 700), color = C.onAccent)
             }
         }
-        Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onSettings), height = 48.dp) {
+        if (!phone) Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onSettings), height = 48.dp) {
             Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(20.dp).rotate90())
             Text("${name.ifBlank { "Parent's Tablet" }} · Master", style = body(16.sp, 700), color = C.text, maxLines = 1)
         }

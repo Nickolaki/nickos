@@ -42,7 +42,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val lockedBy by store.lockedBy.collectAsState()
     val warn by rt.bedtimeWarning.collectAsState()
     val pin by store.pin.collectAsState()
-    var screen by remember { mutableStateOf(NodeScreen.HOME) }
+    // Leaving lock task makes Android start Home again in a new task, so this screen is rebuilt
+    // right after the PIN: reopen the parent menu while parent mode is on.
+    var screen by remember { mutableStateOf(if (rt.parentMode) NodeScreen.MENU else NodeScreen.HOME) }
     val scope = rememberCoroutineScope()
 
     BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU) screen = NodeScreen.HOME }
@@ -98,10 +100,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             },
         )
 
-        // Without the overlay permission these draw here instead of over other apps.
-        if (!canOverlay) {
-            warn?.let { if (lockedBy == null) BedtimeToast(it) }
-            if (lockedBy != null) LockedScreen(store, lockedBy)
-        }
+        // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),
+        // so the toast always draws here on the home screen. The wall too without the overlay permission.
+        warn?.let { if (lockedBy == null) BedtimeToast(it) }
+        if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
     }
 }

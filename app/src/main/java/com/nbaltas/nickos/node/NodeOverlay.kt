@@ -46,8 +46,10 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         }
         if (locked && lockView == null) lockView = add(fullScreen = true) { LockedOverlayContent(store) }
         if (!locked && lockView != null) { remove(lockView); lockView = null }
-        if (warn && !locked && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
-        if ((!warn || locked) && toastView != null) { remove(toastView); toastView = null }
+        // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
+        val toast = warn && !locked && !rt.homeVisible
+        if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
+        if (!toast && toastView != null) { remove(toastView); toastView = null }
     }
 
     fun hideAll() = main.post {

@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -134,32 +135,39 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
 
 @Composable
 private fun ControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBack: () -> Unit) {
+    val phone = LocalConfiguration.current.screenWidthDp < 600
     val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet)
     BoxWithConstraints(Modifier.fillMaxWidth().background(C.bg)) {
         val narrow = maxWidth < 1100.dp
-        val who: @Composable () -> Unit = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        val who: @Composable (Modifier) -> Unit = { modifier ->
+            Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 16.dp)) {
                 BackButton(onBack)
                 Avatar(v.node.name, v.node.color, v.node.avatar, 52.dp)
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(if (phone) Modifier.weight(1f) else Modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Title(v.node.name, 25, maxLines = 1)
                     StatusLine(v, 15, 10.dp)
                 }
             }
         }
-        val battery: @Composable () -> Unit = { Battery(v.battery, v.status?.charging == true && v.online, 38, 30.dp) }
+        val battery: @Composable () -> Unit = {
+            Battery(v.battery, v.status?.charging == true && v.online, if (phone) 24 else 38, if (phone) 24.dp else 30.dp)
+        }
         Column {
             if (narrow) {
                 Row(Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 32.dp), verticalAlignment = Alignment.CenterVertically) {
-                    who(); Spacer(Modifier.weight(1f)); battery()
+                    if (phone) { who(Modifier.weight(1f)); Spacer(Modifier.width(8.dp)) }
+                    else { who(Modifier); Spacer(Modifier.weight(1f)) }
+                    battery()
                 }
-                Row(Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, bottom = 16.dp)) { Segmented(tabs, tab, onTab) }
+                Row(Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, bottom = 16.dp)) {
+                    Segmented(tabs, tab, onTab, modifier = if (phone) Modifier.fillMaxWidth() else Modifier, compact = phone)
+                }
             } else {
                 Row(
                     Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 32.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
-                    who()
+                    who(Modifier)
                     Segmented(tabs, tab, onTab)
                     Spacer(Modifier.weight(1f))
                     battery()
@@ -395,8 +403,8 @@ private fun AppsTab(v: NodeView) {
     val allowed = st?.allowed.orEmpty()
     val open = st?.fg
     Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 26.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val intro: @Composable (Modifier) -> Unit = { mod ->
+            Column(mod, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Tap an app to open it on ${v.node.name} now.", style = body(20.sp, 700), color = C.text)
                 Text(
                     buildAnnotatedString {
@@ -408,12 +416,23 @@ private fun AppsTab(v: NodeView) {
                     style = body(17.sp), color = C.muted,
                 )
             }
+        }
+        val buttons: @Composable () -> Unit = {
             NickButton("Bring back to home", { m.home(v.node.id) }, leading = Lucide.House)
             val locked = st?.lockedApp
             when {
                 locked != null -> NickButton("Unlock ${apps?.firstOrNull { it.pkg == locked }?.label ?: "app"}", { m.lockToApp(v.node.id, null) }, style = BtnStyle.PRIMARY, leading = Lucide.LockOpen)
                 open != null -> NickButton("Lock to ${st.fgLabel ?: "this app"}", { m.lockToApp(v.node.id, open) }, style = BtnStyle.PRIMARY, leading = Lucide.Lock)
             }
+        }
+        // Phone-width Master: text above the buttons instead of squeezed beside them.
+        if (LocalConfiguration.current.screenWidthDp < 600) {
+            intro(Modifier.fillMaxWidth())
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+        } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            intro(Modifier.weight(1f))
+            buttons()
         }
         if (apps == null) {
             Muted("Getting the app list from ${v.node.name}…", 19)

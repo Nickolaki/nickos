@@ -236,7 +236,7 @@ fun Battery(pct: Int?, charging: Boolean, textSize: Int, iconSize: Dp = 28.dp, d
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(batteryIcon(pct ?: 100, charging), null, tint = col, modifier = Modifier.size(iconSize))
-        Text(if (pct == null) "–" else "$pct%", style = disp(textSize.sp, 800, 1f), color = col)
+        Text(if (pct == null) "–" else "$pct%", style = disp(textSize.sp, 800, 1f), color = col, maxLines = 1, softWrap = false)
     }
 }
 
@@ -416,6 +416,7 @@ fun Segmented(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     height: Dp = 56.dp,
+    compact: Boolean = false,
 ) {
     val c = C
     Row(
@@ -425,14 +426,14 @@ fun Segmented(
         items.forEachIndexed { i, (label, icon) ->
             val on = i == selected
             Row(
-                Modifier.height(height).clip(RoundedCornerShape(15.dp)).background(if (on) c.accent else Color.Transparent)
+                (if (compact) Modifier.weight(1f) else Modifier).height(height).clip(RoundedCornerShape(15.dp)).background(if (on) c.accent else Color.Transparent)
                     .clickable { onSelect(i) }.padding(horizontal = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = if (compact) Arrangement.Center else Arrangement.spacedBy(10.dp),
             ) {
                 val col = if (on) c.onAccent else c.muted
-                if (icon != null) Icon(icon, null, tint = col, modifier = Modifier.size(18.dp))
-                Text(label, style = body(18.sp, 700), color = col, maxLines = 1)
+                if (icon != null) Icon(icon, if (compact) label else null, tint = col, modifier = Modifier.size(18.dp))
+                if (!compact || icon == null) Text(label, style = body(18.sp, 700), color = col, maxLines = 1)
             }
         }
     }
