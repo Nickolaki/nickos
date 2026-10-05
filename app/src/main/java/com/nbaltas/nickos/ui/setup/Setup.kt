@@ -400,7 +400,8 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
             // Phones: six 76dp boxes don't fit in ~410dp, so shrink them.
             val phone = maxWidth < 600.dp
             val pad: @Composable () -> Unit = {
-                Column(Modifier.widthIn(max = 520.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                // 6 boxes of 76 + gaps = 526dp.
+                Column(Modifier.widthIn(max = 540.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(horizontalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 12.dp)) {
                         (0 until 6).forEach { i ->
                             if (i == 3) Spacer(Modifier.width(if (phone) 4.dp else 10.dp))
