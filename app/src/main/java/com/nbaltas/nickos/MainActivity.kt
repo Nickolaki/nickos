@@ -10,7 +10,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -36,7 +38,15 @@ class MainActivity : ComponentActivity() {
             val role by app.store.role.collectAsState()
             val theme by app.store.theme.collectAsState()
             LaunchedEffect(role) { onRoleChanged(role) }
-            NickTheme(if (role == Role.MASTER) ThemeMode.valueOf(theme) else ThemeMode.DARK) {
+            val mode = if (role == Role.MASTER) ThemeMode.valueOf(theme) else ThemeMode.DARK
+            val dark = mode == ThemeMode.DARK || (mode == ThemeMode.SYSTEM && isSystemInDarkTheme())
+            // Dark status/nav bar icons on the light theme, or they vanish into the background.
+            SideEffect {
+                WindowInsetsControllerCompat(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark
+                }
+            }
+            NickTheme(mode) {
                 // Android 15 always draws edge to edge: keep setup and Master screens clear of the
                 // status/navigation bars. The kid home hides the bars instead.
                 Box(Modifier.fillMaxSize().background(C.bg).then(if (role == Role.NODE) Modifier else Modifier.safeDrawingPadding())) {
