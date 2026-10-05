@@ -173,7 +173,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Kid tapped a "keep watching" poster: ask the Master(s) to start it in Jellyfin. */
     fun want(itemId: String) {
         device.jellyfinPackage()?.let { device.launch(it) }
-        broadcast(JSONObject().put("t", "want").put("itemId", itemId))
+        // Called from a tap: socket writes on the main thread throw, and Conn.send then closes the link.
+        scope.launch { broadcast(JSONObject().put("t", "want").put("itemId", itemId)) }
     }
 
     // ---- commands from a Master ----

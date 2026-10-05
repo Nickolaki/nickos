@@ -405,6 +405,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             }
             if (s == null) { _toast.value = "Jellyfin on ${n.name} isn't signed in as ${n.jfUserName ?: "their user"}"; return@launch }
             delay(1500)
+        } else {
+            // Jellyfin in the background (or only just opened by the kid's poster tap) still lists its
+            // session but drops remote commands until its page reconnects: bring it up and wait.
+            val st = _status.value[id]
+            if (st?.jf != null && st.fg != st.jf) { open(id, st.jf); delay(3000) }
         }
         val ok = jf { it.playNow(s.id, itemId, startTicks); true } == true
         _toast.value = if (ok) null else "Couldn't start it. Try again."
