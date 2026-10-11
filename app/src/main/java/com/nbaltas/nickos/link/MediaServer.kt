@@ -3,6 +3,7 @@ package com.nbaltas.nickos.link
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.node.LocalVideos
@@ -66,16 +67,41 @@ class WifiHold(ctx: Context) {
 /**
  * Hands movies to other tablets over HTTP on the home WiFi, so a copy needs no server and no
  * internet. Runs on any tablet that has the file. The only route is `GET /v/<fid>?k=<key>`:
- * a movie is named by its fingerprint, never by a path, there is no listing, and [key] is made
- * up fresh each time the app starts and only ever handed to a linked Master. `Range` requests
- * are honoured so an interrupted copy carries on from the byte it reached.
+ * a movie is named by its fingerprint, never by a path, and there is no listing. Nothing is
+ * served until a linked Master asks for that one movie ([grant]); the key it gets back opens that
+ * movie only, and stops working [GRANT_MS] after the last time it was asked for. Requests from
+ * anywhere but a private home-network address are refused, whatever key they carry, so a tablet
+ * on mobile data is not offering files to the internet. `Range` requests are honoured so an
+ * interrupted copy carries on from the byte it reached.
  *
  * Serving happens on the server's own threads. It never touches the player or the main thread.
  */
-class MediaServer(private val wanted: Int = PORT, private val hold: WifiHold? = null, private val resolve: (String) -> Served?) {
-    /** Goes into every url this server hands out. A request without it gets 403. */
-    val key: String = Store.randomHex(8)
+class MediaServer(
+    private val wanted: Int = PORT,
+    private val hold: WifiHold? = null,
+    /** Who may ask. The default is other devices on the same private network. */
+    private val allowPeer: (String) -> Boolean = LanAddress::isSiteLocal,
+    private val clock: () -> Long = { SystemClock.elapsedRealtime() },
+    private val resolve: (String) -> Served?,
+) {
+    private class Grant(val key: String, var until: Long)
+    private val grants = HashMap<String, Grant>()
     private var http: Http? = null
+
+    /**
+     * Lets [fid] be fetched and returns its key. Asking again keeps the same key (copies already
+     * running carry on) and pushes the expiry out.
+     */
+    fun grant(fid: String): String = synchronized(grants) {
+        val now = clock()
+        grants.values.removeAll { it.until < now }
+        grants.getOrPut(fid) { Grant(Store.randomHex(16), 0) }.also { it.until = now + GRANT_MS }.key
+    }
+
+    private fun granted(fid: String, key: String): Boolean = synchronized(grants) {
+        val g = grants[fid] ?: return false
+        g.until >= clock() && MessageDigest.isEqual(key.toByteArray(), g.key.toByteArray())
+    }
 
     /** The port really listened on, 0 while stopped. */
     val port: Int @Synchronized get() = http?.listeningPort?.takeIf { it > 0 } ?: 0
@@ -99,19 +125,21 @@ class MediaServer(private val wanted: Int = PORT, private val hold: WifiHold? = 
     fun stop() {
         try { http?.stop() } catch (_: Exception) {}
         http = null
+        synchronized(grants) { grants.clear() }
     }
 
-    /** Where another tablet fetches [fid] from, given the address this tablet is reached at. */
-    fun url(host: String, fid: String): String = "http://$host:$port/v/$fid?k=$key"
+    /** Where another tablet fetches [fid] from, given the address this tablet is reached at. Grants it. */
+    fun url(host: String, fid: String): String = "http://$host:$port/v/$fid?k=${grant(fid)}"
 
     private inner class Http(p: Int) : NanoHTTPD(p) {
         override fun serve(session: IHTTPSession): Response {
+            if (!allowPeer(session.remoteIpAddress ?: "")) return plain(Response.Status.FORBIDDEN)
             val path = session.uri ?: ""
             if ((session.method != Method.GET && session.method != Method.HEAD) || !path.startsWith("/v/")) return plain(Response.Status.NOT_FOUND)
             val fid = path.substring(3)
             if (fid.isEmpty() || !fid.all { it.isLetterOrDigit() }) return plain(Response.Status.NOT_FOUND)
             val k = session.parameters["k"]?.firstOrNull() ?: ""
-            if (!MessageDigest.isEqual(k.toByteArray(), key.toByteArray())) return plain(Response.Status.FORBIDDEN)
+            if (!granted(fid, k)) return plain(Response.Status.FORBIDDEN)
             val v = try { resolve(fid) } catch (e: Exception) { null } ?: return plain(Response.Status.NOT_FOUND)
 
             val header = session.headers["range"]
@@ -148,6 +176,8 @@ class MediaServer(private val wanted: Int = PORT, private val hold: WifiHold? = 
     companion object {
         private const val TAG = "NickOS.Media"
         const val PORT = 47471
+        /** How long a movie stays fetchable after a Master last asked for it. A copy that outlives it asks again. */
+        const val GRANT_MS = 6 * 60 * 60_000L
 
         /** A server over this tablet's own library. A movie not in the last scan gets one rescan. */
         fun of(videos: LocalVideos, hold: WifiHold?): MediaServer = MediaServer(PORT, hold) { fid ->

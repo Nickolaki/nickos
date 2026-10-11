@@ -62,7 +62,7 @@ class NodeTogether(
     private fun serving(fid: String): JSONObject {
         val v = videos.find(fid) ?: return SyncMessages.encodeServing(fid, false, err = "missing")
         if (!server.start()) return SyncMessages.encodeServing(fid, false, err = "server")
-        return SyncMessages.encodeServing(fid, true, server.port, server.key, v.size)
+        return SyncMessages.encodeServing(fid, true, server.port, server.grant(fid), v.size)
     }
 
     /** The runtime is stopping. */

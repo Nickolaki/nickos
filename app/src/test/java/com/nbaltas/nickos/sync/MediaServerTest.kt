@@ -27,12 +27,17 @@ class MediaServerTest {
     private lateinit var server: MediaServer
     private val http = OkHttpClient()
     private var opened = 0
+    private var now = 1000L
+    private lateinit var key: String
 
     @Before
     fun setUp() {
         file = File.createTempFile("nickos", ".mp4").apply { writeBytes(bytes) }
-        server = MediaServer(0) { fid -> if (fid == "abc") Served(file.length(), "video/mp4") { opened++; FileInputStream(file) } else null }
+        server = MediaServer(0, allowPeer = { true }, clock = { now }) { fid ->
+            if (fid == "abc" || fid == "other") Served(file.length(), "video/mp4") { opened++; FileInputStream(file) } else null
+        }
         assertTrue(server.start())
+        key = server.grant("abc")
     }
 
     @After
@@ -47,13 +52,45 @@ class MediaServerTest {
         return http.newCall(b.build()).execute()
     }
 
-    private fun good(fid: String = "abc") = "/v/$fid?k=${server.key}"
+    private fun good(fid: String = "abc") = "/v/$fid?k=$key"
 
     @Test
-    fun `a real port is reported and the url carries the key`() {
+    fun `a real port is reported and the url carries the movie's key`() {
         assertTrue(server.port > 0)
-        assertEquals("http://192.168.1.20:${server.port}/v/abc?k=${server.key}", server.url("192.168.1.20", "abc"))
-        assertEquals(16, server.key.length)
+        assertEquals("http://192.168.1.20:${server.port}/v/abc?k=$key", server.url("192.168.1.20", "abc"))
+        assertEquals(32, key.length)
+        assertEquals("asking again keeps the key", key, server.grant("abc"))
+    }
+
+    @Test
+    fun `a movie nobody asked for is not served, and one movie's key does not open another`() {
+        get("/v/other?k=$key").use { assertEquals(403, it.code) }
+        val other = server.grant("other")
+        assertTrue(other != key)
+        get("/v/abc?k=$other").use { assertEquals(403, it.code) }
+        get("/v/other?k=$other").use { assertEquals(200, it.code) }
+    }
+
+    @Test
+    fun `a key stops working six hours after it was last asked for`() {
+        now += MediaServer.GRANT_MS - 1
+        get(good()).use { assertEquals(200, it.code) }
+        now += 2
+        get(good()).use { assertEquals(403, it.code) }
+        val again = server.grant("abc")
+        assertTrue("an expired key is not handed out again", again != key)
+        get("/v/abc?k=$again").use { assertEquals(200, it.code) }
+    }
+
+    @Test
+    fun `a request from outside the home network is refused even with the key`() {
+        val strict = MediaServer(0) { _ -> Served(file.length(), "video/mp4") { FileInputStream(file) } }
+        try {
+            assertTrue(strict.start())
+            val k = strict.grant("abc")
+            // The test client arrives from 127.0.0.1, which is not a private LAN address.
+            http.newCall(Request.Builder().url("http://127.0.0.1:${strict.port}/v/abc?k=$k").build()).execute().use { assertEquals(403, it.code) }
+        } finally { strict.stop() }
     }
 
     @Test
@@ -65,11 +102,11 @@ class MediaServerTest {
 
     @Test
     fun `unknown fid and every other path are not found`() {
-        get(good("zzz")).use { assertEquals(404, it.code) }
-        get("/?k=${server.key}").use { assertEquals(404, it.code) }
-        get("/v/?k=${server.key}").use { assertEquals(404, it.code) }
-        get("/v/../abc?k=${server.key}").use { assertEquals(404, it.code) }
-        get("/files/abc?k=${server.key}").use { assertEquals(404, it.code) }
+        get("/v/zzz?k=${server.grant("zzz")}").use { assertEquals(404, it.code) }
+        get("/?k=$key").use { assertEquals(404, it.code) }
+        get("/v/?k=$key").use { assertEquals(404, it.code) }
+        get("/v/../abc?k=$key").use { assertEquals(404, it.code) }
+        get("/files/abc?k=$key").use { assertEquals(404, it.code) }
     }
 
     @Test
@@ -121,7 +158,7 @@ class MediaServerTest {
 
     @Test
     fun `a taken port falls back to a free one`() {
-        val second = MediaServer(server.port) { null }
+        val second = MediaServer(server.port) { _ -> null }
         try {
             assertTrue(second.start())
             assertTrue(second.port > 0 && second.port != server.port)
