@@ -16,6 +16,7 @@ import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.link.Conn
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.node.LocalVideos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -130,6 +131,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     val displayName get() = store.name.value.ifBlank { "Parent's Tablet" }
 
+    /** Watch together: this tablet's own movies, and the library, clocks and session across tablets. */
+    val videos = LocalVideos(ctx)
+    val sync = SyncController(this, store)
+
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
     @Synchronized
@@ -148,6 +153,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }
+        sync.startTicker()
         scope.launch {
             var last = store.pin.value
             store.pin.collect { p -> if (p != last) { last = p; conns.keys.forEach { send(it, cmd("pin").put("pin", p)) } } }
@@ -235,6 +241,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}") }
                 conns.remove(id)?.close()
                 _online.update { it - id }
+                sync.onDisconnected(id)
             }
             delay(3000)
         }
@@ -251,12 +258,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         send(n.id, cmd("pin").put("pin", store.pin.value))
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
+        sync.onConnected(n.id)
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
                 "status" -> onStatus(n.id, m)
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
+                "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }

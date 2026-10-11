@@ -1,7 +1,17 @@
 package com.nbaltas.nickos.sync
 
 /** A download job's state, shared by the Node's job runner and the Master's display of it. */
-enum class JobState { QUEUED, RUNNING, WAITING, VERIFYING, DONE, FAILED, CANCELLED }
+enum class JobState {
+    QUEUED, RUNNING, WAITING, VERIFYING, DONE, FAILED, CANCELLED;
+
+    /** The lowercase name in a `jobs` message. */
+    val wire: String get() = name.lowercase()
+
+    companion object {
+        /** Null for a state this build does not know. */
+        fun of(wire: String?): JobState? = entries.firstOrNull { it.wire == wire }
+    }
+}
 
 /**
  * Pure state-machine and backoff maths for [JobState]. The runner (`node/DownloadJobs.kt`) is
