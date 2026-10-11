@@ -83,6 +83,17 @@ class MjpegClientTest {
     }
 
     @Test
+    fun `a picture far bigger than a tablet camera sends is never decoded`() {
+        connect()
+        awaitClients(1)
+        server.push(jpeg(2400, 16), 0)
+        assertNull(frames.poll(500, TimeUnit.MILLISECONDS))
+        server.push(jpeg(64, 48), 0)
+        assertEquals(64, frames.poll(5, TimeUnit.SECONDS)?.bitmap?.width)
+        assertTrue(ended.isEmpty())
+    }
+
+    @Test
     fun `a refused key ends the stream as a key problem`() {
         connect(key = "stale")
         assertEquals(CamPlan.ENDED_KEY, ended.poll(5, TimeUnit.SECONDS))

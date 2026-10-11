@@ -321,6 +321,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 
+    /** The address a tablet's live link is connected to, or null when it has none. */
+    fun linkHost(id: String): String? = conns[id]?.takeIf { it.isOpen }?.socket?.inetAddress?.hostAddress
+
     fun reconnect(id: String) {
         conns.remove(id)?.close()
         linkJobs.remove(id)?.cancel()

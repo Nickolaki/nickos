@@ -72,6 +72,11 @@ class MjpegClient(
                     src.readUtf8LineStrict(2)
                     val now = clock()
                     if (any && now - last < MIN_GAP_MS) continue
+                    // The byte count says nothing about how big a picture unpacks to: look at its size
+                    // before decoding, and never decode one far beyond what a tablet camera sends.
+                    val size = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, size)
+                    if (size.outWidth <= 0 || size.outHeight <= 0 || size.outWidth > MAX_SIDE || size.outHeight > MAX_SIDE) continue
                     // A corrupt picture is skipped, not the end of the stream.
                     val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: continue
                     last = now
@@ -102,6 +107,8 @@ class MjpegClient(
         private const val TAG = "NickOS.Mjpeg"
         private const val MIN_GAP_MS = 1000L / 15
         private const val MAX_HEADER_LINES = 32
+        /** The biggest profile is 960 by 720; twice that each way is already not a tablet camera. */
+        private const val MAX_SIDE = 1920
 
         /** A stream has no end, so no call timeout; a silent one is given up on after 5 seconds. Home network only, so no proxy. */
         private val HTTP: OkHttpClient by lazy {
@@ -111,6 +118,9 @@ class MjpegClient(
                 .callTimeout(0, TimeUnit.SECONDS)
                 .proxy(Proxy.NO_PROXY)
                 .retryOnConnectionFailure(false)
+                // The tablet answers with the stream or not at all: it cannot send this Master somewhere else.
+                .followRedirects(false)
+                .followSslRedirects(false)
                 .build()
         }
     }

@@ -5,7 +5,7 @@ data class PartHeader(val length: Int, val rotation: Int = 0, val seq: Long = 0)
 
 object MjpegParser {
     /** No single picture is anywhere near this big; a longer claim is a broken or hostile stream. */
-    const val MAX_PART = 4 * 1024 * 1024
+    const val MAX_PART = 1024 * 1024
 
     /**
      * Reads the header lines of one part. A boundary line ("--nickos") and blank lines before

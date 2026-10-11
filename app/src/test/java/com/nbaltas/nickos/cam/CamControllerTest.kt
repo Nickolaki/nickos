@@ -40,10 +40,14 @@ class CamControllerTest {
     private val H = "hailey"
     private val L = "leo"
 
+    /** Where each tablet's live link is connected. By default, the address the Master remembers for it. */
+    private val linkHosts = HashMap<String, String?>()
+
     private fun controller() = CamController(
         port, store, clock = { now },
         open = { url, f, e -> Opened(url, f, e).also { opened += it } },
         soon = { it() },
+        linkHost = { id -> if (id in linkHosts) linkHosts[id] else port.linked.firstOrNull { it.id == id }?.host },
     )
 
     private fun capable(id: String) {
@@ -113,6 +117,22 @@ class CamControllerTest {
         assertEquals("http://192.168.1.21:47472/cam?k=abc123", s.url)
         c.tick()
         assertEquals(1, opened.size)
+    }
+
+    @Test
+    fun `the key only goes to the address the live link is connected to`() {
+        // The Master remembers 192.168.1.21 for Hailey, but her link is up at another address.
+        linkHosts[H] = "10.0.0.9"
+        assertEquals("http://10.0.0.9:47472/cam?k=abc123", watching().url)
+    }
+
+    @Test
+    fun `no live link address means no stream, whatever address is remembered`() {
+        linkHosts[H] = null
+        c.setViewing(true)
+        c.arm(H)
+        say(H, live())
+        assertTrue(opened.isEmpty())
     }
 
     @Test

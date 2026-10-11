@@ -42,8 +42,13 @@ class CamController(
         { url, onFrame, onEnded -> MjpegClient(url, onFrame, onEnded).start() },
     /** Runs a tick soon. Tests run it at once instead. */
     private val soon: ((() -> Unit) -> Unit)? = null,
+    /**
+     * The address a tablet's live link is connected to right now, or null. The stream key is only
+     * ever sent there: to the peer that proved itself with its token, not to a remembered address.
+     */
+    private val linkHost: (id: String) -> String? = { null },
 ) {
-    constructor(rt: MasterRuntime, store: Store) : this(RuntimePort(rt, store), store)
+    constructor(rt: MasterRuntime, store: Store) : this(RuntimePort(rt, store), store, linkHost = { rt.linkHost(it) })
 
     private class Client {
         var stream: CamStream? = null
@@ -216,7 +221,7 @@ class CamController(
                 if (cam != null) _states.update { it + (id to cam.copy(state = NodeCam.OFF, reason = NodeCam.STOPPED, receivedAt = now)) }
             }
             CamPlan.Want.CONNECT -> {
-                val url = CamPlan.streamUrl(n.host, cam?.port ?: 0, cam?.key) ?: return
+                val url = CamPlan.streamUrl(linkHost(id), cam?.port ?: 0, cam?.key) ?: return
                 val c = Client()
                 clients[id] = c
                 mine += id
