@@ -16,8 +16,9 @@ object SyncMessages {
 
     fun cmdPing(id: Int, t0: Long): JSONObject = cmd("ping").put("id", id).put("t0", t0)
     fun cmdVideos(): JSONObject = cmd("videos")
-    fun cmdSync(fid: String, pos: Long, at: Long, title: String): JSONObject =
-        cmd("sync").put("fid", fid).put("pos", pos).put("at", at).put("title", title)
+    /** [n] is how many tablets are in the session, so a Node can say "for you" or "on everyone's tablets". */
+    fun cmdSync(fid: String, pos: Long, at: Long, title: String, n: Int = 0): JSONObject =
+        cmd("sync").put("fid", fid).put("pos", pos).put("at", at).put("title", title).put("n", n)
     fun cmdSyncPause(): JSONObject = cmd("syncPause")
     fun cmdSyncStop(): JSONObject = cmd("syncStop")
     fun cmdServe(fid: String): JSONObject = cmd("serve").put("fid", fid)
@@ -28,11 +29,11 @@ object SyncMessages {
 
     private fun cmd(name: String): JSONObject = JSONObject().put("t", "cmd").put("c", name)
 
-    data class SyncCmdMsg(val fid: String, val pos: Long, val at: Long, val title: String)
+    data class SyncCmdMsg(val fid: String, val pos: Long, val at: Long, val title: String, val n: Int = 0)
 
     /** Decodes a `cmd` `sync` payload; null if `fid`, `pos`, `at` or `title` is missing. */
     fun decodeSyncCmd(o: JSONObject): SyncCmdMsg? = try {
-        SyncCmdMsg(o.getString("fid"), o.getLong("pos"), o.getLong("at"), o.getString("title"))
+        SyncCmdMsg(o.getString("fid"), o.getLong("pos"), o.getLong("at"), o.getString("title"), o.optInt("n"))
     } catch (e: Exception) { null }
 
     data class FetchCmdMsg(val fid: String, val url: String, val size: Long, val title: String, val name: String)

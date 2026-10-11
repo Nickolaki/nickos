@@ -41,6 +41,9 @@ class DriftPolicy {
 
         if (wasBuffering) {
             wasBuffering = false
+            // A seek makes the player buffer, so buffering inside the cool-down is our own seek
+            // landing, not a stall: measure it, do not seek again (that would loop forever).
+            if (now - lastSeekAt < SEEK_COOLDOWN_MS) return DriftAction.None
             nudging = false
             lastSeekAt = now
             pendingSeekMeasure = true
@@ -55,7 +58,7 @@ class DriftPolicy {
         }
 
         if (magnitude > 400) {
-            if (now - lastSeekAt < 3000) return DriftAction.None
+            if (now - lastSeekAt < SEEK_COOLDOWN_MS) return DriftAction.None
             lastSeekAt = now
             nudging = false
             pendingSeekMeasure = true
@@ -81,5 +84,6 @@ class DriftPolicy {
     private companion object {
         /** Far enough in the past that "now - lastSeekAt" never overflows and never cools down. */
         const val NEVER = -1_000_000_000_000L
+        const val SEEK_COOLDOWN_MS = 3000L
     }
 }

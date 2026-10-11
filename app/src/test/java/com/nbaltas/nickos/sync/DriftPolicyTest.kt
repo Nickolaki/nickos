@@ -77,4 +77,15 @@ class DriftPolicyTest {
         val p = DriftPolicy()
         assertEquals(DriftAction.None, p.decide(driftMs = 9999, playerState = PlayerState.READY, playing = false, now = 0, expected = 1000))
     }
+
+    @Test
+    fun `buffering caused by our own seek does not seek again`() {
+        val p = DriftPolicy()
+        assertTrue(p.decide(500, PlayerState.READY, true, now = 0, expected = 10_000) is DriftAction.Seek)
+        assertEquals(DriftAction.None, p.decide(0, PlayerState.BUFFERING, true, now = 500, expected = 10_500))
+        assertEquals(DriftAction.None, p.decide(20, PlayerState.READY, true, now = 1000, expected = 11_000))
+        // A real stall later, outside the cool-down, still gets its seek.
+        assertEquals(DriftAction.None, p.decide(0, PlayerState.BUFFERING, true, now = 9000, expected = 19_000))
+        assertTrue(p.decide(0, PlayerState.READY, true, now = 9500, expected = 19_500) is DriftAction.Seek)
+    }
 }
