@@ -119,10 +119,11 @@ object SyncMessages {
         return JSONObject().put("t", "jobs").put("list", arr)
     }
 
-    fun decodeJobs(o: JSONObject): JobsMsg? = try {
+    /** At most [max] entries are read; a longer list is cut, not rejected. */
+    fun decodeJobs(o: JSONObject, max: Int = 200): JobsMsg? = try {
         val arr = o.getJSONArray("list")
         val list = mutableListOf<JobEntry>()
-        for (i in 0 until arr.length()) {
+        for (i in 0 until minOf(arr.length(), max)) {
             val e = arr.optJSONObject(i) ?: continue
             try {
                 list.add(JobEntry(e.getString("fid"), e.getString("title"), e.getString("state"), e.getLong("done"), e.getLong("size"), e.optStr("err")))

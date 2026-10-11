@@ -128,7 +128,11 @@ class TransferController(
     fun onConnected(id: String) = synchronized(lock) { greet += id; Unit }
 
     fun onDisconnected(id: String) {
-        synchronized(lock) { greet -= id; asks -= id }
+        synchronized(lock) {
+            greet -= id; asks -= id
+            started.removeAll { it.startsWith("$id:") }
+            resent.keys.removeAll { it.startsWith("$id:") }
+        }
         _jobs.update { it - id }
     }
 
@@ -136,7 +140,7 @@ class TransferController(
     fun onMessage(id: String, m: JSONObject) {
         when (m.optString("t")) {
             "serving" -> SyncMessages.decodeServing(m)?.let { onServing(id, it) }
-            "jobs" -> SyncMessages.decodeJobs(m)?.let { onJobs(id, it.list.take(MAX_JOBS)) }
+            "jobs" -> SyncMessages.decodeJobs(m, MAX_JOBS)?.let { onJobs(id, it.list) }
         }
     }
 
@@ -158,11 +162,15 @@ class TransferController(
         for (j in list) {
             val key = "$id:${j.fid}"
             when (JobState.of(j.state)) {
-                JobState.DONE -> if (synchronized(lock) { started.remove(key) }) port.say("${sync.kid(id)} has ${j.title} now")
-                JobState.FAILED, JobState.CANCELLED -> synchronized(lock) { started -= key }
+                JobState.DONE -> if (synchronized(lock) { resent -= key; started.remove(key) }) port.say("${sync.kid(id)} has ${j.title.take(80)} now")
+                JobState.FAILED, JobState.CANCELLED -> synchronized(lock) { started -= key; resent -= key }
                 JobState.WAITING -> if (j.err == "source") {
                     // The tablet it was copying from has gone quiet. Find the movie somewhere else, not too often.
-                    val due = synchronized(lock) { (now - (resent[key] ?: Long.MIN_VALUE / 2) >= RESEND_MS).also { if (it) resent[key] = now } }
+                    // Only for a copy the parent started from here: a tablet's report alone never makes
+                    // this Master ask another tablet to serve a movie.
+                    val due = synchronized(lock) {
+                        key in started && (now - (resent[key] ?: Long.MIN_VALUE / 2) >= RESEND_MS).also { if (it) resent[key] = now }
+                    }
                     if (due) sync.library().firstOrNull { it.fid == j.fid }?.let { dispatch(it, setOf(id), quiet = true) }
                 }
                 else -> {}

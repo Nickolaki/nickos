@@ -216,6 +216,21 @@ class TransferControllerTest {
     }
 
     @Test
+    fun `a tablet's report alone never makes the Master ask another tablet to serve`() {
+        has(H, comet)
+        self(star)
+        jobs(L, job("f2", JobState.WAITING, 10, err = "source"), job("f1", JobState.WAITING, 0, err = "source", title = "Star Harbour"))
+        assertTrue(port.sent.isEmpty())
+        assertTrue(port.said.isEmpty())
+    }
+
+    @Test
+    fun `a very long jobs list is cut`() {
+        t.onMessage(L, SyncMessages.encodeJobs(List(500) { job("f$it", JobState.QUEUED) }))
+        assertEquals(50, t.jobs.value[L]!!.size)
+    }
+
+    @Test
     fun `a tablet is asked for its jobs once it is seen to be capable, and an old one never`() {
         port.add("old", "Zed's Tablet", capable = false)
         t.onConnected(L)
