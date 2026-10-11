@@ -10,9 +10,9 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Hands this tablet's camera pictures to a Master as MJPEG over plain HTTP: one long reply of
@@ -33,6 +33,8 @@ class CamServer(
     private val graceMs: Long = 5_000,
     private val firstGraceMs: Long = 15_000,
     private val allowPeer: (String) -> Boolean = ::lanOrLocal,
+    /** A request must be complete this soon after connecting, however slowly its bytes trickle in. */
+    private val headMs: Long = 5_000,
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     private class Client(val socket: Socket) {
@@ -43,7 +45,8 @@ class CamServer(
 
     private var server: ServerSocket? = null
     private val clients = CopyOnWriteArrayList<Client>()
-    private val pending = AtomicInteger(0)
+    /** Connections that have not finished asking yet, with when each connected. */
+    private val greeting = ConcurrentHashMap<Socket, Long>()
     private val idleFired = AtomicBoolean(false)
     @Volatile private var closed = false
     @Volatile private var hadClient = false
@@ -95,6 +98,7 @@ class CamServer(
         try { server?.close() } catch (_: Exception) {}
         clients.forEach { it.close() }
         clients.clear()
+        greeting.keys.forEach { try { it.close() } catch (_: Exception) {} }
         synchronized(slot) { slot.notifyAll() }
     }
 
@@ -102,8 +106,8 @@ class CamServer(
         while (!closed) {
             val s = try { ss.accept() } catch (e: Exception) { break }
             // A handful of half-open connections is all a stranger can hold.
-            if (pending.get() >= MAX_PENDING) { try { s.close() } catch (_: Exception) {}; continue }
-            pending.incrementAndGet()
+            if (greeting.size >= MAX_PENDING) { try { s.close() } catch (_: Exception) {}; continue }
+            greeting[s] = clock()
             Thread({ serve(s) }, "nickos-cam-client").apply { isDaemon = true }.start()
         }
     }
@@ -111,7 +115,7 @@ class CamServer(
     private fun serve(s: Socket) {
         var client: Client? = null
         try {
-            client = try { greet(s) } finally { pending.decrementAndGet() }
+            client = try { greet(s) } finally { greeting.remove(s) }
             if (client == null) return
             // The Master sends nothing more. Reading is how a closed connection is noticed at once,
             // even when the camera has no picture to write.
@@ -228,6 +232,8 @@ class CamServer(
             try { Thread.sleep(step) } catch (_: InterruptedException) { return }
             val now = clock()
             clients.forEach { c -> c.writeStart.let { w -> if (w != 0L && now - w > STALL_MS) c.close() } }
+            // A request that is still arriving after the deadline is cut off, so a few slow strangers cannot hold every slot.
+            greeting.forEach { (s, since) -> if (now - since > headMs) try { s.close() } catch (_: Exception) {} }
             val since = emptySince
             if (since >= 0 && clients.isEmpty() && now - since >= (if (hadClient) graceMs else firstGraceMs)) {
                 if (idleFired.compareAndSet(false, true)) {

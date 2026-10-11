@@ -179,6 +179,22 @@ class CamServerTest {
     }
 
     @Test
+    fun `a request that trickles in is cut off at the deadline`() {
+        val s = CamServer(key = "abc", onIdle = {}, preferredPort = 0, headMs = 300, clock = { System.nanoTime() / 1_000_000 })
+        server = s
+        assertTrue(s.start())
+        java.net.Socket("127.0.0.1", s.port).use { slow ->
+            slow.soTimeout = 5_000
+            slow.getOutputStream().apply { write("GET /cam?k=a".toByteArray()); flush() }
+            // The server gives up on it: the connection is closed with nothing sent back.
+            val closed = try { slow.getInputStream().read() == -1 } catch (e: java.net.SocketTimeoutException) { false } catch (e: java.io.IOException) { true }
+            assertTrue(closed)
+        }
+        // And the port still answers a proper request.
+        assertEquals(200, get(s, "/cam?k=abc").code)
+    }
+
+    @Test
     fun `stop closes the stream and never reports idle`() {
         val s = start(graceMs = 100)
         val r = get(s, "/cam?k=abc")
