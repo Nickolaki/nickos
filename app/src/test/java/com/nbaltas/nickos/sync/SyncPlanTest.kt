@@ -17,6 +17,24 @@ class SyncPlanTest {
     }
 
     @Test
+    fun `expectedPos holds at the anchor during the lead time before it`() {
+        val s = session(playing = true, anchorPos = 60_000, anchorAt = 5000)
+        assertEquals(60_000L, s.expectedPos(3500))
+        assertEquals(60_000L, s.expectedPos(5000))
+        assertEquals(60_100L, s.expectedPos(5100))
+    }
+
+    @Test
+    fun `sync states round-trip by wire name and an unknown one is null`() {
+        for (s in SyncState.entries) assertEquals(s, SyncState.of(s.wire))
+        assertEquals("buffering", SyncState.BUFFERING.wire)
+        assertEquals(null, SyncState.of("rewinding"))
+        assertEquals(null, SyncState.of(null))
+        assertEquals(true, SyncState.LOCKED.active)
+        assertEquals(false, SyncState.ENDED.active)
+    }
+
+    @Test
     fun `expectedPos returns anchorPos while paused regardless of time`() {
         val s = session(playing = false, anchorPos = 4000, anchorAt = 5000)
         assertEquals(4000L, s.expectedPos(5000))

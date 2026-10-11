@@ -79,6 +79,29 @@ class DriftPolicyTest {
     }
 
     @Test
+    fun `a seek the player made itself is measured and holds the cool-down`() {
+        val p = DriftPolicy()
+        p.noteSeek(now = 0)
+        assertEquals(DriftAction.None, p.decide(0, PlayerState.BUFFERING, true, now = 300, expected = 5300))
+        // Landed 120 ms late: no second seek, and the lead grows by what was measured.
+        assertEquals(DriftAction.None, p.decide(-120, PlayerState.READY, true, now = 800, expected = 5800))
+        assertEquals(320L, p.seekLeadMs)
+    }
+
+    @Test
+    fun `a soft reset keeps the learned seek lead and a full reset drops it`() {
+        val p = DriftPolicy()
+        p.noteSeek(now = 0)
+        p.decide(-300, PlayerState.READY, true, now = 500, expected = 5000)
+        assertEquals(500L, p.seekLeadMs)
+        p.reset(keepLead = true)
+        assertEquals(500L, p.seekLeadMs)
+        assertEquals(DriftAction.None, p.decide(10, PlayerState.READY, true, now = 600, expected = 5100))
+        p.reset()
+        assertEquals(200L, p.seekLeadMs)
+    }
+
+    @Test
     fun `buffering caused by our own seek does not seek again`() {
         val p = DriftPolicy()
         assertTrue(p.decide(500, PlayerState.READY, true, now = 0, expected = 10_000) is DriftAction.Seek)

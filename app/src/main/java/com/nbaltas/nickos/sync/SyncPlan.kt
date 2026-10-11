@@ -13,9 +13,12 @@ data class SyncSession(
     val anchorAt: Long,
     val playing: Boolean,
 ) {
-    /** Where playback should be at master-clock time [now]. */
+    /**
+     * Where playback should be at master-clock time [now]. Before [anchorAt] (the lead time after
+     * Play, a seek or a resume) every tablet is holding at [anchorPos], so that is the answer.
+     */
     fun expectedPos(now: Long): Long {
-        val pos = if (playing) anchorPos + (now - anchorAt) else anchorPos
+        val pos = if (playing) anchorPos + (now - anchorAt).coerceAtLeast(0) else anchorPos
         val clamped = if (durMs > 0) pos.coerceIn(0, durMs) else pos
         return clamped.coerceAtLeast(0)
     }

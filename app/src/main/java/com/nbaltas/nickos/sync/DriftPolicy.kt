@@ -73,12 +73,23 @@ class DriftPolicy {
         return DriftAction.None
     }
 
-    fun reset() {
+    /**
+     * The player itself just seeked at [now] (a late join or a resume that had to jump). The
+     * buffering that follows is that seek landing: measure it, and hold the cool-down.
+     */
+    fun noteSeek(now: Long) {
+        nudging = false
+        lastSeekAt = now
+        pendingSeekMeasure = true
+    }
+
+    /** [keepLead] keeps the learned seek lead: same file, same decoder, only the anchor moved. */
+    fun reset(keepLead: Boolean = false) {
         nudging = false
         wasBuffering = false
         lastSeekAt = NEVER
         pendingSeekMeasure = false
-        seekLeadMs = 200
+        if (!keepLead) seekLeadMs = 200
     }
 
     private companion object {

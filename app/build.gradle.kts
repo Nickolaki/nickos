@@ -80,6 +80,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.9.0")
     implementation("androidx.media3:media3-exoplayer-rtsp:1.9.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
+    // Watch together: PlayerView for the Node's synced player.
+    implementation("androidx.media3:media3-ui:1.9.0")
     // QR code for zero-adb kid tablet setup.
     implementation("com.google.zxing:core:3.5.3")
     // Lucide: the icon set the design handoff was drawn with.
