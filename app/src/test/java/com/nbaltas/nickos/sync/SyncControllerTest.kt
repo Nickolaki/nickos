@@ -346,6 +346,18 @@ class SyncControllerTest {
     }
 
     @Test
+    fun `a report for a movie the tablet is not known to have starts nothing`() {
+        link(H, 0)
+        report(H, SyncState.PLAYING, 77_000)
+        assertNull(c.session.value)
+        startBoth()
+        port.add("mia", "Mia's Tablet")
+        link("mia", 0)
+        report("mia", SyncState.PLAYING, 10)
+        assertEquals(setOf(H, L), c.session.value!!.nodes)
+    }
+
+    @Test
     fun `this tablet's own library sits under SELF`() {
         port.local = SyncMessages.VideosMsg(true, listOf(SyncMessages.VideoEntry("f9", "Moss and Pebble", "Moss and Pebble.mkv", 9_000_000, 0)))
         c.scanSelf()

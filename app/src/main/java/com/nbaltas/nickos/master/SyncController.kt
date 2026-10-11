@@ -189,14 +189,19 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         synchronized(lock) {
             val st = SyncState.of(msg.state) ?: return
             val now = clock()
-            val joinable = st.active && now >= (quiet[id] ?: 0L)
+            // A report can put a tablet into a session only for a movie the Master already knows that
+            // tablet has, and only from a tablet that can do Watch together. Anything else is ignored.
+            val known = capable(id) && _videos.value[id]?.list?.any { it.fid == msg.fid } == true
+            val joinable = st.active && known && now >= (quiet[id] ?: 0L)
+            val dur = msg.dur.coerceAtLeast(0)
+            val pos = if (dur > 0) msg.pos.coerceIn(0, dur) else msg.pos.coerceAtLeast(0)
             var s = _session.value
             if (s == null) {
                 // This app was restarted while tablets kept playing: take the session back from their reports.
                 if (!joinable) return
                 val at = clocks[id]?.offset?.let { msg.at - it } ?: now
                 val title = library().firstOrNull { it.fid == msg.fid }?.title ?: ""
-                s = SyncSession(msg.fid, title, msg.dur, setOf(id), msg.pos, at, st != SyncState.PAUSED && st != SyncState.LOCKED)
+                s = SyncSession(msg.fid, title, dur, setOf(id), pos, at, st != SyncState.PAUSED && st != SyncState.LOCKED)
                 _session.value = s
                 lastAnchor = now - REANCHOR_MS + ADOPT_SETTLE_MS // pull everyone onto one line shortly
             }
@@ -206,8 +211,8 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
                 s = s.copy(nodes = s.nodes + id)
                 _session.value = s
             }
-            _states.update { it + (id to NodeSyncState(st, msg.pos, msg.at, msg.dur, msg.rate, msg.err, now)) }
-            if (msg.dur > 0 && s.durMs <= 0) _session.value = s.copy(durMs = msg.dur)
+            _states.update { it + (id to NodeSyncState(st, pos, msg.at, dur, msg.rate, msg.err?.take(40), now)) }
+            if (dur > 0 && s.durMs <= 0) _session.value = s.copy(durMs = dur)
             when (st) {
                 SyncState.ENDED -> drop(id, ended = true)
                 SyncState.ERROR -> { port.say("${kid(id)}: ${TogetherText.error(msg.err)}"); drop(id) }
