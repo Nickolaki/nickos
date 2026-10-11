@@ -212,7 +212,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         if (c in NodeTogether.LEAVES_PLAYER) syncPlayer.stop()
         when (c) {
             // The camera answers with its own camState, never with a status broadcast.
-            "camStart" -> { CamMessages.decodeStart(m)?.let { cam.start(CamProfile.of(it.profile), it.maxMs, Store.randomHex(8)) }; return }
+            "camStart" -> { CamMessages.decodeStart(m)?.let { cam.start(CamProfile.of(it.profile), it.maxMs, Store.randomHex(16)) }; return }
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
