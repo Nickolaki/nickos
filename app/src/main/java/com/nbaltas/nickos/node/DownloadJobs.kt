@@ -27,6 +27,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.Call
+import okhttp3.Dns
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -38,6 +40,9 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.net.InetAddress
+import java.net.Proxy
+import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.TimeUnit
@@ -180,6 +185,7 @@ class DownloadJobs(
     fun fetch(m: SyncMessages.FetchCmdMsg) {
         if (m.size <= 0 || m.fid.isEmpty() || !m.fid.all { it.isLetterOrDigit() }) return
         val updated = synchronized(lock) {
+            if (jobs.size >= MAX_JOBS && jobs.none { it.fid == m.fid }) return // a queue this long is not a parent tapping Send
             val i = jobs.indexOfFirst { it.fid == m.fid && !DownloadPolicy.isTerminal(it.state) }
             if (i >= 0) { jobs[i] = jobs[i].copy(url = m.url, tries = DownloadPolicy.onFreshFetch(), nextAt = 0, err = null); save() }
             i >= 0
@@ -288,7 +294,7 @@ class DownloadJobs(
             // Space is checked before every start and every resume, with room to spare.
             val free = io.free()
             if (free < j.size - j.done + HEADROOM) return fail(fid, "nospace:$free")
-            if (!urlAllowed(j.url, fid)) return fail(fid, "source")
+            if (sourceUrl(j.url, fid) == null) return fail(fid, "source")
 
             val fresh = j.dest == null
             val dest = j.dest ?: io.create(j.name) ?: return fail(fid, "io")
@@ -304,7 +310,7 @@ class DownloadJobs(
             }
             var done = minOf(j.done, file.out.size())
 
-            val req = Request.Builder().url(j.url).apply { if (done > 0) header("Range", "bytes=$done-") }.build()
+            val req = Request.Builder().url(sourceUrl(j.url, fid) ?: return fail(fid, "source")).apply { if (done > 0) header("Range", "bytes=$done-") }.build()
             val call = http.newCall(req)
             live = call
             if (isCancelled(fid)) return
@@ -431,10 +437,19 @@ class DownloadJobs(
 
     private fun safeDiscard(dest: String) { try { io.discard(dest) } catch (e: Exception) { Log.d(TAG, "discard: ${e.message}") } }
 
-    /** Plain http from another tablet on the home network, and only a `/v/<fid>` path: nothing else is ever fetched. */
-    private fun urlAllowed(url: String, fid: String): Boolean {
-        val u = url.toHttpUrlOrNull() ?: return false
-        return u.scheme == "http" && allowHost(u.host) && u.encodedPath == "/v/$fid"
+    /**
+     * The address a movie is really fetched from, or null when [url] is not acceptable. Only plain
+     * http to another tablet on the home network, by its numeric address, and only that movie's
+     * `/v/<fid>?k=<key>`. The request is rebuilt from the checked parts, so what was checked is
+     * exactly what is asked for: no user name, no fragment, no other query, no host name to look up.
+     */
+    private fun sourceUrl(url: String, fid: String): HttpUrl? {
+        val u = url.toHttpUrlOrNull() ?: return null
+        val key = u.queryParameter("k") ?: return null
+        if (u.scheme != "http" || u.username.isNotEmpty() || u.password.isNotEmpty()) return null
+        if (LanAddress.octets(u.host) == null || !allowHost(u.host)) return null
+        if (u.encodedPath != "/v/$fid" || !key.all { it.isLetterOrDigit() } || key.length > 64) return null
+        return HttpUrl.Builder().scheme("http").host(u.host).port(u.port).addPathSegment("v").addPathSegment(fid).addQueryParameter("k", key).build()
     }
 
     companion object {
@@ -448,19 +463,36 @@ class DownloadJobs(
         const val HEADROOM = 200L * 1024 * 1024
         private const val LOW_SPACE = 16L * 1024 * 1024
         const val KEEP_MS = 60_000L
+        const val MAX_JOBS = 50
         const val REPORT_MS = 2000L
         private const val POLL_MS = 500L
 
-        /** No redirects: a movie comes from the address the Master gave, or not at all. */
-        private val CLIENT: OkHttpClient by lazy {
-            OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-                .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
+        /** Connects to the numeric address in the url and nothing else: no name lookups at all. */
+        private object NumericOnly : Dns {
+            override fun lookup(hostname: String): List<InetAddress> =
+                LanAddress.octets(hostname)?.let { listOf(InetAddress.getByAddress(it)) } ?: throw UnknownHostException(hostname)
         }
 
-        /** A file name safe to create: no path characters, not hidden, not absurdly long. */
+        /**
+         * No redirects, no proxy, no name lookups: a movie comes from the address the Master gave,
+         * or not at all.
+         */
+        private val CLIENT: OkHttpClient by lazy {
+            OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
+                .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+                .proxy(Proxy.NO_PROXY).dns(NumericOnly).build()
+        }
+
+        /** The only kinds of file a job will create. Anything else is saved as .mp4, where it is just a video that will not play. */
+        private val VIDEO_EXT = setOf("mp4", "m4v", "mkv", "webm", "mov", "avi", "3gp", "ts", "mpg", "mpeg", "wmv", "flv")
+
+        /** A file name safe to create: a video extension, no path characters, not hidden, not absurdly long. */
         fun cleanName(name: String): String {
-            val n = VideoId.safeName(name).trimStart('.').trim().ifEmpty { "video" }
-            return if (n.length <= 120) n else n.take(110) + n.substring(n.lastIndexOf('.').takeIf { it > n.length - 8 } ?: n.length)
+            var n = VideoId.safeName(name).filter { it >= ' ' }.trimStart('.').trim().ifEmpty { "video" }
+            val ext = n.substringAfterLast('.', "").lowercase()
+            if ('.' !in n || ext !in VIDEO_EXT) n = "$n.mp4"
+            val dot = n.lastIndexOf('.')
+            return if (n.length <= 120) n else n.take(120 - (n.length - dot)) + n.substring(dot)
         }
     }
 }

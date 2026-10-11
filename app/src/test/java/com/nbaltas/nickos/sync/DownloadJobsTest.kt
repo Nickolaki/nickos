@@ -342,7 +342,13 @@ class DownloadJobsTest {
         j.drain()
         assertEquals(JobState.FAILED, j.list().single().state)
         assertEquals("source", j.list().single().err)
-        for (bad in listOf("https://192.168.1.5/v/$fid?k=x", "http://192.168.1.5/other/$fid", "http://192.168.1.5/v/${fid}x", "file:///sdcard/x", "not a url")) {
+        val bads = listOf(
+            "https://192.168.1.5/v/$fid?k=x", "http://192.168.1.5/other/$fid?k=x", "http://192.168.1.5/v/${fid}x?k=x", "file:///sdcard/x", "not a url",
+            "http://192.168.1.5/v/$fid", "http://192.168.1.5/v/$fid?k=a%2Fb", "http://user:pw@192.168.1.5/v/$fid?k=x",
+            "http://192.168.1.5.example.com/v/$fid?k=x", "http://192.168.01.5/v/$fid?k=x", "http://192.168.1.5@8.8.8.8/v/$fid?k=x",
+            "http://tablet.local/v/$fid?k=x", "http://[::1]/v/$fid?k=x", "http://192.168.1.5/v/../v/$fid/../../admin?k=x",
+        )
+        for (bad in bads) {
             j.fetch(fetch(url = bad))
             j.drain()
             assertEquals(bad, "source", j.list().single().err)
@@ -379,12 +385,39 @@ class DownloadJobsTest {
     @Test
     fun `file names are made safe`() {
         assertEquals("Star_Harbour.mp4", DownloadJobs.cleanName("Star/Harbour.mp4"))
-        assertEquals("_.._etc_passwd", DownloadJobs.cleanName("/../etc/passwd"))
+        assertEquals("_.._etc_passwd.mp4", DownloadJobs.cleanName("/../etc/passwd"))
         assertEquals("hidden.mp4", DownloadJobs.cleanName(".hidden.mp4"))
-        assertEquals("video", DownloadJobs.cleanName(".."))
+        assertEquals("video.mp4", DownloadJobs.cleanName(".."))
+        assertEquals("Captain Comet.MKV", DownloadJobs.cleanName("Captain Comet.MKV"))
+        // Only video files are ever created, whatever the name asks for.
+        assertEquals("update.apk.mp4", DownloadJobs.cleanName("update.apk"))
+        assertEquals("page.html.mp4", DownloadJobs.cleanName("page.html"))
+        assertEquals("noext.mp4", DownloadJobs.cleanName("noext"))
+        assertEquals("ab.mp4", DownloadJobs.cleanName("a\u0000b\n.mp4"))
         val long = DownloadJobs.cleanName("a".repeat(300) + ".mkv")
         assertTrue(long.length <= 120 && long.endsWith(".mkv"))
         assertTrue(listOf("../x", "..\\x", "a/b").map { DownloadJobs.cleanName(it) }.none { '/' in it || '\\' in it })
+    }
+
+    @Test
+    fun `the request is rebuilt from the checked parts`() {
+        val seen = ArrayList<String>()
+        val j = DownloadJobs(
+            io, prefs, CoroutineScope(Dispatchers.IO), report = {}, onDone = {}, allowHost = { true }, clock = { now }, auto = false,
+            http = OkHttpClient.Builder().addInterceptor(Interceptor { chain -> seen += chain.request().url.toString(); chain.proceed(chain.request()) }).build(),
+        )
+        j.fetch(fetch(url = server.url("127.0.0.1", fid) + "&extra=1#frag"))
+        j.drain()
+        assertEquals(listOf(server.url("127.0.0.1", fid)), seen)
+        assertEquals(JobState.DONE, j.list().single().state)
+    }
+
+    @Test
+    fun `the queue has a limit`() {
+        val j = jobs()
+        server.stop()
+        repeat(DownloadJobs.MAX_JOBS + 5) { i -> j.fetch(fetch(id = "f$i")) }
+        assertEquals(DownloadJobs.MAX_JOBS, j.list().size)
     }
 
     @Test
