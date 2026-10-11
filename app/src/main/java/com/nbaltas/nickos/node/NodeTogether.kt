@@ -16,7 +16,7 @@ import org.json.JSONObject
  * [broadcast] writes to every connected Master and is only ever called off the main thread.
  */
 class NodeTogether(
-    ctx: Context,
+    private val ctx: Context,
     store: Store,
     device: NodeDevice,
     private val scope: CoroutineScope,
@@ -27,6 +27,12 @@ class NodeTogether(
     private val hold = WifiHold(ctx)
     /** Hands this tablet's movies to other tablets. Started by the first `serve`, then kept for the life of the runtime. */
     val server = MediaServer.of(videos, hold)
+    /** Movies being copied to this tablet. A finished copy puts the new library in front of every Master. */
+    val jobs = DownloadJobs(
+        AndroidJobIo(ctx, videos, hold), ctx.getSharedPreferences(DownloadJobs.PREFS, Context.MODE_PRIVATE), scope,
+        report = { o -> broadcast(o) },
+        onDone = { broadcast(videosMessage()) },
+    )
     val player = SyncPlayer(
         ctx, videos, device,
         isLocked = { store.lockedBy.value != null },
@@ -51,6 +57,10 @@ class NodeTogether(
             "syncPause" -> player.onPause()
             "syncStop" -> player.stop()
             "serve" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { reply(serving(fid)) } }
+            // Fetch looks through the library first (is the movie already here?), so not on the socket thread either.
+            "fetch" -> SyncMessages.decodeFetchCmd(m)?.let { f -> scope.launch { jobs.fetch(f) } }
+            "cancel" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { jobs.cancel(fid) } }
+            "jobs" -> reply(jobs.message())
             else -> return false
         }
         return true
@@ -65,9 +75,13 @@ class NodeTogether(
         return SyncMessages.encodeServing(fid, true, server.port, server.grant(fid), v.size)
     }
 
+    /** The runtime started: copies that were under way before a restart or reboot carry on. */
+    fun start() = jobs.start()
+
     /** The runtime is stopping. */
     fun release() {
         player.release()
+        jobs.stop()
         server.stop()
         hold.close()
     }

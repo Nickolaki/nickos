@@ -90,6 +90,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         jobs += scope.launch { acceptLoop(ss) }
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
+        together.start()
         applyLockdown()
     }
 

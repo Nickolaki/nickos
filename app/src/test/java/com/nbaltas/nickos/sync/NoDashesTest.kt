@@ -39,6 +39,8 @@ class NoDashesTest {
         File(moduleDir, "link/LanAddress.kt"),
         File(testDir, "sync/MediaServerTest.kt"),
         File(testDir, "sync/LanAddressTest.kt"),
+        File(moduleDir, "node/DownloadJobs.kt"),
+        File(testDir, "sync/DownloadJobsTest.kt"),
         File(testDir, "sync/LocalVideosTest.kt"),
         File(testDir, "sync/ClockSyncTest.kt"),
         File(testDir, "sync/SyncMessagesTest.kt"),
