@@ -52,6 +52,8 @@ adb shell appops set com.nbaltas.nickos GET_USAGE_STATS allow
 # Brightness control (only needed if the kid lock step above was skipped)
 adb shell appops set com.nbaltas.nickos WRITE_SETTINGS allow
 adb shell pm grant com.nbaltas.nickos android.permission.POST_NOTIFICATIONS
+# Lets the Master see the tablet's front camera
+adb shell pm grant com.nbaltas.nickos android.permission.CAMERA
 ```
 
 ### Getting out
@@ -71,6 +73,14 @@ While Device Owner is set, NickOS can't be uninstalled until you use that button
 
 Rename the Master under Settings → Linked tablets (it shows up on kid tablets as
 "Linked to Dad's tablet" and "Screen locked by Dad").
+
+## Kid tablet cameras
+
+The Master's Cameras screen shows the kids' tablets' front cameras next to any RTSP cameras you added. Tap a tablet's chip to turn its camera on; tap again to turn it off. The layout changes by itself as cameras come and go (one, two side by side, a grid, or a spotlight with a strip); tap a picture to make it the spotlight.
+
+A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
+
+Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
 
 ## Updates
 
