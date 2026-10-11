@@ -40,14 +40,14 @@ class CamControllerTest {
     private val H = "hailey"
     private val L = "leo"
 
-    /** Where each tablet's live link is connected. By default, the address the Master remembers for it. */
+    /** The far end of each tablet's live link. By default, the address the Master remembers for it. */
     private val linkHosts = HashMap<String, String?>()
+    private fun from(id: String) = if (id in linkHosts) linkHosts[id] else port.linked.firstOrNull { it.id == id }?.host
 
     private fun controller() = CamController(
         port, store, clock = { now },
         open = { url, f, e -> Opened(url, f, e).also { opened += it } },
         soon = { it() },
-        linkHost = { id -> if (id in linkHosts) linkHosts[id] else port.linked.firstOrNull { it.id == id }?.host },
     )
 
     private fun capable(id: String) {
@@ -67,7 +67,7 @@ class CamControllerTest {
     private fun starts(id: String) = port.cmds(id, "camStart")
     private fun stops(id: String) = port.cmds(id, "camStop")
 
-    private fun say(id: String, cam: NodeCam) = c.onMessage(id, CamMessages.encodeState(cam))
+    private fun say(id: String, cam: NodeCam) = c.onMessage(id, CamMessages.encodeState(cam), from(id))
     private fun live(key: String = "abc123") = NodeCam(NodeCam.LIVE, port = 47472, key = key, maxMs = 600_000, now = 5_000)
     private fun frame() = MjpegClient.Frame(Bitmap.createBitmap(4, 3, Bitmap.Config.RGB_565), 90, now)
 
@@ -120,19 +120,37 @@ class CamControllerTest {
     }
 
     @Test
-    fun `the key only goes to the address the live link is connected to`() {
+    fun `the key only goes back to where the camState came from`() {
         // The Master remembers 192.168.1.21 for Hailey, but her link is up at another address.
         linkHosts[H] = "10.0.0.9"
         assertEquals("http://10.0.0.9:47472/cam?k=abc123", watching().url)
     }
 
     @Test
-    fun `no live link address means no stream, whatever address is remembered`() {
+    fun `a camState from nowhere known gets no stream, whatever address is remembered`() {
         linkHosts[H] = null
         c.setViewing(true)
         c.arm(H)
         say(H, live())
         assertTrue(opened.isEmpty())
+    }
+
+    @Test
+    fun `a tablet reached somewhere new loses the stream to the old place`() {
+        val old = watching()
+        linkHosts[H] = "192.168.1.77"
+        say(H, live())
+        assertTrue(old.closed)
+        assertEquals("http://192.168.1.77:47472/cam?k=abc123", opened.last().url)
+    }
+
+    @Test
+    fun `after the link drops the old address is forgotten until the tablet speaks again`() {
+        watching()
+        c.onDisconnected(H)
+        val before = opened.size
+        now += 5_000; c.tick()
+        assertEquals(before, opened.size)
     }
 
     @Test
@@ -353,7 +371,7 @@ class CamControllerTest {
 
     @Test
     fun `a line that is not a camState changes nothing`() {
-        c.onMessage(H, JSONObject().put("t", "camState").put("state", "sideways"))
+        c.onMessage(H, JSONObject().put("t", "camState").put("state", "sideways"), from(H))
         assertTrue(c.states.value.isEmpty())
     }
 

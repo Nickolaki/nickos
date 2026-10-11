@@ -42,13 +42,8 @@ class CamController(
         { url, onFrame, onEnded -> MjpegClient(url, onFrame, onEnded).start() },
     /** Runs a tick soon. Tests run it at once instead. */
     private val soon: ((() -> Unit) -> Unit)? = null,
-    /**
-     * The address a tablet's live link is connected to right now, or null. The stream key is only
-     * ever sent there: to the peer that proved itself with its token, not to a remembered address.
-     */
-    private val linkHost: (id: String) -> String? = { null },
 ) {
-    constructor(rt: MasterRuntime, store: Store) : this(RuntimePort(rt, store), store, linkHost = { rt.linkHost(it) })
+    constructor(rt: MasterRuntime, store: Store) : this(RuntimePort(rt, store), store)
 
     private class Client {
         var stream: CamStream? = null
@@ -68,6 +63,12 @@ class CamController(
     /** Tablets whose camera this Master asked for or watched: its own to turn off. */
     private val mine = HashSet<String>()
     private val lastStart = HashMap<String, Long>()
+    /**
+     * The address each tablet's current `camState` came from: the far end of the authenticated
+     * link that delivered it. A stream key is only ever sent back there, never to an address that
+     * was remembered or looked up later.
+     */
+    private val hosts = HashMap<String, String>()
 
     private val _armed = MutableStateFlow(store.camArmed)
     /** The parent's toggles: tablets whose camera should be on while the Cameras screen is open. Remembered. */
@@ -138,11 +139,16 @@ class CamController(
     }
 
     /** A `camState` line from a tablet. */
-    fun onMessage(id: String, m: JSONObject) {
+    fun onMessage(id: String, m: JSONObject, from: String?) {
         val cam = CamMessages.decodeState(m, clock()) ?: return
         var toast: String? = null
         synchronized(lock) {
             val prev = _states.value[id]
+            if (from != hosts[id]) {
+                // The tablet is being reached somewhere new: a stream to the old place is not this camera's.
+                closeClient(id)
+                if (from != null) hosts[id] = from else hosts.remove(id)
+            }
             _states.update { it + (id to cam) }
             if (!cam.on) {
                 mine -= id
@@ -169,6 +175,7 @@ class CamController(
         synchronized(lock) {
             closeClient(id)
             _states.update { it - id }
+            hosts.remove(id)
             mine -= id
             ended.remove(id)
             lastStart.remove(id)
@@ -221,7 +228,7 @@ class CamController(
                 if (cam != null) _states.update { it + (id to cam.copy(state = NodeCam.OFF, reason = NodeCam.STOPPED, receivedAt = now)) }
             }
             CamPlan.Want.CONNECT -> {
-                val url = CamPlan.streamUrl(linkHost(id), cam?.port ?: 0, cam?.key) ?: return
+                val url = CamPlan.streamUrl(hosts[id], cam?.port ?: 0, cam?.key) ?: return
                 val c = Client()
                 clients[id] = c
                 mine += id

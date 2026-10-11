@@ -285,7 +285,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
                 "serving", "jobs" -> transfer.onMessage(n.id, m)
-                "camState" -> cam.onMessage(n.id, m)
+                "camState" -> cam.onMessage(n.id, m, c.socket.inetAddress?.hostAddress)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }
@@ -320,9 +320,6 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     fun send(id: String, o: JSONObject): Boolean = conns[id]?.let { c -> scope.launch(sendDispatcher) { c.send(o) }; true } ?: false
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
-
-    /** The address a tablet's live link is connected to, or null when it has none. */
-    fun linkHost(id: String): String? = conns[id]?.takeIf { it.isOpen }?.socket?.inetAddress?.hostAddress
 
     fun reconnect(id: String) {
         conns.remove(id)?.close()
