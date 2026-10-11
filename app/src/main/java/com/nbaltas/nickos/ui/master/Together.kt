@@ -210,7 +210,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit) {
         val scanningCount = scanning.size
 
         when {
-            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this tablet are what you send to the kids' tablets. Allow video access once.") {
+            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this tablet are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
                 NickButton("Allow videos on this tablet", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, style = BtnStyle.PRIMARY, big = true)
             }
             onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this tablet, show up here.") {
