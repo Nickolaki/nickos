@@ -2,6 +2,8 @@ package com.nbaltas.nickos.ui.node
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +21,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.nbaltas.nickos.App
+import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.node.NodeService
+import com.nbaltas.nickos.node.parentName
 import com.nbaltas.nickos.ui.common.AppDrawer
 import com.nbaltas.nickos.ui.setup.PairingCodeBody
 import com.nbaltas.nickos.ui.theme.C
@@ -42,6 +46,12 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val lockedBy by store.lockedBy.collectAsState()
     val warn by rt.bedtimeWarning.collectAsState()
     val pin by store.pin.collectAsState()
+    val playerUi by rt.syncPlayer.ui.collectAsState()
+    val player by rt.syncPlayer.player.collectAsState()
+    var videosAllowed by remember { mutableStateOf(rt.videos.hasPermission()) }
+    val videosLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        videosAllowed = rt.videos.hasPermission()
+    }
     // Leaving lock task makes Android start Home again in a new task, so this screen is rebuilt
     // right after the PIN: reopen the parent menu while parent mode is on.
     var screen by remember { mutableStateOf(if (rt.parentMode) NodeScreen.MENU else NodeScreen.HOME) }
@@ -73,7 +83,14 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     PairingCodeBody(name, color, avatar, code)
                 }
             }
-            else -> NodeHome(
+            else -> if (screen == NodeScreen.HOME && playerUi.fid != null) {
+                TogetherScreen(
+                    ui = playerUi,
+                    player = player,
+                    parent = parentName(masters.firstOrNull { it.id in connected }?.name ?: masters.firstOrNull()?.name),
+                    onHold = { screen = NodeScreen.PIN },
+                )
+            } else NodeHome(
                 store = store,
                 apps = others,
                 jellyfin = jellyfin,
@@ -93,6 +110,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onSettings = { ctx.startActivity(androidSettingsIntent()) },
             onPairAnother = { screen = NodeScreen.PAIR },
             onUpdate = { scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) } },
+            videosAllowed = videosAllowed,
+            onAllowVideos = { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) },
             onReset = {
                 scope.launch {
                     rt.sayGoodbye()

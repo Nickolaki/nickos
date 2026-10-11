@@ -385,6 +385,8 @@ fun ParentMenu(
     onPairAnother: () -> Unit,
     onUpdate: () -> Unit,
     onReset: () -> Unit,
+    videosAllowed: Boolean = true,
+    onAllowVideos: () -> Unit = {},
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -402,6 +404,7 @@ fun ParentMenu(
             MenuButton("Back to kid mode", primary = true, onClick = onKidMode)
             MenuButton("All apps", onClick = onAllApps)
             MenuButton("Android settings", onClick = onSettings)
+            if (!videosAllowed) MenuButton("Allow videos", onClick = onAllowVideos)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {
