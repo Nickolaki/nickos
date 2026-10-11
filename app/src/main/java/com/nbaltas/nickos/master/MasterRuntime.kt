@@ -62,6 +62,8 @@ data class NodeStatus(
 ) {
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
+    /** Tablet cameras need the Node's "cam1" capability. */
+    val supportsCam: Boolean get() = "cam1" in caps
 
     companion object {
         fun from(o: JSONObject): NodeStatus {

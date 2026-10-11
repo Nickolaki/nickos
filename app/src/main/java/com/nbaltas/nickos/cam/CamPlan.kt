@@ -129,7 +129,8 @@ object CamPlan {
             if (retries >= MAX_RECONNECTS) return Want.STOP
             if (now - endedAt < RECONNECT_AFTER_MS) return Want.NONE
         }
-        return if (cam.port > 0 && !cam.key.isNullOrEmpty()) Want.CONNECT else Want.NONE
+        // A kind this build cannot decode (a later encoder) is left alone.
+        return if (cam.kind == NodeCam.KIND_MJPEG && cam.port > 0 && !cam.key.isNullOrEmpty()) Want.CONNECT else Want.NONE
     }
 
     /** What the tile for one tablet shows. [hasFrame]: a picture from the current stream has arrived. */

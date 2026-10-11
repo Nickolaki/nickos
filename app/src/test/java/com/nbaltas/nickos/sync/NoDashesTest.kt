@@ -62,6 +62,8 @@ class NoDashesTest {
         File(testDir, "cam/ThermalPolicyTest.kt"),
         File(testDir, "cam/CamPlanTest.kt"),
         File(testDir, "cam/MjpegParserTest.kt"),
+        File(moduleDir, "cam/CamMessages.kt"),
+        File(testDir, "cam/CamMessagesTest.kt"),
     )
 
     @Test

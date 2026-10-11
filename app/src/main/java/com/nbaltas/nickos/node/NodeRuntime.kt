@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
 import com.nbaltas.nickos.BuildConfig
+import com.nbaltas.nickos.cam.CamMessages
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
@@ -290,7 +291,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP))
             .put("now", System.currentTimeMillis())
     }
 
