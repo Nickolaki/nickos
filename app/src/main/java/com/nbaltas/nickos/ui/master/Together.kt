@@ -118,7 +118,7 @@ fun availabilityFor(item: LibraryItem, order: List<String>, expected: Set<String
     TogetherText.availability(item.owners, expected, order, name)
 
 @Composable
-fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit) {
+fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment: Int = 0) {
     val app = App.get(LocalContext.current)
     val master = app.master
     val sync = master.sync
@@ -136,7 +136,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit) {
     val selfPerm = master.videos.hasPermission()
     val videosLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { sync.rescanSelf() }
 
-    var segment by remember { mutableStateOf(0) }
+    var segment by remember { mutableStateOf(initialSegment) }
     var openShow by remember { mutableStateOf<Show?>(null) }
     var openItem by remember { mutableStateOf<String?>(null) }
 
@@ -292,7 +292,7 @@ private fun ShowGrid(shows: List<Show>, thumbs: Map<String, Bitmap>, onOpen: (Sh
 }
 
 @Composable
-private fun PickPanel(
+internal fun PickPanel(
     item: LibraryItem,
     thumb: Bitmap?,
     nodes: List<NodeView>,
@@ -371,7 +371,7 @@ private fun PickPanel(
 }
 
 @Composable
-private fun TogetherRemote(onBack: () -> Unit) {
+internal fun TogetherRemote(onBack: () -> Unit) {
     val app = App.get(LocalContext.current)
     val master = app.master
     val sync = master.sync

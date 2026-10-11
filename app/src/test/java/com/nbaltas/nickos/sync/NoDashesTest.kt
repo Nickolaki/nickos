@@ -52,6 +52,10 @@ class NoDashesTest {
         File(testDir, "sync/DownloadPolicyTest.kt"),
         File(testDir, "sync/HttpRangeTest.kt"),
         File(testDir, "sync/NoDashesTest.kt"),
+        File(moduleDir, "ui/master/Together.kt"),
+        File(moduleDir, "ui/master/TabletLibrary.kt"),
+        File(moduleDir, "ui/node/TogetherPlayer.kt"),
+        File("../SETUP.md"),
     )
 
     @Test

@@ -3,6 +3,7 @@ package com.nbaltas.nickos.ui.master
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -92,15 +93,17 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         Spacer(Modifier.height(16.dp))
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
         if (visible.isEmpty()) {
-            CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet.") {
-                NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
+            Box(Modifier.weight(1f)) {
+                CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet.") {
+                    NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
+                }
             }
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(264.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
             ) {
                 items(visible, key = { it.fid }) { item ->
                     Column(
