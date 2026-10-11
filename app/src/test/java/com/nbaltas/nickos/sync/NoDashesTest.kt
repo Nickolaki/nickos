@@ -41,6 +41,8 @@ class NoDashesTest {
         File(testDir, "sync/LanAddressTest.kt"),
         File(moduleDir, "node/DownloadJobs.kt"),
         File(testDir, "sync/DownloadJobsTest.kt"),
+        File(moduleDir, "master/TransferController.kt"),
+        File(testDir, "sync/TransferControllerTest.kt"),
         File(testDir, "sync/LocalVideosTest.kt"),
         File(testDir, "sync/ClockSyncTest.kt"),
         File(testDir, "sync/SyncMessagesTest.kt"),

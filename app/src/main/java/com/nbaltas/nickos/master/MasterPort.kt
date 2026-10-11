@@ -19,6 +19,10 @@ interface MasterPort {
     fun nodes(): List<LinkedNode>
     /** This tablet's own library, scanned now. Blocking: call from a background thread. */
     fun localVideos(): SyncMessages.VideosMsg
+    /** This tablet's address on the WiFi, or null when it is not on one. */
+    fun lanAddress(): String?
+    /** Where other tablets fetch movie [fid] from this tablet. Starts the server. Null when not on WiFi. Not on the main thread. */
+    fun localUrl(fid: String): String?
 }
 
 /** [MasterPort] over the real runtime. */
@@ -29,4 +33,6 @@ class RuntimePort(private val rt: MasterRuntime, private val store: Store) : Mas
     override fun status(id: String) = rt.status.value[id]
     override fun nodes() = store.nodes.value
     override fun localVideos() = rt.videos.reply()
+    override fun lanAddress() = rt.lanAddress()
+    override fun localUrl(fid: String) = rt.localUrl(fid)
 }

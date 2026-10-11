@@ -14,6 +14,9 @@ import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
 import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.link.Conn
+import com.nbaltas.nickos.link.LanAddress
+import com.nbaltas.nickos.link.MediaServer
+import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
@@ -134,6 +137,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Watch together: this tablet's own movies, and the library, clocks and session across tablets. */
     val videos = LocalVideos(ctx)
     val sync = SyncController(this, store)
+    /** Sending movies between tablets. This tablet hands out its own through [server]. */
+    val server = MediaServer.of(videos, WifiHold(ctx))
+    val transfer = TransferController(this, store)
+
+    fun lanAddress(): String? = LanAddress.own(ctx)
+    fun localUrl(fid: String): String? = lanAddress()?.takeIf { server.start() }?.let { server.url(it, fid) }
 
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
@@ -154,6 +163,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }
         sync.startTicker()
+        transfer.startTicker()
         scope.launch {
             var last = store.pin.value
             store.pin.collect { p -> if (p != last) { last = p; conns.keys.forEach { send(it, cmd("pin").put("pin", p)) } } }
@@ -242,6 +252,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 conns.remove(id)?.close()
                 _online.update { it - id }
                 sync.onDisconnected(id)
+                transfer.onDisconnected(id)
             }
             delay(3000)
         }
@@ -259,6 +270,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         sync.onConnected(n.id)
+        transfer.onConnected(n.id)
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
@@ -266,6 +278,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
+                "serving", "jobs" -> transfer.onMessage(n.id, m)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }

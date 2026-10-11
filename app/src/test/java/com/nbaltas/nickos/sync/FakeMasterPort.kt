@@ -36,6 +36,10 @@ class FakeMasterPort : MasterPort {
     override fun status(id: String) = statuses[id]
     override fun nodes() = linked
     override fun localVideos() = local
+    /** This Master's WiFi address. Null: not on WiFi. */
+    var lan: String? = "192.168.1.2"
+    override fun lanAddress() = lan
+    override fun localUrl(fid: String) = lan?.let { "http://$it:47471/v/$fid?k=selfkey" }
 
     /** Commands named [c] sent to [id], oldest first. */
     fun cmds(id: String, c: String): List<JSONObject> = sent.filter { it.first == id && it.second.optString("c") == c }.map { it.second }
