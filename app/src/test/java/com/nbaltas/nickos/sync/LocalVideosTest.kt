@@ -53,6 +53,28 @@ class LocalVideosTest {
     }
 
     @Test
+    fun `only the Movies and Download folders are part of the library`() {
+        assertTrue(LocalVideos.inLibrary("Movies/"))
+        assertTrue(LocalVideos.inLibrary("Movies/NickOS/"))
+        assertTrue(LocalVideos.inLibrary("Download/Kids/"))
+        assertTrue(LocalVideos.inLibrary("movies/"))
+        for (other in listOf("DCIM/Camera/", "Pictures/Screenshots/", "WhatsApp/Media/WhatsApp Video/", "MoviesPrivate/", "", null)) {
+            assertEquals("folder $other", false, LocalVideos.inLibrary(other))
+        }
+    }
+
+    @Test
+    fun `an absolute path from an old Android gives the folder below the storage root`() {
+        assertEquals("Movies/", LocalVideos.relativeOf("/storage/emulated/0/Movies/Star Harbour.mp4"))
+        assertEquals("Movies/NickOS/", LocalVideos.relativeOf("/storage/emulated/0/Movies/NickOS/a.mkv"))
+        assertEquals("Download/", LocalVideos.relativeOf("/storage/1A2B-3C4D/Download/a.mp4"))
+        assertEquals("DCIM/Camera/", LocalVideos.relativeOf("/sdcard/DCIM/Camera/clip.mp4"))
+        assertEquals(false, LocalVideos.inLibrary(LocalVideos.relativeOf("/storage/emulated/0/clip.mp4")))
+        assertEquals(null, LocalVideos.relativeOf("/data/user/0/app/files/a.mp4"))
+        assertEquals(null, LocalVideos.relativeOf(null))
+    }
+
+    @Test
     fun `the permissions asked for depend on the Android version`() {
         assertEquals(listOf("android.permission.READ_MEDIA_VIDEO"), LocalVideos.permissions(34))
         assertEquals(listOf("android.permission.READ_MEDIA_VIDEO"), LocalVideos.permissions(33))

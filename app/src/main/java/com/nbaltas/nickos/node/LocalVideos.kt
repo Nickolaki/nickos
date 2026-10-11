@@ -66,6 +66,7 @@ class LocalVideos(private val ctx: Context) {
             add(MediaStore.Video.Media._ID); add(MediaStore.Video.Media.DISPLAY_NAME); add(MediaStore.Video.Media.SIZE)
             add(MediaStore.Video.Media.DURATION); add(MediaStore.Video.Media.DATE_MODIFIED); add(MediaStore.Video.Media.MIME_TYPE)
             if (Build.VERSION.SDK_INT >= 29) { add(MediaStore.Video.Media.RELATIVE_PATH); add(MediaStore.Video.Media.IS_PENDING) }
+            else add(MediaStore.Video.Media.DATA)
         }.toTypedArray()
         try {
             resolver.query(
@@ -76,6 +77,10 @@ class LocalVideos(private val ctx: Context) {
                 val pending = c.getColumnIndex("is_pending")
                 while (c.moveToNext() && out.size < MAX_FILES) {
                     if (pending >= 0 && c.getInt(pending) == 1) continue // a download still in progress
+                    // Only the two folders a parent copies movies into. Camera clips, chat videos and
+                    // screen recordings never leave the tablet's own gallery.
+                    val folder = if (Build.VERSION.SDK_INT >= 29) c.getString(6) else relativeOf(c.getString(6))
+                    if (!inLibrary(folder)) continue
                     val id = c.getLong(0)
                     val name = c.getString(1) ?: continue
                     val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
@@ -112,7 +117,6 @@ class LocalVideos(private val ctx: Context) {
     /** Base64 JPEG (320 x 180 or so), or null when this file gives none. One bad file never throws. */
     fun thumb(v: LocalVideo): String? = thumbs.getOrPut(v.fid) {
         try {
-            @Suppress("DEPRECATION")
             val bmp = if (Build.VERSION.SDK_INT >= 29) resolver.loadThumbnail(v.uri, Size(320, 180), null)
             else MediaStore.Video.Thumbnails.getThumbnail(resolver, v.id, MediaStore.Video.Thumbnails.MINI_KIND, null)
             if (bmp == null) "" else {
@@ -155,6 +159,24 @@ class LocalVideos(private val ctx: Context) {
         /** Folder under Movies where download jobs put their copies. */
         const val DOWNLOAD_DIR = "NickOS"
         private const val MIB = 1024 * 1024
+
+        /**
+         * True for a MediaStore relative path ("Movies/", "Movies/NickOS/", "Download/Kids/") inside
+         * the Movies or Download folder. Everything else on the tablet is none of the library's business.
+         */
+        fun inLibrary(relativePath: String?): Boolean {
+            val p = relativePath?.trimStart('/')?.lowercase() ?: return false
+            return p.startsWith("movies/") || p.startsWith("download/")
+        }
+
+        /** Before Android 10 MediaStore only has the absolute path: the folder part below the storage root. */
+        fun relativeOf(absolutePath: String?): String? {
+            val p = absolutePath ?: return null
+            val below = STORAGE_ROOT.find(p)?.let { p.substring(it.range.last + 1) } ?: return null
+            return below.substringBeforeLast('/', "") + "/"
+        }
+
+        private val STORAGE_ROOT = Regex("^(/storage/emulated/\\d+/|/storage/[^/]+/|/sdcard/|/mnt/sdcard/)")
 
         /** The runtime permissions the library and download jobs need on Android [sdk]. */
         fun permissions(sdk: Int = Build.VERSION.SDK_INT): List<String> = when {
