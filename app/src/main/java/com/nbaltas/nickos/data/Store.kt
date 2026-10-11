@@ -186,9 +186,24 @@ class Store(context: Context) {
     val camRtspHidden: StateFlow<Set<String>> = _camRtspHidden
     fun setCamRtspHidden(v: Set<String>) { writeStrings("camRtspHidden", v.toList()); _camRtspHidden.value = v }
 
-    private val _camPrefs = MutableStateFlow(CamPrefs())
-    /** Picture size, auto-off and transition lengths for Cameras. The defaults, until Settings, Cameras stores the parent's own. */
+    private val _camPrefs = MutableStateFlow(readCamPrefs())
+    /** Picture size, auto-off and transition lengths for Cameras, set in Settings, Cameras. */
     val camPrefs: StateFlow<CamPrefs> = _camPrefs
+    fun setCamPrefs(v: CamPrefs) {
+        p.edit().putString("camPrefs", JSONObject().put("profile", v.profile).put("maxMin", v.maxMin)
+            .put("layoutMs", v.layoutMs).put("fadeMs", v.fadeMs).toString()).apply()
+        _camPrefs.value = v
+    }
+    private fun readCamPrefs(): CamPrefs = try {
+        val o = JSONObject(p.getString("camPrefs", "{}") ?: "{}")
+        val d = CamPrefs()
+        CamPrefs(
+            profile = o.optString("profile", d.profile).takeIf { it in setOf("low", "normal", "high") } ?: d.profile,
+            maxMin = o.optInt("maxMin", d.maxMin).takeIf { it in setOf(5, 10, 30, 60) } ?: d.maxMin,
+            layoutMs = o.optInt("layoutMs", d.layoutMs).coerceIn(0, 2000),
+            fadeMs = o.optInt("fadeMs", d.fadeMs).coerceIn(0, 2000),
+        )
+    } catch (e: Exception) { CamPrefs() }
 
     // ---- Node ----
     private val _masters = MutableStateFlow(readList("masters") { LinkedMaster.from(it) })

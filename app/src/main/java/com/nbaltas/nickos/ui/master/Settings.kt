@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Contrast
@@ -56,6 +57,7 @@ import com.composables.icons.lucide.Tablet
 import com.composables.icons.lucide.Unlink
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
+import com.nbaltas.nickos.cam.CamPrefs
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.jellyfin.JfUser
 import com.nbaltas.nickos.update.UpdateState
@@ -76,6 +78,7 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickLogo
 import com.nbaltas.nickos.ui.theme.PinDots
+import com.nbaltas.nickos.ui.theme.Segmented
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.dashed
@@ -84,7 +87,7 @@ import com.nbaltas.nickos.ui.theme.tap
 
 private val sections = listOf<Pair<String, ImageVector>>(
     "Linked tablets" to Lucide.Tablet, "Jellyfin server" to Lucide.Server, "Parent PIN" to Lucide.KeyRound,
-    "Theme" to Lucide.Contrast, "About" to Lucide.Info,
+    "Theme" to Lucide.Contrast, "About" to Lucide.Info, "Cameras" to Lucide.Camera,
 )
 
 @Composable
@@ -117,6 +120,7 @@ fun SettingsScreen(section: Int, onSection: (Int) -> Unit, onBack: () -> Unit, o
                     1 -> JellyfinSection()
                     2 -> PinSection()
                     3 -> ThemeSection()
+                    5 -> CamerasSection()
                     else -> AboutSection()
                 }
             }
@@ -372,6 +376,54 @@ private fun ThemePreview(key: String) {
                 }
             }
         }
+    }
+}
+
+// ---------------- Cameras ----------------
+
+@Composable
+private fun CamerasSection() {
+    val app = App.get(LocalContext.current)
+    val prefs by app.store.camPrefs.collectAsState()
+    SectionPage("Cameras") {
+        CamPrefRow(
+            "Tablet picture", "Lower is cooler and smoother on a weak WiFi.",
+            listOf("Low" to "low", "Normal" to "normal", "High" to "high"), prefs.profile,
+        ) { app.store.setCamPrefs(prefs.copy(profile = it)) }
+        CamPrefRow(
+            "Turn tablet cameras off after",
+            "A tablet camera that stays on warms the tablet up. Cameras also turn off by themselves when the tablet gets too warm.",
+            listOf("5 min" to 5, "10 min" to 10, "30 min" to 30, "60 min" to 60), prefs.maxMin,
+        ) { app.store.setCamPrefs(prefs.copy(maxMin = it)) }
+        CamPrefRow(
+            "Layout animation", "How tiles move when a camera comes or goes.",
+            listOf("Off" to 0, "Quick" to 220, "Smooth" to 450), prefs.layoutMs,
+        ) { app.store.setCamPrefs(prefs.copy(layoutMs = it)) }
+        CamPrefRow(
+            "Fade", "How a picture appears and disappears.",
+            listOf("Off" to 0, "Quick" to 250, "Smooth" to 600), prefs.fadeMs,
+        ) { app.store.setCamPrefs(prefs.copy(fadeMs = it)) }
+        Muted("Kid tablets show Android's own camera dot while their camera is on. NickOS adds nothing else on the kid's screen.", 15)
+    }
+}
+
+@Composable
+private fun <T> CamPrefRow(label: String, help: String, options: List<Pair<String, T>>, current: T, onSelect: (T) -> Unit) {
+    val values = options.map { it.second }
+    val selected = values.indexOf(current).coerceAtLeast(0)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = maxWidth < 760.dp
+        val text: @Composable (Modifier) -> Unit = { mod ->
+            Column(mod, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, style = body(19.sp, 700), color = C.text)
+                Muted(help, 15)
+            }
+        }
+        val control: @Composable () -> Unit = {
+            Segmented(options.map { it.first to null }, selected, { onSelect(values[it]) })
+        }
+        if (narrow) Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { text(Modifier.fillMaxWidth()); control() }
+        else Row(verticalAlignment = Alignment.CenterVertically) { text(Modifier.weight(1f)); control() }
     }
 }
 
