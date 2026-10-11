@@ -231,7 +231,9 @@ class CamController(
                 val url = CamPlan.streamUrl(hosts[id], cam?.port ?: 0, cam?.key) ?: return
                 val c = Client()
                 clients[id] = c
-                mine += id
+                // Only add to `mine` here if this Master already started it (START already did that):
+                // connecting to watch a stream another Master started must not make this Master's
+                // own toggle-off or leaving the screen stop it for everyone.
                 c.stream = open(url, { f -> onFrame(id, c, f) }, { reason -> onEnded(id, c, reason) })
             }
             CamPlan.Want.DISCONNECT -> closeClient(id)

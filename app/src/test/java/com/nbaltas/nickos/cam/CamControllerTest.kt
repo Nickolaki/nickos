@@ -362,6 +362,21 @@ class CamControllerTest {
     }
 
     @Test
+    fun `disarming this Master's watch of another Master's camera sends no camStop`() {
+        // Leo's camera is already live because another parent tablet started it.
+        c.arm(L)
+        say(L, live())
+        c.setViewing(true)
+        assertEquals(1, opened.size)
+        assertTrue(starts(L).isEmpty())
+        // This Master merely connected to watch; it never sent the camStart, so turning its own
+        // toggle off must not stop the camera for the Master that did.
+        c.disarm(L)
+        assertTrue(stops(L).isEmpty())
+        assertTrue(opened.last().closed)
+    }
+
+    @Test
     fun `an unlinked tablet takes its stream with it`() {
         val s = watching()
         port.linked = port.linked.filterNot { it.id == H }
