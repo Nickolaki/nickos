@@ -6,6 +6,8 @@ import android.net.nsd.NsdServiceInfo
 import android.util.Log
 import com.nbaltas.nickos.BuildConfig
 import com.nbaltas.nickos.cam.CamMessages
+import com.nbaltas.nickos.cam.CamProfile
+import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
@@ -76,6 +78,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     val together = NodeTogether(ctx, store, device, scope, { homeVisible }, ::broadcast)
     val videos get() = together.videos
     val syncPlayer get() = together.player
+
+    /** The front camera, streamed to a Master that asks for it. */
+    val cam = CamStreamer(ctx, this, device)
+    fun broadcastCamState() = scope.launch { broadcast(cam.stateJson()) }
 
     @Synchronized
     fun start() {
@@ -162,6 +168,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             sessions += id to c
             _connected.value = sessions.map { it.first }.toSet()
             c.send(status())
+            c.send(cam.stateJson()) // a Master that reconnects learns the camera is already on
             while (true) {
                 val msg = c.read() ?: break
                 if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd failed $msg", e) }
@@ -172,6 +179,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             c.close()
             sessions.removeAll { it.second === c }
             _connected.value = sessions.map { it.first }.toSet()
+            if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
         }
     }
 
@@ -203,6 +211,9 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         if (together.command(c, m) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
         if (c in NodeTogether.LEAVES_PLAYER) syncPlayer.stop()
         when (c) {
+            // The camera answers with its own camState, never with a status broadcast.
+            "camStart" -> { CamMessages.decodeStart(m)?.let { cam.start(CamProfile.of(it.profile), it.maxMs, Store.randomHex(8)) }; return }
+            "camStop" -> { cam.stop(NodeCam.STOPPED); return }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))
@@ -338,6 +349,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         nsdListener?.let { try { ctx.getSystemService(NsdManager::class.java).unregisterService(it) } catch (_: Exception) {} }
         nsdListener = null
         together.release()
+        cam.destroy()
         overlay.hideAll()
     }
 

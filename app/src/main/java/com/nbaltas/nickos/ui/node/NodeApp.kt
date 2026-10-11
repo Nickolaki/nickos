@@ -2,6 +2,8 @@ package com.nbaltas.nickos.ui.node
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +61,10 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     val canOverlay = remember(lockedBy, warn) { rt.device.canOverlay() }
 
+    // Tablet cameras: the grown-up menu offers "Allow camera" until the permission is there.
+    var cameraOk by remember(screen) { mutableStateOf(rt.device.hasCameraPermission()) }
+    val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { cameraOk = it || rt.device.hasCameraPermission() }
+
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (screen) {
             NodeScreen.DRAWER -> AppDrawer(onBack = { screen = NodeScreen.MENU }, onOpen = { rt.device.launch(it) })
@@ -102,6 +108,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     store.resetAll()
                 }
             },
+            onAllowCamera = if (cameraOk) null else ({ askCamera.launch(android.Manifest.permission.CAMERA) }),
         )
 
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),

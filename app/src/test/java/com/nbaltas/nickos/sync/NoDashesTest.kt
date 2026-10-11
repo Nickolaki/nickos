@@ -64,6 +64,10 @@ class NoDashesTest {
         File(testDir, "cam/MjpegParserTest.kt"),
         File(moduleDir, "cam/CamMessages.kt"),
         File(testDir, "cam/CamMessagesTest.kt"),
+        File(moduleDir, "cam/ServiceLifecycle.kt"),
+        File(moduleDir, "node/CamServer.kt"),
+        File(moduleDir, "node/CamStreamer.kt"),
+        File(testDir, "cam/CamServerTest.kt"),
     )
 
     @Test
