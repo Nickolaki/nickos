@@ -349,7 +349,10 @@ internal fun PickPanel(
                         NickSwitch(n.node.id in selected) { on -> selected = if (on) selected + n.node.id else selected - n.node.id }
                         Muted("Ready", 15)
                     }
-                    has && !n.online -> Muted("Offline", 15)
+                    has && !n.online -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        NickSwitch(on = false, enabled = false) {}
+                        Muted("Offline", 15)
+                    }
                     !has && n.online -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (sendBlocked != null) Muted(sendBlocked, 15) else {
                             NickButton("Send", { transfer.send(item.fid, setOf(n.node.id)) }, style = BtnStyle.SECONDARY)

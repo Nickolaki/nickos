@@ -34,12 +34,11 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.nbaltas.nickos.node.PlayerUi
 import com.nbaltas.nickos.sync.SyncState
+import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NodePalette
 import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 import kotlinx.coroutines.delay
-
-private val PlayerOverlayText = Color(0xFFEEF1F6)
 
 /**
  * The Node's player screen while Watch together has this tablet in front. [player] is nullable
@@ -102,7 +101,7 @@ fun TogetherScreen(ui: PlayerUi, player: Player?, parent: String, onHold: () -> 
                         .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg)
                         .padding(horizontal = 26.dp, vertical = 22.dp),
                 ) {
-                    Text(message, style = disp(28.sp), color = PlayerOverlayText, textAlign = TextAlign.Center)
+                    Text(message, style = disp(28.sp), color = C.onAccent, textAlign = TextAlign.Center)
                 }
             }
         }
