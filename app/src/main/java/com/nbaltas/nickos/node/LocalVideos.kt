@@ -161,12 +161,16 @@ class LocalVideos(private val ctx: Context) {
         private const val MIB = 1024 * 1024
 
         /**
-         * True for a MediaStore relative path ("Movies/", "Movies/NickOS/", "Download/Kids/") inside
-         * the Movies or Download folder. Everything else on the tablet is none of the library's business.
+         * True for exactly the folders a parent is told to copy movies into: "Movies/" and
+         * "Download/" themselves, and NickOS's own "Movies/NickOS/" with anything under it. Other
+         * subfolders are left alone on purpose: chat apps and screen recorders keep private clips
+         * in places like "Movies/Messenger/" and "Download/Telegram/", and those must never be
+         * listed on, or sent to, another tablet.
          */
         fun inLibrary(relativePath: String?): Boolean {
-            val p = relativePath?.trimStart('/')?.lowercase() ?: return false
-            return p.startsWith("movies/") || p.startsWith("download/")
+            val p = relativePath?.lowercase() ?: return false
+            if (p.split('/').any { it == ".." }) return false
+            return p == "movies/" || p == "download/" || p.startsWith("movies/${DOWNLOAD_DIR.lowercase()}/")
         }
 
         /** Before Android 10 MediaStore only has the absolute path: the folder part below the storage root. */

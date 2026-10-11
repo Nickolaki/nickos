@@ -55,12 +55,17 @@ class LocalVideosTest {
     @Test
     fun `only the Movies and Download folders are part of the library`() {
         assertTrue(LocalVideos.inLibrary("Movies/"))
+        assertTrue(LocalVideos.inLibrary("Download/"))
         assertTrue(LocalVideos.inLibrary("Movies/NickOS/"))
-        assertTrue(LocalVideos.inLibrary("Download/Kids/"))
+        assertTrue(LocalVideos.inLibrary("Movies/NickOS/Star Harbour/"))
         assertTrue(LocalVideos.inLibrary("movies/"))
-        for (other in listOf("DCIM/Camera/", "Pictures/Screenshots/", "WhatsApp/Media/WhatsApp Video/", "MoviesPrivate/", "", null)) {
-            assertEquals("folder $other", false, LocalVideos.inLibrary(other))
-        }
+        val private = listOf(
+            "DCIM/Camera/", "Pictures/Screenshots/", "WhatsApp/Media/WhatsApp Video/", "MoviesPrivate/",
+            // Apps keep their own clips in subfolders of the two shared folders.
+            "Movies/Messenger/", "Movies/Screen recordings/", "Download/Telegram/", "Download/Kids/",
+            "Movies/NickOSx/", "Movies/NickOS/../Messenger/", "/Movies/", "Movies", "", null,
+        )
+        for (other in private) assertEquals("folder $other", false, LocalVideos.inLibrary(other))
     }
 
     @Test
