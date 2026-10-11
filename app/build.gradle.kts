@@ -82,6 +82,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
     // Watch together: PlayerView for the Node's synced player.
     implementation("androidx.media3:media3-ui:1.9.0")
+    // Watch together: one tablet serves a movie file to the others over the home WiFi.
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     // QR code for zero-adb kid tablet setup.
     implementation("com.google.zxing:core:3.5.3")
     // Lucide: the icon set the design handoff was drawn with.

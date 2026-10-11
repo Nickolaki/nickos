@@ -3,6 +3,8 @@ package com.nbaltas.nickos.node
 import android.content.Context
 import android.os.SystemClock
 import com.nbaltas.nickos.data.Store
+import com.nbaltas.nickos.link.MediaServer
+import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.sync.SyncMessages
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -22,6 +24,9 @@ class NodeTogether(
     private val broadcast: (JSONObject) -> Unit,
 ) {
     val videos = LocalVideos(ctx)
+    private val hold = WifiHold(ctx)
+    /** Hands this tablet's movies to other tablets. Started by the first `serve`, then kept for the life of the runtime. */
+    val server = MediaServer.of(videos, hold)
     val player = SyncPlayer(
         ctx, videos, device,
         isLocked = { store.lockedBy.value != null },
@@ -45,6 +50,7 @@ class NodeTogether(
             "sync" -> SyncMessages.decodeSyncCmd(m)?.let { player.onSync(it) }
             "syncPause" -> player.onPause()
             "syncStop" -> player.stop()
+            "serve" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { reply(serving(fid)) } }
             else -> return false
         }
         return true
@@ -52,8 +58,19 @@ class NodeTogether(
 
     private fun videosMessage(): JSONObject = videos.reply().let { SyncMessages.encodeVideos(it.perm, it.list) }
 
+    /** Another tablet is about to fetch [fid] from this one: make sure the server is up and say where. */
+    private fun serving(fid: String): JSONObject {
+        val v = videos.find(fid) ?: return SyncMessages.encodeServing(fid, false, err = "missing")
+        if (!server.start()) return SyncMessages.encodeServing(fid, false, err = "server")
+        return SyncMessages.encodeServing(fid, true, server.port, server.key, v.size)
+    }
+
     /** The runtime is stopping. */
-    fun release() = player.release()
+    fun release() {
+        player.release()
+        server.stop()
+        hold.close()
+    }
 
     companion object {
         /** What this build tells a Master it can do, inside `status`. */
