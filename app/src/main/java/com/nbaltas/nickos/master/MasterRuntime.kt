@@ -53,7 +53,12 @@ data class NodeStatus(
     val jf: String?,
     val names: List<String>,
     val version: String,
+    /** "sync1" when this Node understands Watch together. Old Nodes omit the field entirely. */
+    val caps: List<String> = emptyList(),
 ) {
+    /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
+    val supportsSync: Boolean get() = "sync1" in caps
+
     companion object {
         fun from(o: JSONObject): NodeStatus {
             val skew = System.currentTimeMillis() - o.optLong("now", System.currentTimeMillis())
@@ -66,6 +71,7 @@ data class NodeStatus(
                 bedtimeAt = if (bt > 0) bt + skew else 0,
                 owner = o.optBoolean("owner"), usage = o.optBoolean("usage"), overlay = o.optBoolean("overlay"),
                 jf = o.optStr("jf"), names = o.optJSONArray("names").strings(), version = o.optString("version"),
+                caps = o.optJSONArray("caps").strings(),
             )
         }
 
