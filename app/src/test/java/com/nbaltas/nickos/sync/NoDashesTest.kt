@@ -72,6 +72,8 @@ class NoDashesTest {
         File(moduleDir, "master/MjpegClient.kt"),
         File(testDir, "cam/CamControllerTest.kt"),
         File(testDir, "cam/MjpegClientTest.kt"),
+        File(moduleDir, "ui/master/CamTile.kt"),
+        File(moduleDir, "ui/master/Cameras.kt"),
     )
 
     @Test
