@@ -107,13 +107,13 @@ class DesignScreensTest {
     @Test fun masterAddCode() = shot("Master-AddCode") { AddTabletScreen({}, "Master · Add tablet") {} }
 
     // ---- master ----
-    @Test fun masterHome() = shot("Master-Home") { MasterHome({}, {}, {}, {}, {}, {}) }
+    @Test fun masterHome() = shot("Master-Home") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     @Test fun masterHomeEmpty() {
         listOf("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc").forEach { app.store.removeNode(it) }
-        shot("Master-Home-Empty") { MasterHome({}, {}, {}, {}, {}, {}) }
+        shot("Master-Home-Empty") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     }
     @Config(qualifiers = "w800dp-h1280dp-port-mdpi")
-    @Test fun masterHomePortrait() = shot("Master-Home-Portrait") { MasterHome({}, {}, {}, {}, {}, {}) }
+    @Test fun masterHomePortrait() = shot("Master-Home-Portrait") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     @Test fun controlNowPlaying() = shot("Control-NowPlaying") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     @Test fun controlNothingPlaying() = shot("Control-NothingPlaying") { ControlScreen("bbbbbbbbbbbb", TAB_NOW, {}, {}, {}) }
     @Test fun controlOffline() = shot("Control-Offline") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
