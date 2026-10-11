@@ -2,6 +2,7 @@ package com.nbaltas.nickos.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.nbaltas.nickos.cam.CamPrefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -162,6 +163,33 @@ class Store(context: Context) {
         writeList("cameras", list) { it.toJson() }; _cameras.value = list
     }
 
+    // ---- Master: tablet cameras ----
+    private var _camArmed: Set<String> = readStrings("camArmed").toSet()
+    /** Tablets whose camera the parent has switched on in Cameras. */
+    val camArmed: Set<String> get() = _camArmed
+    fun setCamArmed(v: Set<String>) { writeStrings("camArmed", v.toList()); _camArmed = v }
+
+    private val _camRotation = MutableStateFlow(readCamRotation())
+    /** Extra quarter turns the parent gave a tablet's picture, by node id (0/90/180/270). */
+    val camRotation: StateFlow<Map<String, Int>> = _camRotation
+    @Synchronized fun setCamRotation(nodeId: String, degrees: Int) {
+        val map = _camRotation.value + (nodeId to ((degrees % 360) + 360) % 360)
+        p.edit().putString("camRotation", JSONObject(map as Map<*, *>).toString()).apply(); _camRotation.value = map
+    }
+    private fun readCamRotation(): Map<String, Int> = try {
+        val o = JSONObject(p.getString("camRotation", "{}") ?: "{}")
+        o.keys().asSequence().associateWith { o.optInt(it) }
+    } catch (e: Exception) { emptyMap() }
+
+    private val _camRtspHidden = MutableStateFlow(readStrings("camRtspHidden").toSet())
+    /** RTSP cameras the parent has taken off the Cameras stage, by camera id. */
+    val camRtspHidden: StateFlow<Set<String>> = _camRtspHidden
+    fun setCamRtspHidden(v: Set<String>) { writeStrings("camRtspHidden", v.toList()); _camRtspHidden.value = v }
+
+    private val _camPrefs = MutableStateFlow(CamPrefs())
+    /** Picture size, auto-off and transition lengths for Cameras. The defaults, until Settings, Cameras stores the parent's own. */
+    val camPrefs: StateFlow<CamPrefs> = _camPrefs
+
     // ---- Node ----
     private val _masters = MutableStateFlow(readList("masters") { LinkedMaster.from(it) })
     val masters: StateFlow<List<LinkedMaster>> = _masters
@@ -204,6 +232,7 @@ class Store(context: Context) {
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
+        _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()
     }
 
     // ---- helpers ----

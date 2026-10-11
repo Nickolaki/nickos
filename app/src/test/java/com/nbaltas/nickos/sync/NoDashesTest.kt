@@ -68,6 +68,10 @@ class NoDashesTest {
         File(moduleDir, "node/CamServer.kt"),
         File(moduleDir, "node/CamStreamer.kt"),
         File(testDir, "cam/CamServerTest.kt"),
+        File(moduleDir, "master/CamController.kt"),
+        File(moduleDir, "master/MjpegClient.kt"),
+        File(testDir, "cam/CamControllerTest.kt"),
+        File(testDir, "cam/MjpegClientTest.kt"),
     )
 
     @Test

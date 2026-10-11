@@ -142,6 +142,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Sending movies between tablets. This tablet hands out its own through [server]. */
     val server = MediaServer.of(videos, WifiHold(ctx))
     val transfer = TransferController(this, store)
+    /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
+    val cam = CamController(this, store)
 
     fun lanAddress(): String? = LanAddress.own(ctx)
     fun localUrl(fid: String): String? = lanAddress()?.takeIf { server.start() }?.let { server.url(it, fid) }
@@ -166,6 +168,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch { resumeLoop() }
         sync.startTicker()
         transfer.startTicker()
+        cam.startTicker()
         scope.launch {
             var last = store.pin.value
             store.pin.collect { p -> if (p != last) { last = p; conns.keys.forEach { send(it, cmd("pin").put("pin", p)) } } }
@@ -255,6 +258,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 _online.update { it - id }
                 sync.onDisconnected(id)
                 transfer.onDisconnected(id)
+                cam.onDisconnected(id)
             }
             delay(3000)
         }
@@ -281,6 +285,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
                 "serving", "jobs" -> transfer.onMessage(n.id, m)
+                "camState" -> cam.onMessage(n.id, m)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }

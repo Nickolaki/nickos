@@ -155,6 +155,23 @@ object CamPlan {
         return if (cam.level == NodeCam.LEVEL_NORMAL) TileDisplay.LIVE else TileDisplay.HOT
     }
 
+    /**
+     * The tablet turned its own camera off (auto-off, too hot, low battery). Its tile stays on
+     * the stage, with the parent's toggle already off, so the reason is seen.
+     */
+    fun lingers(cam: NodeCam?): Boolean = cam != null && !cam.on && cam.reason in NodeCam.SELF_OFF
+
+    /**
+     * Where the Master reads a tablet's stream: the address it already reaches the tablet at,
+     * with the port and key the tablet sent. Null when any part is not plainly what it should be.
+     */
+    fun streamUrl(host: String?, port: Int, key: String?): String? {
+        if (host.isNullOrEmpty() || key.isNullOrEmpty() || port !in 1..65535) return null
+        if (!key.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' }) return null
+        if (!host.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '.' || it == '-' || it == ':' }) return null
+        return "http://${if (':' in host) "[$host]" else host}:$port/cam?k=$key"
+    }
+
     /** True while a too hot tablet is still inside its cooldown, on the Master's clock. */
     fun coolingDown(cam: NodeCam?, now: Long): Boolean {
         val at = cam?.takeIf { !it.on && it.reason == NodeCam.TOO_HOT }?.retryAtLocal ?: return false
