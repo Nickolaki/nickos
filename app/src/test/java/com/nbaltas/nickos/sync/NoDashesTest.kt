@@ -87,6 +87,12 @@ class NoDashesTest {
         File(testDir, "cam/MjpegParserTest.kt"),
         File(moduleDir, "cam/CamMessages.kt"),
         File(testDir, "cam/CamMessagesTest.kt"),
+        // Tapo camera on the car network.
+        File(moduleDir, "cam/RtspCam.kt"),
+        File(moduleDir, "master/CamFinder.kt"),
+        File(testDir, "cam/RtspCamTest.kt"),
+        File(testDir, "master/CamFinderTest.kt"),
+        File(testDir, "master/RtspKnockTest.kt"),
         File(moduleDir, "cam/ServiceLifecycle.kt"),
         File(moduleDir, "node/CamServer.kt"),
         File(moduleDir, "node/CamStreamer.kt"),
