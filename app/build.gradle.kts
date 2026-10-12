@@ -68,6 +68,21 @@ android {
     }
 }
 
+// The ordinary test run COMPARES every screen with its saved picture in design/screens (see
+// DesignScreensTest). `:app:recordRoborazziDebug` is the one command that rewrites those pictures, so
+// verify mode is on for every test run except when someone asked for a roborazzi task themselves.
+tasks.withType<Test>().configureEach {
+    val asked = gradle.startParameter.taskNames.joinToString(" ").lowercase()
+    val ownMode = "roborazzi" in asked || project.hasProperty("roborazzi.test.record") ||
+        project.hasProperty("roborazzi.test.compare") || project.hasProperty("roborazzi.test.verify")
+    if (!ownMode) systemProperty("roborazzi.test.verify", "true")
+    // Print the failure message (it names the screen and the re-record command) in the console.
+    testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
+    // The saved pictures are what the tests compare against, so editing one must re-run them
+    // (without this Gradle calls the test task up to date and never looks at a changed picture).
+    inputs.dir(rootProject.file("design/screens")).withPropertyName("designScreens").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.palette:palette-ktx:1.0.0")

@@ -13,7 +13,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
+import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.nbaltas.nickos.ui.node.screenNow
+import java.util.Locale
+import java.util.TimeZone
+import org.junit.After
 import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.JellyfinAccount
@@ -71,9 +76,17 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Renders NickOS screens with the design's sample data at 1280×800 so they can be compared
- * side by side with the same-named PNG in design/screens. Run: ./gradlew :app:recordRoborazziDebug
- * Output goes to app/build/design-check.
+ * Renders NickOS screens with the design's sample data (1280x800, or portrait / phone where named) and
+ * COMPARES each render with the same-named PNG in design/screens. A screen that no longer matches its
+ * picture fails the ordinary test run (`./gradlew :app:testDebugUnitTest`).
+ *
+ * When a screen changed on purpose, re-record the pictures and commit them:
+ *     ./gradlew :app:recordRoborazziDebug      (writes straight into design/screens)
+ *
+ * Everything that depends on the time of day is pinned to one instant (Mon 12 Oct 2026, 12:00, Sydney
+ * time zone, English locale) so a render comes out the same every run. See [screenNow] in NodeUi.kt.
+ * A render may differ from its picture by up to [CHANGE_THRESHOLD] of its pixels, which absorbs font
+ * anti-aliasing differences between machines but not a moved or changed element.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -81,19 +94,54 @@ import org.robolectric.annotation.GraphicsMode
 class DesignScreensTest {
     private val app get() = ApplicationProvider.getApplicationContext<App>()
 
-    private fun shot(name: String, content: @Composable () -> Unit) =
-        captureRoboImage("build/design-check/$name.png") {
-            NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
+    companion object {
+        /** Mon 12 Oct 2026, 12:00 in Sydney (AEDT, UTC+11). */
+        val FIXED_NOW: Long = java.time.ZonedDateTime.of(2026, 10, 12, 12, 0, 0, 0, java.time.ZoneId.of("Australia/Sydney")).toInstant().toEpochMilli()
+
+        /** Fraction of pixels allowed to differ from the saved picture. */
+        const val CHANGE_THRESHOLD = 0.0005f
+    }
+
+    private fun shot(name: String, content: @Composable () -> Unit) {
+        try {
+            captureRoboImage(
+                "../design/screens/$name.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            ) {
+                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
+            }
+        } catch (e: AssertionError) {
+            throw AssertionError(
+                "Screen \"$name\" no longer matches design/screens/$name.png. If the change is on purpose, " +
+                    "re-record with: .\\gradlew.bat :app:recordRoborazziDebug  and commit design/screens. " +
+                    "A side-by-side of what changed is in app/build/outputs/roborazzi. (${e.message})",
+                e,
+            )
         }
+    }
+
+    private var oldZone: TimeZone? = null
+    private var oldLocale: Locale? = null
+
+    @After
+    fun unpin() {
+        screenNow = { System.currentTimeMillis() }
+        oldZone?.let { TimeZone.setDefault(it) }
+        oldLocale?.let { Locale.setDefault(it) }
+    }
 
     @Before
     fun seed() {
+        oldZone = TimeZone.getDefault(); oldLocale = Locale.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Australia/Sydney"))
+        Locale.setDefault(Locale.ENGLISH)
+        screenNow = { FIXED_NOW }
         val s = app.store
         s.resetAll()
         s.setName("Dad's Tablet")
-        s.upsertNode(LinkedNode("aaaaaaaaaaaa", "Hailey's Tablet", 0, "initial", "t", lastSeen = System.currentTimeMillis()))
-        s.upsertNode(LinkedNode("bbbbbbbbbbbb", "Leo's Tablet", 3, "initial", "t", lastSeen = System.currentTimeMillis()))
-        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = System.currentTimeMillis() - 12 * 60_000, lastBattery = 23))
+        s.upsertNode(LinkedNode("aaaaaaaaaaaa", "Hailey's Tablet", 0, "initial", "t", lastSeen = FIXED_NOW))
+        s.upsertNode(LinkedNode("bbbbbbbbbbbb", "Leo's Tablet", 3, "initial", "t", lastSeen = FIXED_NOW))
+        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23))
         val m = app.master
         set(m, "_online", setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"))
         set(m, "_status", mapOf(
@@ -109,7 +157,7 @@ class DesignScreensTest {
             parentThumbId = null, parentBackdropId = null,
         )
         val sess = JfSession("sess", null, "Hailey's Tablet", "Jellyfin Android", true, ep, ep.posTicks, false, "")
-        set(m, "_playback", mapOf("aaaaaaaaaaaa" to Playback(sess, System.currentTimeMillis())))
+        set(m, "_playback", mapOf("aaaaaaaaaaaa" to Playback(sess, FIXED_NOW)))
         Shadows.shadowOf(app).grantPermissions(Manifest.permission.READ_MEDIA_VIDEO)
     }
 

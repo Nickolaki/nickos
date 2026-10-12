@@ -114,3 +114,18 @@ commit, build the release, then copy it into nickflix-config's data dir as
   to play an item on the kid tablet's Jellyfin session. The session is matched by the tablet's
   device name, then by the tablet's Jellyfin user.
 - Volume, brightness, screen, lock and bedtime act on the tablet itself, not through Jellyfin.
+
+## Screens and their saved pictures
+
+`design/screens/*.png` is one picture per screen. The ordinary test run
+(`.\gradlew.bat :app:testDebugUnitTest`) draws every screen again and **fails if one no longer
+matches its picture**, naming the screen. The renders use a pinned clock (Mon 12 Oct 2026, 12:00),
+so they do not change from run to run.
+
+If a screen changed on purpose, re-record the pictures and commit them:
+
+    .\gradlew.bat :app:recordRoborazziDebug
+
+then look at the changed PNGs in `design/screens` before committing. The tolerance is
+`CHANGE_THRESHOLD` in `DesignScreensTest.kt` (a tiny fraction of pixels, to ignore font
+smoothing differences between computers).

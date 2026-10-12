@@ -63,6 +63,7 @@ import com.nbaltas.nickos.master.Playback
 import com.nbaltas.nickos.master.RemoteApp
 import com.nbaltas.nickos.ui.common.AppDrawer
 import com.nbaltas.nickos.ui.node.rememberNow
+import com.nbaltas.nickos.ui.node.screenNow
 import com.nbaltas.nickos.ui.setup.AddTabletScreen
 import com.nbaltas.nickos.ui.setup.LinkedScreen
 import com.nbaltas.nickos.ui.setup.rotate90
@@ -303,7 +304,7 @@ private fun EmptyHome(onAdd: () -> Unit) {
 
 fun seenAgo(ms: Long): String {
     if (ms <= 0) return ""
-    val min = ((System.currentTimeMillis() - ms) / 60_000).toInt()
+    val min = ((screenNow() - ms) / 60_000).toInt()
     return when {
         min < 1 -> "seen just now"
         min < 60 -> "seen $min min ago"
