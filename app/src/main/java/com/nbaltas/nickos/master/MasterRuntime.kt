@@ -7,7 +7,9 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Base64
 import android.util.Log
+import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedNode
+import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.data.optStr
 import com.nbaltas.nickos.jellyfin.JfItem
@@ -122,9 +124,20 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val _net = MutableStateFlow<Map<String, NodeNet>>(emptyMap())
     val net: StateFlow<Map<String, NodeNet>> = _net
 
+    /**
+     * The car network this tablet hosts (a Wi-Fi Direct group with a fixed name and passphrase). Created here, not in
+     * a service, so it also exists during Setup before the role is saved; [MasterService] only keeps the process alive.
+     */
+    val carNet = CarNet(
+        port = AndroidP2pPort(ctx), scope = scope,
+        wanted = { Hotspot(CarNetNames.ssid(store.deviceId), store.carNetPass(), direct = true) },
+        manual = { store.hotspot.value?.direct == false },
+        onUp = { store.adoptDirectHotspot(it) },
+    )
+
     /** Subnet sweep: the second way to find a Node, with no multicast. */
     private val sweep = Sweep(
-        scope, ownIp = { lanAddress() },
+        scope, ownIps = { ownIps() },
         missing = { store.nodes.value.map { it.id }.filter { it !in _online.value && found[it] == null }.toSet() },
         prober = SocketProber(), table = found,
         onFound = { id, addr -> adopt(id, addr) },
@@ -164,12 +177,23 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     val cam = CamController(this, store)
 
     fun lanAddress(): String? = LanAddress.own(ctx)
-    fun localUrl(fid: String): String? = lanAddress()?.takeIf { server.start() }?.let { server.url(it, fid) }
+    /** Every address this tablet has: the home WiFi and the car network it hosts can be up at the same time. */
+    private fun ownIps(): List<String> =
+        (LanAddress.all(ctx).map { it.second } + listOfNotNull((carNet.state.value as? CarNetState.On)?.ownIp)).distinct()
+
+    /**
+     * Where tablet [nodeId] fetches movie [fid]: this tablet's address on THAT tablet's link (the local end of its
+     * socket), because with the home WiFi and the car network both up the single "own" address is wrong for one of them.
+     */
+    fun localUrl(fid: String, nodeId: String): String? =
+        LanAddress.localFor(links[nodeId]?.socket?.localAddress?.hostAddress, lanAddress())?.takeIf { server.start() }?.let { server.url(it, fid) }
 
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
     @Synchronized
     fun start() {
+        // Idempotent, and outside the guard below: after a reset the Master starts again without a new process.
+        carNet.start()
         if (started) return
         started = true
         Wire.multicastLock(ctx)
@@ -188,7 +212,24 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch {
             // The hotspot goes to every Node on connect (see session) and again whenever the parent changes it.
             var last = store.hotspot.value
-            store.hotspot.collect { h -> if (h != last) { last = h; links.ids().forEach { sendHotspot(it) } } }
+            store.hotspot.collect { h ->
+                carNet.poke() // typing a hotspot in switches the car network off; clearing it switches it back on
+                if (h != last) { last = h; links.ids().forEach { sendHotspot(it) } }
+            }
+        }
+        scope.launch {
+            // The group came up (or moved): its address is now known, so tell the Nodes, and look for them on it.
+            var last: CarNetState.On? = null
+            carNet.state.collect { s ->
+                val on = s as? CarNetState.On
+                if (on != null && on != last) { links.ids().forEach { sendHotspot(it) }; onNetworkChanged() }
+                last = on
+            }
+        }
+        scope.launch {
+            // Only a reset (Master to no role) removes the group. Setup runs with no role yet and must keep it.
+            var prev = store.role.value
+            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) carNet.stop(); prev = r }
         }
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
@@ -347,7 +388,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun sendHotspot(id: String) {
-        send(id, NetMessages.hotspotCmd(store.hotspot.value))
+        val h = store.hotspot.value
+        // The address a Node's Master link arrives from when it is on this network. Only for the network we host: a
+        // typed-in hotspot's address is unknown here (the Master is usually on the home WiFi), and a wrong one would
+        // mark a Node approved for a network it is not on. Unknown now means none: the Node keeps what it had.
+        val gw = if (h?.direct == true) (carNet.state.value as? CarNetState.On)?.ownIp else null
+        send(id, NetMessages.hotspotCmd(h, gw))
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
@@ -417,8 +463,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** The banner's reason for each offline tablet, using what the Node last said (or what was persisted). */
     fun offlineReasons(now: Long = System.currentTimeMillis()): Map<String, Reason> {
         val lan = lanAddress()
+        val manual = store.hotspot.value?.direct == false
+        val car = carNet.state.value
         return OnlinePolicy.offline(store.nodes.value, _online.value).associate { n ->
-            n.id to OnlinePolicy.reason(lan, OnlinePolicy.wifiSaved(_net.value[n.id], n.wifiSaved), n.lastSeen, now)
+            n.id to OnlinePolicy.reason(car, manual, lan, OnlinePolicy.wifiSaved(_net.value[n.id], n.wifiSaved), n.lastSeen, now, carNet.startingSince)
         }
     }
 

@@ -264,6 +264,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                     if (m == null) { c.send(JSONObject().put("t", "denied")); return c.close() }
                     first.optString("masterName").takeIf { it.isNotEmpty() && it != m.name }?.let { store.addMaster(m.copy(name = it)) }
                     c.send(JSONObject().put("t", "welcome"))
+                    // A Master that reached us FROM its car-network address proves this Node is on that network.
+                    wifi.linkedFrom(c.socket.inetAddress?.hostAddress)
                     masterId = m.id
                 }
                 else -> return c.close()
@@ -373,7 +375,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
             "unlink" -> store.removeMaster(masterId)
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
-            "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass) }
+            "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
         }
         broadcast(status())
     }

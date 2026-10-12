@@ -80,7 +80,9 @@ class NodeService : Service() {
 /** Starts the link again after a reboot, so a Node is reachable before anyone opens it. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
-        if (App.get(ctx).store.role.value != Role.NODE) return
+        val role = App.get(ctx).store.role.value
+        if (role == Role.MASTER) { com.nbaltas.nickos.master.MasterService.start(ctx); return }
+        if (role != Role.NODE) return
         NodeService.start(ctx)
         // After a self-update the kiosk task died with the old process: put the kid home back.
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {

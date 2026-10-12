@@ -53,7 +53,7 @@ class WifiJoin(
      */
     @Suppress("DEPRECATION")
     @Synchronized
-    fun save(ssid: String, pass: String): Boolean {
+    fun save(ssid: String, pass: String, gw: String? = null): Boolean {
         val oldSsid = prefs.getString(K_SSID, null)
         val oldId = prefs.getInt(K_NETID, -1)
         val fp = fingerprint(ssid, pass)
@@ -61,7 +61,11 @@ class WifiJoin(
             forget()
             return true
         }
-        if (oldSsid == ssid && prefs.getString(K_FP, null) == fp && configExists(oldId, prefs.getString(K_MODE, null))) return true
+        if (oldSsid == ssid && prefs.getString(K_FP, null) == fp && configExists(oldId, prefs.getString(K_MODE, null))) {
+            // Same network again. A Master that does not know its address right now sends none: keep what we had.
+            if (gw != null && prefs.getString(K_GW, null) != gw) prefs.edit().putString(K_GW, gw).apply()
+            return true
+        }
 
         // A changed ssid or password replaces the old entry; the same ssid keeps its slot only if remove succeeds.
         forget()
@@ -91,8 +95,21 @@ class WifiJoin(
         // remove it on API 29, where WifiManager.getNetworkSuggestions() does not exist.
         prefs.edit().putString(K_SSID, ssid).putString(K_FP, fp).putInt(K_NETID, netId).putString(K_MODE, mode)
             .putString(K_PASS, if (mode == MODE_SUGGEST) pass else null)
+            .putString(K_GW, gw)
             .putBoolean(K_APPROVED, false).apply()
         return true
+    }
+
+    /**
+     * A Master link just arrived FROM [remoteIp]. When that is the Master's address on the saved network (the "gw"
+     * it sent), this Node is demonstrably on that network, which is the approval proof Android will not give an app
+     * without location. Only the suggestion path needs it: a configured (Device Owner) network is never pending.
+     */
+    @Synchronized
+    fun linkedFrom(remoteIp: String?) {
+        if (remoteIp == null || prefs.getString(K_MODE, null) != MODE_SUGGEST || prefs.getBoolean(K_APPROVED, false)) return
+        val gw = prefs.getString(K_GW, null) ?: return
+        if (remoteIp == gw) prefs.edit().putBoolean(K_APPROVED, true).apply()
     }
 
     @Suppress("DEPRECATION")
@@ -108,7 +125,7 @@ class WifiJoin(
                 else listOf(suggestion(ssid, prefs.getString(K_PASS, "") ?: ""))
             wifi.removeNetworkSuggestions(mine)
         } catch (e: Exception) { Log.w(TAG, "removeSuggestions", e) }
-        prefs.edit().remove(K_SSID).remove(K_FP).remove(K_NETID).remove(K_MODE).remove(K_APPROVED).remove(K_PASS).apply()
+        prefs.edit().remove(K_SSID).remove(K_FP).remove(K_NETID).remove(K_MODE).remove(K_APPROVED).remove(K_PASS).remove(K_GW).apply()
     }
 
     @Suppress("DEPRECATION")
@@ -192,6 +209,7 @@ class WifiJoin(
         private const val K_MODE = "mode"
         private const val K_APPROVED = "approved"
         private const val K_PASS = "sugpass"
+        private const val K_GW = "gw"
         private const val MODE_NONE = "none"
         private const val MODE_CONFIG = "config"
         private const val MODE_SUGGEST = "suggest"

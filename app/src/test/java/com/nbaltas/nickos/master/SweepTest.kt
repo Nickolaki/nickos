@@ -40,7 +40,8 @@ class SweepTest {
         prober: Prober,
         config: Sweep.Config = Sweep.Config(),
         clock: () -> Long = System::currentTimeMillis,
-    ) = Sweep(scope, ownIp, missing, prober, rig.table, { id, addr -> rig.found += id to addr }, config, clock)
+        ownIps: (() -> List<String>)? = null,
+    ) = Sweep(scope, ownIps ?: { listOfNotNull(ownIp()) }, missing, prober, rig.table, { id, addr -> rig.found += id to addr }, config, clock)
 
     private fun waitFor(what: String, cond: () -> Boolean) {
         val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
@@ -243,5 +244,54 @@ class SweepTest {
         now += 60_000; s.tick()
         Thread.sleep(20)
         assertEquals(2, s.passCount)
+    }
+
+    @Test
+    fun `home wifi and the hosted car network are both swept, the car network first`() = runBlocking {
+        val tried = ConcurrentLinkedQueue<String>()
+        val s = sweep(Rig(), ownIps = { listOf("192.168.1.20", "192.168.49.1") }, missing = { setOf(nodeA) }, prober = { host, _ ->
+            tried += host; null
+        })
+        s.pass()
+        val order = tried.toList()
+        assertTrue(order.first().startsWith("192.168.49."))
+        assertEquals(506, order.toSet().size)
+    }
+
+    @Test
+    fun `a node found on the car network is reported with the car network address`() = runBlocking {
+        val rig = Rig()
+        val s = sweep(rig, ownIps = { listOf("192.168.1.20", "192.168.49.1") }, missing = { setOf(nodeA) },
+            prober = { host, _ -> if (host == "192.168.49.2") nodeA else null })
+        assertEquals(setOf(nodeA), s.pass())
+        assertEquals(nodeA to ("192.168.49.2" to 47470), rig.found.first())
+    }
+
+    @Test
+    fun `none of this tablet's own addresses is ever probed`() = runBlocking {
+        val tried = ConcurrentLinkedQueue<String>()
+        val s = sweep(Rig(), ownIps = { listOf("192.168.1.20", "192.168.49.1") }, missing = { setOf(nodeA) }, prober = { host, _ ->
+            tried += host; null
+        })
+        s.pass()
+        assertFalse("192.168.1.20" in tried)
+        assertFalse("192.168.49.1" in tried)
+    }
+
+    @Test
+    fun `an answer is dropped when the car network came up mid pass`() = runBlocking {
+        val rig = Rig()
+        val ips = java.util.concurrent.atomic.AtomicReference(listOf("192.168.1.20"))
+        val gate = CompletableDeferred<Unit>()
+        val started = CountDownLatch(1)
+        val s = sweep(rig, ownIps = { ips.get() }, missing = { setOf(nodeA) }, prober = { host, _ ->
+            if (host == "192.168.1.60") { started.countDown(); gate.await(); nodeA } else null
+        })
+        val pass = scope.async { s.pass() }
+        assertTrue(started.await(2, TimeUnit.SECONDS))
+        ips.set(listOf("192.168.1.20", "192.168.49.1"))
+        gate.complete(Unit)
+        assertTrue(pass.await().isEmpty())
+        assertTrue(rig.found.isEmpty())
     }
 }

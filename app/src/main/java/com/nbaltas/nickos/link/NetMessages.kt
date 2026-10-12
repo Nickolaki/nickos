@@ -5,7 +5,8 @@ import org.json.JSONObject
 
 /**
  * Messages for hands-off joining (capability "wifi1"):
- *  Master to Node  {"t":"cmd","c":"wifi","ssid","pass"}  save the car hotspot; empty ssid forgets it.
+ *  Master to Node  {"t":"cmd","c":"wifi","ssid","pass","gw"?}  save the car network; empty ssid forgets it. "gw" is
+ *                  the Master's own address on that network, so the Node can tell it is on it.
  *  Master to Node  {"t":"who"} as the FIRST line gets {"t":"iam","nodeId","name"} and the socket closes.
  *  Node to Master  "wifi":{"saved","approve","do","doze"} inside "status", and "wifi1" inside "caps".
  *
@@ -17,7 +18,8 @@ object NetMessages {
     private val NODE_ID = Regex("^[0-9a-f]{12}$")
 
     data class Iam(val nodeId: String, val name: String)
-    data class WifiCmd(val ssid: String, val pass: String) { val forget get() = ssid.isEmpty() }
+    /** [gw] is the Master's own address on the network being described (192.168.49.1 for a Direct group), or null. */
+    data class WifiCmd(val ssid: String, val pass: String, val gw: String? = null) { val forget get() = ssid.isEmpty() }
     data class WifiStatus(val saved: Boolean = false, val approve: Boolean = false, val deviceOwner: Boolean = false, val doze: Boolean = false)
 
     fun who(): JSONObject = JSONObject().put("t", "who")
@@ -35,11 +37,15 @@ object NetMessages {
 
     fun decodeIamLine(line: String?): Iam? = try { decodeIam(line?.let { JSONObject(it) }) } catch (e: Exception) { null }
 
-    fun wifiCmd(ssid: String, pass: String): JSONObject =
-        JSONObject().put("t", "cmd").put("c", "wifi").put("ssid", ssid).put("pass", pass)
+    fun wifiCmd(ssid: String, pass: String, gw: String? = null): JSONObject =
+        JSONObject().put("t", "cmd").put("c", "wifi").put("ssid", ssid).put("pass", pass).apply { if (gw != null) put("gw", gw) }
 
-    /** What the Master sends on every connect: the saved hotspot, or an empty ssid ("forget") when there is none. */
-    fun hotspotCmd(h: com.nbaltas.nickos.data.Hotspot?): JSONObject = wifiCmd(h?.ssid ?: "", h?.pass ?: "")
+    /**
+     * What the Master sends on every connect: the saved network, or an empty ssid ("forget") when there is none.
+     * [gw] lets a Node prove it is on that network: a Master link that arrives FROM [gw] means it is.
+     */
+    fun hotspotCmd(h: com.nbaltas.nickos.data.Hotspot?, gw: String? = null): JSONObject =
+        wifiCmd(h?.ssid ?: "", h?.pass ?: "", if (h == null) null else gw)
 
     /**
      * Null for a command the Node must not act on: an SSID over 32 bytes, or a password that is neither
@@ -51,7 +57,9 @@ object NetMessages {
         if (ssid.isEmpty()) return WifiCmd("", "")
         if (ssid.toByteArray(Charsets.UTF_8).size > 32) return null
         if (pass.isNotEmpty() && pass.length !in 8..63) return null
-        return WifiCmd(ssid, pass)
+        // A gw that is not a plain dotted IPv4 address is dropped, not a reason to refuse the whole command.
+        val gw = m.optString("gw").takeIf { LanAddress.octets(it) != null }
+        return WifiCmd(ssid, pass, gw)
     }
 
     fun encodeWifi(s: WifiStatus): JSONObject =

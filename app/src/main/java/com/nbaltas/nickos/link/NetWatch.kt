@@ -98,7 +98,9 @@ class NetWatch(private val ctx: Context, debounceMs: Long = 1500, private val po
         }
         apReceiver = rx
         try {
-            val f = IntentFilter().apply { addAction(AP_STATE); addAction(TETHER_STATE) }
+            // The two Wi-Fi Direct broadcasts matter on the Master: a group it owns has no Network object, so the
+            // callback above is silent when a Node joins or leaves it; CONNECTION_CHANGED is the only prompt.
+            val f = IntentFilter().apply { addAction(AP_STATE); addAction(TETHER_STATE); addAction(P2P_CONNECTION); addAction(P2P_STATE) }
             ContextCompat.registerReceiver(ctx.applicationContext, rx, f, ContextCompat.RECEIVER_EXPORTED)
         } catch (e: Exception) { Log.w(TAG, "no ap receiver", e); apReceiver = null }
         scope.launch {
@@ -123,5 +125,8 @@ class NetWatch(private val ctx: Context, debounceMs: Long = 1500, private val po
         private const val TAG = "NickOS.Net"
         private const val AP_STATE = "android.net.wifi.WIFI_AP_STATE_CHANGED"
         private const val TETHER_STATE = "android.net.conn.TETHER_STATE_CHANGED"
+        /** WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION and WIFI_P2P_STATE_CHANGED_ACTION. */
+        const val P2P_CONNECTION = "android.net.wifi.p2p.CONNECTION_STATE_CHANGE"
+        const val P2P_STATE = "android.net.wifi.p2p.STATE_CHANGED"
     }
 }
