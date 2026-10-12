@@ -1,5 +1,6 @@
 package com.nbaltas.nickos.node
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -51,6 +52,8 @@ class WifiJoin(
      * removing and re-adding the configuration of the network we are ON would cut the very link that carried the
      * command, so an unchanged ssid and password with a config that still exists does nothing.
      */
+    // NewApi: every suggestion call below is behind the injected [sdk] check (>= 29, >= 30), which lint cannot see.
+    @SuppressLint("NewApi")
     @Suppress("DEPRECATION")
     @Synchronized
     fun save(ssid: String, pass: String, gw: String? = null): Boolean {
@@ -112,6 +115,7 @@ class WifiJoin(
         if (remoteIp == gw) prefs.edit().putBoolean(K_APPROVED, true).apply()
     }
 
+    @SuppressLint("NewApi") // guarded by the injected [sdk], as in save()
     @Suppress("DEPRECATION")
     private fun forget() {
         val ssid = prefs.getString(K_SSID, null)
@@ -192,6 +196,7 @@ class WifiJoin(
         status = WifiConfiguration.Status.ENABLED
     }
 
+    @androidx.annotation.RequiresApi(29)
     private fun suggestion(ssid: String, pass: String) = WifiNetworkSuggestion.Builder().apply {
         setSsid(ssid)
         if (pass.isNotEmpty()) setWpa2Passphrase(pass)

@@ -63,7 +63,9 @@ class MainActivity : ComponentActivity() {
                                 try { stopLockTask() } catch (_: Exception) {}
                                 // A screen-off (lockNow) leaves the keyguard pending behind lock task;
                                 // it would pop up as soon as the parent leaves kid mode.
-                                getSystemService(KeyguardManager::class.java).requestDismissKeyguard(this@MainActivity, null)
+                                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                    getSystemService(KeyguardManager::class.java).requestDismissKeyguard(this@MainActivity, null)
+                                }
                             },
                         )
                     }
@@ -75,7 +77,10 @@ class MainActivity : ComponentActivity() {
     private fun onRoleChanged(role: Role) {
         when (role) {
             Role.MASTER -> { app.master.start(); MasterService.start(this); askForCarNetPermission(); showSystemBars(true) }
-            Role.NODE -> { NodeService.start(this); enterKidMode() }
+            Role.NODE -> {
+                if (!com.nbaltas.nickos.node.NodeSupport.ok()) { android.util.Log.w("NickOS", "this Android is too old to be a Node"); return }
+                NodeService.start(this); enterKidMode()
+            }
             Role.NONE -> { MasterService.stop(this); showSystemBars(true) }
         }
     }

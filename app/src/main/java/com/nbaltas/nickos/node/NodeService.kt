@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.R
@@ -24,9 +25,12 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS link", NotificationManager.IMPORTANCE_MIN))
-        val n = Notification.Builder(this, CHANNEL)
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS link", NotificationManager.IMPORTANCE_MIN))
+        }
+        val n = NotificationCompat.Builder(this, CHANNEL)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("NickOS")
             .setContentText("Linked to the parent tablet")
@@ -83,6 +87,7 @@ class BootReceiver : BroadcastReceiver() {
         val role = App.get(ctx).store.role.value
         if (role == Role.MASTER) { com.nbaltas.nickos.master.MasterService.start(ctx); return }
         if (role != Role.NODE) return
+        if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); return }
         NodeService.start(ctx)
         // After a self-update the kiosk task died with the old process: put the kid home back.
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
