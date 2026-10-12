@@ -73,7 +73,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            if (fullScreen) WindowManager.LayoutParams.MATCH_PARENT else WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT, // the toast anchors itself to the bottom of this untouchable window
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT,

@@ -8,6 +8,9 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -360,7 +363,10 @@ fun LockedScreen(store: Store, by: String?) {
 
 @Composable
 fun BedtimeToast(secondsLeft: Int) {
-    Box(Modifier.fillMaxWidth().padding(top = 28.dp), contentAlignment = Alignment.TopCenter) {
+    Box(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 28.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
         Row(
             Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(32.dp))
                 .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg).padding(horizontal = 26.dp, vertical = 22.dp),
