@@ -6,6 +6,9 @@ import android.content.Context
 interface SecFlags {
     fun sec2(id: String): Boolean
     fun setSec2(id: String, v: Boolean)
+    /** This peer has been seen reporting the sec2 capability (Master side). */
+    fun sec2Capable(id: String): Boolean
+    fun setSec2Capable(id: String, v: Boolean)
 }
 
 /**
@@ -18,4 +21,8 @@ class LinkFlags(ctx: Context) : SecFlags {
     override fun sec2(id: String): Boolean = p.getBoolean("sec2.$id", false)
 
     override fun setSec2(id: String, v: Boolean) { p.edit().putBoolean("sec2.$id", v).apply() }
+
+    override fun sec2Capable(id: String): Boolean = p.getBoolean("cap.$id", false)
+
+    override fun setSec2Capable(id: String, v: Boolean) { p.edit().putBoolean("cap.$id", v).apply() }
 }

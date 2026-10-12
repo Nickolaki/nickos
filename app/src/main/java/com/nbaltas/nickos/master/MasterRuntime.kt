@@ -377,7 +377,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 // An old Node does not know v2 and says denied. Only while this Node has never done sec2 do we fall back
                 // to the v1 hello (token in clear), once, to let it update itself. After one v2 handshake: never.
                 Handshake.Hello.DENIED -> {
-                    if (linkFlags.sec2(n.id)) return false
+                    if (!Handshake.mayFallBack(linkFlags, n.id)) return false
                     c.close()
                     c = Conn.open(addr.first, addr.second)
                     c.socket.soTimeout = 25_000
@@ -437,6 +437,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun onStatus(id: String, m: JSONObject) {
+        // Positive evidence this Node speaks sec2 (a legacy link that reported it): never fall back to the clear hello.
+        if (m.optJSONArray("caps")?.let { a -> (0 until a.length()).any { a.optString(it) == Handshake.CAP } } == true) linkFlags.setSec2Capable(id, true)
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
         val net = NodeNet.from(m)

@@ -129,4 +129,39 @@ class HandshakeTest {
             assertNull(served.get(5, TimeUnit.SECONDS))
         }
     }
+
+    /** The Master's session() rule for a `denied`: fall back to the clear hello only if mayFallBack says so. */
+    private fun masterAfterDenied(l: Link, flags: SecFlags): Boolean =
+        Handshake.mayFallBack(flags, mid) && Handshake.legacyHello(l.master, mid, "Dad", token)
+
+    @Test
+    fun `denied from a peer known to be sec2 capable sends no token`() {
+        for (setup in listOf<(MemFlags) -> Unit>({ it.cap[mid] = true }, { it.setSec2(mid, true) })) {
+            Link().use { l ->
+                val flags = MemFlags().also(setup)
+                l.onNode { l.node.read(Conn.FIRST_LINE_MAX, 5000); l.node.send(JSONObject().put("t", "denied")); l.node.close() }
+                assertEquals(Handshake.Hello.DENIED, Handshake.helloResult(l.master, mid, "Dad", token))
+                assertFalse(masterAfterDenied(l, flags))
+                assertFalse("token never went out", l.rawToNode().contains(token))
+            }
+        }
+    }
+
+    @Test
+    fun `a genuinely old Node that denies still gets the legacy hello so it can update`() {
+        Link().use { l ->
+            val flags = MemFlags()
+            assertTrue(Handshake.mayFallBack(flags, mid))
+            // An old Node: it denies the v2 hello (no token field), then would welcome a clear one on a fresh socket.
+            l.onNode { l.node.read(Conn.FIRST_LINE_MAX, 5000); l.node.send(JSONObject().put("t", "denied")); l.node.close() }
+            assertEquals(Handshake.Hello.DENIED, Handshake.helloResult(l.master, mid, "Dad", token))
+        }
+        Link().use { l ->
+            l.onNode {
+                val first = l.node.read(Conn.FIRST_LINE_MAX, 5000)!!
+                if (first.optString("token") == token) l.node.send(JSONObject().put("t", "welcome"))
+            }
+            assertTrue(masterAfterDenied(l, MemFlags()))
+        }
+    }
 }

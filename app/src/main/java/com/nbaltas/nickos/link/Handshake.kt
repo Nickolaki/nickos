@@ -108,6 +108,13 @@ object Handshake {
         return mid
     }
 
+    /**
+     * May the Master answer a `denied` with the clear-token v1 hello? Only with positive evidence the Node is
+     * pre-sec2: it has never completed a sec2 handshake with us AND has never reported the sec2 capability. Anything
+     * else means `denied` came from a rogue (or a real refusal), and the token stays put.
+     */
+    fun mayFallBack(flags: SecFlags, nodeId: String): Boolean = !flags.sec2(nodeId) && !flags.sec2Capable(nodeId)
+
     private fun deny(c: Conn): String? {
         c.send(JSONObject().put("t", "denied"))
         c.close()
@@ -171,8 +178,10 @@ object Handshake {
         val reply = status().put("t", "paired").put("v", 2).put("pub", B64.enc(pubN))
             .put("mac", B64.enc(hmac(s(code), s("n"), pubN, pubM))).put("nodeId", nodeId)
         reply.remove("token")
-        if (!c.send(reply)) return null
-        return mid
+        val sent = c.send(reply)
+        // A pairing connection never becomes a command session (it has no Seal): the Master reconnects with a hello.
+        c.close()
+        return if (sent) mid else null
     }
 
     /** `pairFail` and close. Also what the legacy pair path answers. */

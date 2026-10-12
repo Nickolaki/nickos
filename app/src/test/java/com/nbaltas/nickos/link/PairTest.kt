@@ -206,4 +206,24 @@ class PairTest {
         assertEquals(1, wins.get())
         assertTrue(gate.code() == null)
     }
+
+    @Test
+    fun `a relayed pairing connection never becomes a command session`() {
+        // The attacker relays a real pairing request on its own socket, then sends a plaintext command on it.
+        Link().use { l ->
+            val gate = PairGate(); val code = gate.open()
+            var ran = 0
+            val after = l.onNode {
+                val first = l.node.read(Conn.FIRST_LINE_MAX, 5000)!!
+                Handshake.servePair(l.node, first, gate, { JSONObject().put("t", "status") }, { _, _, _ -> }, failDelayMs = 0, nodeId = nodeId)
+                // What NodeRuntime.handle would do next if the socket were still alive: read and run commands.
+                try { l.node.read(Conn.FIRST_LINE_MAX, 1000)?.let { if (it.optString("t") == "cmd") ran++ } } catch (_: Exception) {}
+            }
+            assertNotNull(Handshake.pair(l.master, masterId, "Dad", code, nodeId))
+            try { l.master.send(JSONObject().put("t", "cmd").put("c", "pin").put("pin", "1234")) } catch (_: Exception) {}
+            after.get(5, TimeUnit.SECONDS)
+            assertEquals("no command ran on the pairing connection", 0, ran)
+            assertFalse("the pairing socket is closed", l.node.isOpen)
+        }
+    }
 }

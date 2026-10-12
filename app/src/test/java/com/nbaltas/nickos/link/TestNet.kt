@@ -14,6 +14,9 @@ class MemFlags : SecFlags {
     val m = HashMap<String, Boolean>()
     override fun sec2(id: String) = m[id] ?: false
     override fun setSec2(id: String, v: Boolean) { m[id] = v }
+    val cap = HashMap<String, Boolean>()
+    override fun sec2Capable(id: String) = cap[id] ?: false
+    override fun setSec2Capable(id: String, v: Boolean) { cap[id] = v }
 }
 
 /**

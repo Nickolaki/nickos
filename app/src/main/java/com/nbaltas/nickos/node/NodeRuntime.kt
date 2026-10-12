@@ -281,6 +281,9 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                         linkFlags.setSec2(m.id, false)
                     }
                     store.masters.value.firstOrNull { it.id == masterId }?.let { _paired.tryEmit(it) }
+                    // A pairing connection is never a command session: the Master reconnects with a full hello. Falling
+                    // through here would let a relayed pairing request go on to send unsealed commands.
+                    return c.close()
                 }
                 "hello" -> {
                     val mid = Handshake.nodeHello(c, first, { id -> store.masters.value.firstOrNull { it.id == id }?.token }, linkFlags)
