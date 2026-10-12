@@ -12,10 +12,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.BufferedWriter
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -23,6 +19,10 @@ import java.net.Socket
  * How tablets talk: one TCP connection per Master↔Node pair, one JSON object per line.
  * The Node listens (preferred port [PORT], so the Master can reconnect straight to the last IP
  * even before mDNS answers) and advertises itself as "NickOS-<deviceId>" over NSD/mDNS.
+ *
+ * Link v2 ("sec2", see link/Handshake.kt): {"t":"hello","v":2,...} is answered by a challenge and the token is never
+ * sent; everything after the handshake is AES-GCM sealed. The v1 forms below still work for a peer that has not yet
+ * completed a v2 handshake (the ratchet in link/LinkFlags.kt).
  *
  * Master → Node: {"t":"pair",code,...} | {"t":"hello",masterId,token} | {"t":"cmd","c":...}
  * Node → Master: {"t":"paired",token,...} | {"t":"welcome"} | {"t":"denied"} | {"t":"status",...}
@@ -37,7 +37,7 @@ import java.net.Socket
  *
  * Tablet cameras add cmd "camStart"/"camStop", the reply "camState" and "cam1" in "caps" (see cam/CamMessages.kt).
  *
- * Hands-off joining adds cmd "wifi" (ssid, pass: the car hotspot, sent in clear like the PIN), a "wifi" object in
+ * Hands-off joining adds cmd "wifi" (ssid, pass: the car hotspot; sealed like everything after the handshake), a "wifi" object in
  * "status", "wifi1" in "caps", and a first-line {"t":"who"} answered by {"t":"iam",nodeId,name} and a close, which
  * the Master's subnet sweep uses to find a Node without multicast (see link/NetMessages.kt).
  */
@@ -58,19 +58,67 @@ object Wire {
     } catch (e: Exception) { Log.w(TAG, "no multicast lock", e); null }
 }
 
-/** A line-based JSON connection. Writes are serialised; reads happen on the owner's thread. */
+/**
+ * A line-based JSON connection. Writes are serialised; reads happen on the owner's thread.
+ * Lines are capped ([FIRST_LINE_MAX] before the peer has proved anything, [LINE_MAX] after), and once a [Seal] is
+ * set every line in both directions is AES-GCM sealed: an unopenable line closes the socket.
+ */
 class Conn(val socket: Socket) {
-    private val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
-    private val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+    private val input = socket.getInputStream()
+    private val output = socket.getOutputStream()
+    private val buf = ByteArray(8192)
+    private var pos = 0
+    private var lim = 0
+    @Volatile private var sealer: Seal? = null
 
-    fun read(): JSONObject? {
-        val line = reader.readLine() ?: return null
-        return try { JSONObject(line) } catch (e: Exception) { JSONObject() }
+    /** From now on every line sent is sealed and every line read must open. */
+    fun seal(s: Seal) { sealer = s }
+
+    /**
+     * Reads one line as JSON. Null at end of stream, when the line is longer than [maxBytes], when [deadlineMs]
+     * (0 = none) has passed, or when a sealed line fails to open; the socket is closed in the last three cases.
+     */
+    fun read(maxBytes: Int = LINE_MAX, deadlineMs: Long = 0): JSONObject? {
+        val line = readLine(maxBytes, deadlineMs) ?: return null
+        val s = sealer
+        val text = if (s == null) line else {
+            val plain = s.open(line)
+            if (plain == null) { close(); return null }
+            String(plain, Charsets.UTF_8)
+        }
+        return try { JSONObject(text) } catch (e: Exception) { JSONObject() }
+    }
+
+    private fun readLine(maxBytes: Int, deadlineMs: Long): String? {
+        val out = java.io.ByteArrayOutputStream()
+        val start = System.nanoTime()
+        while (true) {
+            if (pos == lim) {
+                if (deadlineMs > 0 && (System.nanoTime() - start) / 1_000_000 > deadlineMs) { close(); return null }
+                val n = input.read(buf)
+                if (n < 0) return if (out.size() == 0) null else finish(out)
+                pos = 0; lim = n
+            }
+            var i = pos
+            while (i < lim && buf[i] != '\n'.code.toByte()) i++
+            if (out.size() + (i - pos) > maxBytes) { close(); return null }
+            out.write(buf, pos, i - pos)
+            if (i < lim) { pos = i + 1; return finish(out) }
+            pos = lim
+        }
+    }
+
+    private fun finish(out: java.io.ByteArrayOutputStream): String {
+        val b = out.toByteArray()
+        val n = if (b.isNotEmpty() && b[b.size - 1] == '\r'.code.toByte()) b.size - 1 else b.size
+        return String(b, 0, n, Charsets.UTF_8)
     }
 
     @Synchronized
     fun send(o: JSONObject): Boolean = try {
-        writer.write(o.toString()); writer.write("\n"); writer.flush(); true
+        val s = sealer
+        val line = if (s == null) o.toString() else s.seal(o.toString().toByteArray(Charsets.UTF_8))
+        output.write(line.toByteArray(Charsets.UTF_8)); output.write('\n'.code); output.flush(); true
     } catch (e: Exception) { close(); false }
 
     fun close() = try { socket.close() } catch (_: Exception) {}
@@ -78,6 +126,11 @@ class Conn(val socket: Socket) {
     val isOpen get() = !socket.isClosed
 
     companion object {
+        /** The longest line accepted before the peer has authenticated. */
+        const val FIRST_LINE_MAX = 4 * 1024
+        /** After auth: the Node's "apps" reply carries every app icon and the Master's "resume" cards carry posters. */
+        const val LINE_MAX = 8 * 1024 * 1024
+
         fun open(host: String, port: Int, timeoutMs: Int = 3000): Conn {
             val s = Socket()
             s.connect(InetSocketAddress(host, port), timeoutMs)

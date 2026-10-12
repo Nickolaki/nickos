@@ -11,7 +11,11 @@ import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
+import com.nbaltas.nickos.link.AcceptGate
 import com.nbaltas.nickos.link.Conn
+import com.nbaltas.nickos.link.Handshake
+import com.nbaltas.nickos.link.LinkFlags
+import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
@@ -223,57 +227,81 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         applyLockdown()
     }
 
+    /**
+     * The pairing window: the code lives 120 s, dies after five wrong tries, and works once (see [PairGate]). The UI
+     * shows [pairingCode], so clearing the gate is what makes a stale code disappear.
+     */
+    private val pairGate = PairGate(onChange = { _pairingCode.value = it })
+
     fun openPairing(): String {
-        val code = (SecureRandom().nextInt(900000) + 100000).toString()
-        _pairingCode.value = code
+        val code = pairGate.open()
+        scope.launch { delay(PairGate.TTL_MS + 100); pairGate.expireIfDue() }
         return code
     }
 
-    fun closePairing() { _pairingCode.value = null }
+    fun closePairing() = pairGate.close()
 
     // ---- connections ----
+    private val acceptGate = AcceptGate(max = 8, soTimeoutMs = 10_000)
+    private val linkFlags = LinkFlags(ctx)
+
     private fun acceptLoop(ss: ServerSocket) {
-        while (scope.isActive && !ss.isClosed) {
-            val s = try { ss.accept() } catch (e: Exception) { break }
-            Thread { handle(Conn(s)) }.start()
-        }
+        acceptGate.run(ss, { scope.isActive }) { s, ticket -> handle(Conn(s), ticket) }
     }
 
-    private fun handle(c: Conn) {
+    private fun handle(c: Conn, ticket: AcceptGate.Ticket) {
         var masterId: String? = null
         try {
-            val first = c.read() ?: return c.close()
+            val first = c.read(Conn.FIRST_LINE_MAX, Handshake.PRE_AUTH_MS) ?: return c.close()
             when (first.optString("t")) {
                 // The Master's sweep asking who is here. No auth: the id is already broadcast by mDNS.
                 "who" -> {
                     c.send(NetMessages.iam(store.deviceId, store.name.value)); return c.close()
                 }
                 "pair" -> {
-                    val code = _pairingCode.value
-                    if (code == null || first.optString("code") != code) {
-                        c.send(JSONObject().put("t", "pairFail")); return c.close()
+                    if (first.optInt("v", 1) >= 2) {
+                        val mid = Handshake.servePair(c, first, pairGate, ::status, { id, name, token ->
+                            store.addMaster(LinkedMaster(id, name, token))
+                            afterPaired()
+                        }, nodeId = store.deviceId) ?: return
+                        masterId = mid
+                        linkFlags.setSec2(mid, true)
+                    } else {
+                        // A v1 Master (no sealed link yet) pairing a new Node: still the clear-text token, kept so an old
+                        // Master can pair. It flips this Master's flag to "not sec2", and the gate applies all the same.
+                        val code = pairGate.code()
+                        val mid = first.optString("masterId")
+                        if (code == null) { Handshake.refuse(c); return }
+                        if (first.optString("code") != code || !Handshake.ID_RE.matches(mid)) {
+                            pairGate.fail(); Thread.sleep(1000); Handshake.refuse(c); return
+                        }
+                        if (!pairGate.consume()) { Handshake.refuse(c); return }
+                        val m = LinkedMaster(mid, first.optString("masterName", "Parent's Tablet"), Store.randomHex(16))
+                        store.addMaster(m)
+                        afterPaired()
+                        first.optString("pin").takeIf { it.length == 4 }?.let { store.setPin(it) }
+                        c.send(status().put("t", "paired").put("token", m.token).put("nodeId", store.deviceId))
+                        masterId = m.id
+                        linkFlags.setSec2(m.id, false)
                     }
-                    val m = LinkedMaster(first.getString("masterId"), first.optString("masterName", "Parent's Tablet"), Store.randomHex(16))
-                    store.addMaster(m)
-                    // A fresh kid tablet starts with Jellyfin on its home screen, if it has it.
-                    if (store.allowed.value.isEmpty()) device.jellyfinPackage()?.let { store.setAllowed(listOf(it)) }
-                    first.optString("pin").takeIf { it.length == 4 }?.let { store.setPin(it) }
-                    c.send(status().put("t", "paired").put("token", m.token).put("nodeId", store.deviceId))
-                    masterId = m.id
-                    _pairingCode.value = null
-                    _paired.tryEmit(m)
+                    store.masters.value.firstOrNull { it.id == masterId }?.let { _paired.tryEmit(it) }
+                    // A pairing connection is never a command session: the Master reconnects with a full hello. Falling
+                    // through here would let a relayed pairing request go on to send unsealed commands.
+                    return c.close()
                 }
                 "hello" -> {
-                    val m = store.masters.value.firstOrNull { it.id == first.optString("masterId") && it.token == first.optString("token") }
-                    if (m == null) { c.send(JSONObject().put("t", "denied")); return c.close() }
+                    val mid = Handshake.nodeHello(c, first, { id -> store.masters.value.firstOrNull { it.id == id }?.token }, linkFlags)
+                        ?: return c.close()
+                    val m = store.masters.value.firstOrNull { it.id == mid } ?: return c.close()
                     first.optString("masterName").takeIf { it.isNotEmpty() && it != m.name }?.let { store.addMaster(m.copy(name = it)) }
-                    c.send(JSONObject().put("t", "welcome"))
                     // A Master that reached us FROM its car-network address proves this Node is on that network.
                     wifi.linkedFrom(c.socket.inetAddress?.hostAddress)
                     masterId = m.id
                 }
                 else -> return c.close()
             }
+            ticket.release()
+            c.socket.soTimeout = 0 // authenticated: the Master is silent between commands
             val id = masterId!!
             sessions.removeAll { (mid, old) -> (mid == id).also { if (it) old.close() } }
             sessions += id to c
@@ -282,7 +310,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             c.send(cam.stateJson()) // a Master that reconnects learns the camera is already on
             while (true) {
                 val msg = c.read() ?: break
-                if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd failed $msg", e) }
+                if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
             }
         } catch (e: Exception) {
             Log.d(TAG, "connection ended: ${e.message}")
@@ -292,6 +320,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             _connected.value = sessions.map { it.first }.toSet()
             if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
         }
+    }
+
+    /** A fresh kid tablet starts with Jellyfin on its home screen, if it has it. */
+    private fun afterPaired() {
+        if (store.allowed.value.isEmpty()) device.jellyfinPackage()?.let { store.setAllowed(listOf(it)) }
     }
 
     fun broadcast(o: JSONObject) = sessions.forEach { it.second.send(o) }
@@ -415,7 +448,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("now", System.currentTimeMillis())
     }
