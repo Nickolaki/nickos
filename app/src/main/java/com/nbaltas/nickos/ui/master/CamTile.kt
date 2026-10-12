@@ -152,7 +152,11 @@ fun CamTile(
             }
         }
 
-        if (tablet != null && display == TileDisplay.HOT && !leaving) WarmBadge(compact, Modifier.align(Alignment.TopStart).padding(12.dp))
+        if (tablet != null && display == TileDisplay.HOT && !leaving) WarmBadge(
+            compact,
+            // Below the corner buttons (48dp tall, 12dp from the top) so the chip never covers them; a compact tile has none.
+            Modifier.align(Alignment.TopStart).padding(start = 12.dp, end = 12.dp, top = if (compact) 12.dp else 68.dp, bottom = 12.dp),
+        )
     }
 }
 
