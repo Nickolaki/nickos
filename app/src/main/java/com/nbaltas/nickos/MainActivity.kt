@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
                     when (role) {
                         Role.NONE -> SetupFlow()
                         Role.MASTER -> MasterApp()
-                        Role.NODE -> NodeApp(
+                        Role.NODE -> if (!com.nbaltas.nickos.node.NodeSupport.ok()) androidx.compose.material3.Text(com.nbaltas.nickos.node.NodeSupport.REFUSAL_COPY, color = C.text) else NodeApp(
                             onKidMode = { app.node.parentUntil = 0; enterKidMode() },
                             onParentMode = {
                                 app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (app.store.role.value == Role.NODE) {
+        if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = true
             app.node.device.lastLaunched = null
             app.node.pushStatus()
@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (app.store.role.value == Role.NODE) {
+        if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = false
             app.node.pushStatus()
         }
@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
      * "locked to" app if the parent set one. Paused while the parent PIN window is open.
      */
     private fun enterKidMode() {
-        if (app.store.role.value != Role.NODE || app.node.parentMode) return
+        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.parentMode) return
         showSystemBars(false)
         app.node.applyLockdown()
         val am = getSystemService(ActivityManager::class.java)

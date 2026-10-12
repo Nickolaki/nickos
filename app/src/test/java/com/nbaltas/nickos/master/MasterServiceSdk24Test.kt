@@ -7,6 +7,8 @@ import com.nbaltas.nickos.node.NodeService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -34,12 +36,16 @@ class MasterServiceSdk24Test {
     }
 
     @Test
-    fun `the node service still builds on android 7`() {
+    fun `the node service refuses to run the node on android 7`() {
         app.store.setRole(Role.NODE)
-        val service = Robolectric.buildService(NodeService::class.java).create().get()
-        val shadow = shadowOf(service)
-        assertFalse(shadow.isForegroundStopped)
-        assertNotNull(shadow.lastForegroundNotification)
-        assertEquals(1, shadow.lastForegroundNotificationId)
+        NodeService.start(app)
+        val controller = Robolectric.buildService(NodeService::class.java).create()
+        val shadow = shadowOf(controller.get())
+        assertTrue(shadow.isStoppedBySelf)
+        assertNull(shadow.lastForegroundNotification)
+        assertFalse(app.node.listening)
+        app.node.start()
+        assertFalse(app.node.listening)
+        assertNull(shadowOf(app).nextStartedService)
     }
 }

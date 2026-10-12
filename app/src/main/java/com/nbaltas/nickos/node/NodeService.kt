@@ -25,6 +25,7 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); stopSelf(); return }
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS link", NotificationManager.IMPORTANCE_MIN))
@@ -43,7 +44,7 @@ class NodeService : Service() {
         App.get(this).node.start()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = if (NodeSupport.ok()) START_STICKY else START_NOT_STICKY
 
     override fun onDestroy() {
         if (instance === this) instance = null
@@ -72,7 +73,7 @@ class NodeService : Service() {
         /** See [cameraType]. False when the service is not running. */
         fun camera(on: Boolean): Boolean = instance?.cameraType(on) ?: false
 
-        fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, NodeService::class.java))
+        fun start(ctx: Context) { if (NodeSupport.ok()) ContextCompat.startForegroundService(ctx, Intent(ctx, NodeService::class.java)) }
 
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, NodeService::class.java))
