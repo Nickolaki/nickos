@@ -63,6 +63,10 @@ data class NodeStatus(
     val version: String,
     /** "sync1" when this Node understands Watch together. Old Nodes omit the field entirely. */
     val caps: List<String> = emptyList(),
+    /** False when the Node cannot change its brightness yet (no permission). Old Nodes omit it: assumed fine. */
+    val brightnessOk: Boolean = true,
+    /** False when the Node cannot turn its screen off yet (no device admin). Old Nodes omit it: assumed fine. */
+    val screenOffOk: Boolean = true,
 ) {
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
@@ -84,6 +88,7 @@ data class NodeStatus(
                 owner = o.optBoolean("owner"), usage = o.optBoolean("usage"), overlay = o.optBoolean("overlay"),
                 jf = o.optStr("jf"), names = o.optJSONArray("names").strings(), version = o.optString("version"),
                 caps = o.optJSONArray("caps").strings(),
+                brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
             )
         }
 

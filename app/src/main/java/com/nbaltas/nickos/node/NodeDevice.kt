@@ -47,7 +47,28 @@ class NodeDevice(private val ctx: Context) {
     @Volatile var lastLaunched: String? = null
 
     val isDeviceOwner get() = dpm.isDeviceOwnerApp(ctx.packageName)
-    private val isAdmin get() = dpm.isAdminActive(admin)
+    /** Device admin active (granted once on the Node, or implied by Device Owner): needed to turn the screen off. */
+    val isAdmin get() = dpm.isAdminActive(admin)
+
+    /** WRITE_SETTINGS granted: how a normally installed Node may change the brightness. */
+    fun canWriteSettings() = Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(ctx)
+
+    /** Can [setBrightness] actually change anything here? The Master greys the slider out when this is false. */
+    val brightnessOk get() = ControlAccess.brightness(isDeviceOwner, Build.VERSION.SDK_INT, canWriteSettings())
+
+    /** Can [screenOff] actually turn the screen off here? */
+    val screenOffOk get() = ControlAccess.screenOff(isAdmin)
+
+    /** Opens Android's "modify system settings" page for NickOS: the one-time OK that lets the Master change brightness. */
+    fun writeSettingsIntent(): Intent =
+        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** Opens Android's "activate device admin" prompt: the one-time OK that lets the Master turn this screen off. */
+    fun deviceAdminIntent(): Intent =
+        Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+            .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "NickOS uses this only so the parent's tablet can turn this screen off.")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     // ---- battery / screen ----
     fun battery(): Pair<Int, Boolean> {
@@ -88,7 +109,7 @@ class NodeDevice(private val ctx: Context) {
 
     fun setVolume(pct: Int) {
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, (pct.coerceIn(0, 100) * max / 100f).roundToInt(), 0)
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, (pct.coerceIn(0, 100) * max / 100f).roundToInt(), AudioManager.FLAG_SHOW_UI)
     }
 
     /** Reach the integrated player's media session when Jellyfin remote commands are ignored. */

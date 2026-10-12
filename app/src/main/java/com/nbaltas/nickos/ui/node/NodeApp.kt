@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -68,6 +69,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val others = apps.filterNot { it.pkg == jfPkg }
 
     val canOverlay = remember(lockedBy, warn) { rt.device.canOverlay() }
+
+    // One-time OKs the Master's brightness slider and Off button need on this tablet. Re-read after each page returns.
+    var permTick by remember { mutableIntStateOf(0) }
+    val askPerm = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { permTick++ }
+    val brightnessOk = remember(screen, permTick) { rt.device.brightnessOk }
+    val screenOffOk = remember(screen, permTick) { rt.device.screenOffOk }
+    fun ask(i: android.content.Intent) { try { askPerm.launch(i) } catch (e: Exception) { permTick++ } }
 
     // Tablet cameras: the grown-up menu offers "Allow camera" until the permission is there.
     var cameraOk by remember(screen) { mutableStateOf(rt.device.hasCameraPermission()) }
@@ -126,6 +134,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                 }
             },
             onAllowCamera = if (cameraOk) null else ({ askCamera.launch(android.Manifest.permission.CAMERA) }),
+            onAllowBrightness = if (brightnessOk) null else ({ ask(rt.device.writeSettingsIntent()) }),
+            onAllowScreenOff = if (screenOffOk) null else ({ ask(rt.device.deviceAdminIntent()) }),
         )
 
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),
