@@ -81,11 +81,17 @@ import java.util.Locale
 
 private val NodeText = Color(0xFFEEF1F6)
 
+/**
+ * The time the screens draw (clock, date, "seen N min ago", countdowns). Always the real clock in the app;
+ * the screenshot tests set it to one fixed instant so every render comes out the same.
+ */
+internal var screenNow: () -> Long = { System.currentTimeMillis() }
+
 /** Ticks every [periodMs]; drives clocks and countdowns. */
 @Composable
 fun rememberNow(periodMs: Long = 1000): Long {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(periodMs) { while (true) { now = System.currentTimeMillis(); delay(periodMs - now % periodMs) } }
+    var now by remember { mutableLongStateOf(screenNow()) }
+    LaunchedEffect(periodMs) { while (true) { now = screenNow(); delay(periodMs - now % periodMs) } }
     return now
 }
 

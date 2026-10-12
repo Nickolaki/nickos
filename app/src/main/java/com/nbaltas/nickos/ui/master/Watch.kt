@@ -79,6 +79,7 @@ import com.nbaltas.nickos.ui.theme.ProgressBar
 import com.nbaltas.nickos.ui.theme.Segmented
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
+import com.nbaltas.nickos.ui.node.screenNow
 import kotlinx.coroutines.delay
 
 private sealed interface Detail {
@@ -290,7 +291,7 @@ private fun HistoryList(jf: Jellyfin, uid: String, open: (JfItem) -> Unit) {
         list.isEmpty() -> Muted("Nothing watched yet.", 18, Modifier.padding(horizontal = 40.dp))
         else -> {
             val zone = java.time.ZoneId.systemDefault()
-            val today = java.time.LocalDate.now(zone)
+            val today = java.time.Instant.ofEpochMilli(screenNow()).atZone(zone).toLocalDate()
             fun whenOf(i: JfItem) = try { java.time.Instant.parse(i.lastPlayed).atZone(zone) } catch (e: Exception) { null }
             val groups = list.groupBy { whenOf(it)?.toLocalDate() }
             LazyColumn(contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
