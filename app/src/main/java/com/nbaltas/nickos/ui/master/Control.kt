@@ -534,9 +534,10 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                         SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), enabled = st?.screenOffOk != false) { m.screen(v.node.id, false) }
                         SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f)) { m.screen(v.node.id, true) }
                     }
-                    if (st?.screenOffOk == false) Muted(ControlAccess.screenOffReason(v.node.name), 14)
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // One short line under Lock, so Lock is never pushed out of the card.
+                    if (st?.screenOffOk == false) Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
                 }
             },
             { mod ->

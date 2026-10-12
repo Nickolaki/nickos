@@ -15,5 +15,6 @@ object ControlAccess {
 
     /** Master side: the short reason shown under a control the Node cannot do, or null when it works. */
     fun brightnessReason(tablet: String) = "Needs a one-time OK on $tablet: grown-up menu, Allow brightness."
+    const val SCREEN_OFF_SHORT = "Off needs a one-time OK on the tablet."
     fun screenOffReason(tablet: String) = "Needs a one-time OK on $tablet: grown-up menu, Allow screen off."
 }
