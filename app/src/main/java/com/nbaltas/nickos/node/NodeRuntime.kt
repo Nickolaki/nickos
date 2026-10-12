@@ -12,6 +12,8 @@ import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.Conn
+import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
@@ -32,6 +35,107 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArrayList
+
+/** What [Advertiser] needs from NSD, so the sequencing can be tested with a fake. */
+interface AdvertGate {
+    /** Starts a NEW registration (a reused listener throws) and reports once whether it took. Returns its handle. */
+    fun register(port: Int, onResult: (Boolean) -> Unit): Any
+    /** Stops [handle]; [onDone] runs when the system confirms or refuses. */
+    fun unregister(handle: Any, onDone: () -> Unit)
+}
+
+/** The real thing: one fresh listener per registration. */
+class NsdGate(private val ctx: Context, private val store: Store) : AdvertGate {
+    private val nsd get() = ctx.getSystemService(NsdManager::class.java)
+
+    override fun register(port: Int, onResult: (Boolean) -> Unit): Any {
+        val info = NsdServiceInfo().apply {
+            serviceName = Wire.serviceName(store.deviceId)
+            serviceType = Wire.SERVICE_TYPE
+            this.port = port
+        }
+        val l = Reg(port, onResult)
+        try { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, l) } catch (e: Exception) { Log.w("NickOS.Node", "nsd unavailable", e); onResult(false) }
+        return l
+    }
+
+    override fun unregister(handle: Any, onDone: () -> Unit) {
+        val l = handle as Reg
+        l.done = onDone
+        try { nsd.unregisterService(l) } catch (e: Exception) { onDone() }
+    }
+
+    private class Reg(val port: Int, val onResult: (Boolean) -> Unit) : NsdManager.RegistrationListener {
+        @Volatile var done: (() -> Unit)? = null
+        override fun onRegistrationFailed(si: NsdServiceInfo, code: Int) { Log.w("NickOS.Node", "nsd register failed $code"); onResult(false) }
+        override fun onUnregistrationFailed(si: NsdServiceInfo, code: Int) { done?.invoke() }
+        override fun onServiceRegistered(si: NsdServiceInfo) { Log.i("NickOS.Node", "advertising ${si.serviceName}:$port"); onResult(true) }
+        override fun onServiceUnregistered(si: NsdServiceInfo) { done?.invoke() }
+    }
+}
+
+/**
+ * Keeps this Node's mDNS record alive across network changes. [refresh] unregisters, WAITS for the system to
+ * confirm (registering the same service name while the old one is still going makes Android rename the new one),
+ * then registers with a brand new listener. Races it handles:
+ *  - A burst of refreshes runs one at a time, and refreshes queued behind a running one collapse into one.
+ *  - [stop] during a refresh: nothing registers after the unregister ack.
+ *  - A registration that fails right after a network change (the daemon is still restarting) is retried.
+ */
+class Advertiser(
+    private val scope: CoroutineScope,
+    private val gate: AdvertGate,
+    private val ackTimeoutMs: Long = 1500,
+    private val resultTimeoutMs: Long = 5000,
+    private val retryMs: Long = 2000,
+    private val maxRetries: Int = 3,
+) {
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    private val queued = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var stopped = true
+    private var port = 0
+    private var current: Any? = null
+
+    fun start(port: Int) {
+        stopped = false
+        scope.launch { lock.withLock { this@Advertiser.port = port; if (!stopped) register() } }
+    }
+
+    fun refresh() {
+        if (stopped || !queued.compareAndSet(false, true)) return
+        scope.launch {
+            lock.withLock {
+                queued.set(false)
+                if (stopped) return@withLock
+                unregister()
+                if (!stopped) register()
+            }
+        }
+    }
+
+    fun stop() {
+        stopped = true
+        scope.launch { lock.withLock { unregister() } }
+    }
+
+    private suspend fun register() {
+        repeat(maxRetries + 1) { attempt ->
+            val result = kotlinx.coroutines.CompletableDeferred<Boolean>()
+            val handle = gate.register(port) { result.complete(it) }
+            val ok = withTimeoutOrNull(resultTimeoutMs) { result.await() }
+            if (ok != false) { current = handle; return }   // registered, or no word yet: keep the handle so stop can undo it
+            if (attempt < maxRetries) { delay(retryMs); if (stopped) return }
+        }
+    }
+
+    private suspend fun unregister() {
+        val h = current ?: return
+        current = null
+        val ack = kotlinx.coroutines.CompletableDeferred<Unit>()
+        gate.unregister(h) { ack.complete(Unit) }
+        withTimeoutOrNull(ackTimeoutMs) { ack.await() }
+    }
+}
 
 /** "Dad's Tablet" → "Dad" for "Screen locked by Dad". */
 fun parentName(masterName: String?): String {
@@ -48,8 +152,17 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessions = CopyOnWriteArrayList<Pair<String, Conn>>()
     private var server: ServerSocket? = null
-    private var nsdListener: NsdManager.RegistrationListener? = null
+    private val advertiser = Advertiser(scope, NsdGate(ctx, store))
     private var jobs = mutableListOf<Job>()
+
+    /** Saves the car hotspot so Android joins it unaided; see [WifiJoin]. */
+    val wifi = WifiJoin(ctx, { device.isDeviceOwner }, currentSsid = {
+        @Suppress("DEPRECATION")
+        val s = (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager).connectionInfo?.ssid
+        s?.takeIf { it.isNotEmpty() && !it.contains("unknown ssid", ignoreCase = true) }
+    })
+    private var netWatch: NetWatch? = null
+    private var approvalReceiver: android.content.BroadcastReceiver? = null
 
     /** Set by the Node activity while the kid home screen is showing. */
     @Volatile var homeVisible = false
@@ -93,29 +206,17 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         }
         server = ss
         Wire.multicastLock(ctx)
-        register(ss.localPort)
+        advertiser.start(ss.localPort)
+        wifi.ensureOn()
+        approvalReceiver = wifi.watchApproval()
+        // Every network change: advertise again (the old mDNS record points at the old network), and turn WiFi
+        // back on if it dropped. The ServerSocket binds the wildcard address, so it needs nothing.
+        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh() }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
         together.start()
         applyLockdown()
-    }
-
-    private fun register(port: Int) {
-        val nsd = ctx.getSystemService(NsdManager::class.java)
-        val info = NsdServiceInfo().apply {
-            serviceName = Wire.serviceName(store.deviceId)
-            serviceType = Wire.SERVICE_TYPE
-            this.port = port
-        }
-        val l = object : NsdManager.RegistrationListener {
-            override fun onRegistrationFailed(si: NsdServiceInfo, code: Int) { Log.w(TAG, "nsd register failed $code") }
-            override fun onUnregistrationFailed(si: NsdServiceInfo, code: Int) {}
-            override fun onServiceRegistered(si: NsdServiceInfo) { Log.i(TAG, "advertising ${si.serviceName}:$port") }
-            override fun onServiceUnregistered(si: NsdServiceInfo) {}
-        }
-        nsdListener = l
-        nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, l)
     }
 
     fun openPairing(): String {
@@ -139,6 +240,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         try {
             val first = c.read() ?: return c.close()
             when (first.optString("t")) {
+                // The Master's sweep asking who is here. No auth: the id is already broadcast by mDNS.
+                "who" -> {
+                    c.send(NetMessages.iam(store.deviceId, store.name.value)); return c.close()
+                }
                 "pair" -> {
                     val code = _pairingCode.value
                     if (code == null || first.optString("code") != code) {
@@ -267,6 +372,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
             "unlink" -> store.removeMaster(masterId)
+            // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
+            "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass) }
         }
         broadcast(status())
     }
@@ -302,7 +409,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP))
+            .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("now", System.currentTimeMillis())
     }
 
@@ -346,8 +454,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         try { server?.close() } catch (_: Exception) {}
         server = null
         sessions.forEach { it.second.close() }; sessions.clear()
-        nsdListener?.let { try { ctx.getSystemService(NsdManager::class.java).unregisterService(it) } catch (_: Exception) {} }
-        nsdListener = null
+        advertiser.stop()
+        netWatch?.stop(); netWatch = null
+        approvalReceiver?.let { try { ctx.applicationContext.unregisterReceiver(it) } catch (_: Exception) {} }
+        approvalReceiver = null
         together.release()
         cam.destroy()
         overlay.hideAll()

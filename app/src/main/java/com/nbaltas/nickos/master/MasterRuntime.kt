@@ -15,6 +15,8 @@ import com.nbaltas.nickos.jellyfin.JfSession
 import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.link.Conn
 import com.nbaltas.nickos.link.LanAddress
+import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
@@ -107,13 +109,27 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val nsd = ctx.getSystemService(NsdManager::class.java)
     private val resolver = Resolver(nsd)
-    private val conns = ConcurrentHashMap<String, Conn>()
-    private val linkJobs = ConcurrentHashMap<String, Job>()
+    private val links = LinkTable<Conn>()
+    private val loops = LinkLoops(scope) { id -> linkLoop(id) }
     private var started = false
 
-    private val found = ConcurrentHashMap<String, Pair<String, Int>>()
+    private val found = FoundTable()
+    private var discoveryListener: NsdManager.DiscoveryListener? = null
     private val _discovered = MutableStateFlow<Set<String>>(emptySet())
     val discovered: StateFlow<Set<String>> = _discovered
+
+    /** What each Node last said about its WiFi (hotspot saved, approval pending), for the "Bring tablets online" banner. */
+    private val _net = MutableStateFlow<Map<String, NodeNet>>(emptyMap())
+    val net: StateFlow<Map<String, NodeNet>> = _net
+
+    /** Subnet sweep: the second way to find a Node, with no multicast. */
+    private val sweep = Sweep(
+        scope, ownIp = { lanAddress() },
+        missing = { store.nodes.value.map { it.id }.filter { it !in _online.value && found[it] == null }.toSet() },
+        prober = SocketProber(), table = found,
+        onFound = { id, addr -> adopt(id, addr) },
+    )
+    private var netWatch: NetWatch? = null
 
     private val _status = MutableStateFlow<Map<String, NodeStatus>>(emptyMap())
     val status: StateFlow<Map<String, NodeStatus>> = _status
@@ -157,13 +173,22 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (started) return
         started = true
         Wire.multicastLock(ctx)
-        discover()
+        restartDiscovery()
+        // The tablet joined, left or re-addressed a network, or its own hotspot came up or went down:
+        // what was found is stale, so start over and sweep straight away.
+        netWatch = NetWatch(ctx) { onNetworkChanged() }.also { it.start() }
+        sweep.start()
         scope.launch {
             store.nodes.collect { list ->
                 val ids = list.map { it.id }.toSet()
-                list.forEach { n -> if (linkJobs[n.id]?.isActive != true) linkJobs[n.id] = scope.launch { linkLoop(n.id) } }
-                linkJobs.keys.filterNot { it in ids }.forEach { id -> linkJobs.remove(id)?.cancel(); conns.remove(id)?.close() }
+                list.forEach { n -> loops.ensure(n.id) }
+                loops.ids().filterNot { it in ids }.forEach { id -> loops.cancel(id); links.drop(id)?.close() }
             }
+        }
+        scope.launch {
+            // The hotspot goes to every Node on connect (see session) and again whenever the parent changes it.
+            var last = store.hotspot.value
+            store.hotspot.collect { h -> if (h != last) { last = h; links.ids().forEach { sendHotspot(it) } } }
         }
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
@@ -173,12 +198,25 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         cam.startTicker()
         scope.launch {
             var last = store.pin.value
-            store.pin.collect { p -> if (p != last) { last = p; conns.keys.forEach { send(it, cmd("pin").put("pin", p)) } } }
+            store.pin.collect { p -> if (p != last) { last = p; links.ids().forEach { send(it, cmd("pin").put("pin", p)) } } }
         }
     }
 
     // ---- discovery ----
-    private fun discover() {
+    private fun onNetworkChanged() {
+        restartDiscovery()
+        sweep.now()
+    }
+
+    /**
+     * Starts discovery over, with a NEW listener (a reused one throws) and an empty found table. Everything the
+     * old listener or an old sweep pass still delivers carries the old epoch and is dropped by [FoundTable].
+     */
+    @Synchronized
+    private fun restartDiscovery() {
+        val epoch = found.reset()
+        _discovered.value = emptySet()
+        discoveryListener?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
         val l = object : NsdManager.DiscoveryListener {
             override fun onStartDiscoveryFailed(t: String, code: Int) { Log.w(TAG, "discovery failed $code") }
             override fun onStopDiscoveryFailed(t: String, code: Int) {}
@@ -189,21 +227,33 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 if (id == store.deviceId) return
                 scope.launch {
                     val addr = resolver.resolve(si) ?: return@launch
-                    found[id] = addr
-                    _discovered.value = found.keys.toSet()
-                    if (store.nodes.value.any { it.id == id && (it.host != addr.first || it.port != addr.second) }) {
-                        store.updateNode(id) { it.copy(host = addr.first, port = addr.second) }
-                    }
+                    adopt(id, addr, epoch)
                 }
             }
 
             override fun onServiceLost(si: NsdServiceInfo) {
                 val id = Wire.idFromServiceName(si.serviceName) ?: return
-                found.remove(id)
-                _discovered.value = found.keys.toSet()
+                found.remove(epoch, id)
+                _discovered.value = found.ids()
             }
         }
+        discoveryListener = l
         try { nsd.discoverServices(Wire.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, l) } catch (e: Exception) { Log.w(TAG, "discovery unavailable", e) }
+    }
+
+    /** A Node's address arrived from mDNS (tagged with its epoch) or from the sweep (already stored). */
+    private fun adopt(id: String, addr: Pair<String, Int>, epoch: Long? = null) {
+        if (epoch != null && !found.put(epoch, id, addr)) return
+        _discovered.value = found.ids()
+        if (store.nodes.value.any { it.id == id && (it.host != addr.first || it.port != addr.second) }) {
+            store.updateNode(id) { it.copy(host = addr.first, port = addr.second) }
+        }
+    }
+
+    /** "Look again": restart discovery, dial every offline tablet now and sweep once. */
+    fun reconnectAll() {
+        onNetworkChanged()
+        store.nodes.value.filter { it.id !in _online.value }.forEach { loops.restart(it.id) }
     }
 
     // ---- pairing ----
@@ -220,7 +270,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         }
         withTimeoutOrNull(15_000) {
             while (true) {
-                val targets = found.entries.map { it.key to it.value } + listOfNotNull(typed?.let { "" to it })
+                val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
                 val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code) } }
                 tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
                 delay(1500)
@@ -251,30 +301,60 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     // ---- per-node link ----
     private suspend fun linkLoop(id: String) {
+        val backoff = LinkBackoff()
         while (scope.isActive) {
             val n = store.nodes.value.firstOrNull { it.id == id } ?: return
-            val addr = found[id] ?: n.host?.let { it to (if (n.port > 0) n.port else Wire.PORT) }
+            val seen = found[id]
+            val addr = seen ?: n.host?.let { it to (if (n.port > 0) n.port else Wire.PORT) }
             if (addr != null) {
-                try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}") }
-                conns.remove(id)?.close()
-                _online.update { it - id }
-                sync.onDisconnected(id)
-                transfer.onDisconnected(id)
-                cam.onDisconnected(id)
+                val linked = try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}"); false }
+                if (linked) backoff.success()
+                else if (backoff.failure() && seen != null) {
+                    // Three misses in a row: onServiceLost does not fire on an abrupt WiFi change, so this address
+                    // is probably dead. Drop it (only if nothing newer replaced it) and let discovery or the sweep re-find it.
+                    found.removeIf(id, seen)
+                    _discovered.value = found.ids()
+                }
             }
             delay(3000)
         }
     }
 
-    private fun session(n: LinkedNode, addr: Pair<String, Int>) {
+    /** True when the Node welcomed us (even if the link later dropped); false when it could not be reached. */
+    private fun session(n: LinkedNode, addr: Pair<String, Int>): Boolean {
         val c = Conn.open(addr.first, addr.second)
-        c.socket.soTimeout = 25_000 // Node sends status at least every 10s
-        c.send(JSONObject().put("t", "hello").put("masterId", store.deviceId).put("token", n.token).put("masterName", displayName))
-        val hi = c.read() ?: return
-        if (hi.optString("t") != "welcome") { c.close(); return }
-        conns.put(n.id, c)?.close()
+        var claimed = false
+        try {
+            c.socket.soTimeout = 25_000 // Node sends status at least every 10s
+            c.send(JSONObject().put("t", "hello").put("masterId", store.deviceId).put("token", n.token).put("masterName", displayName))
+            val hi = c.read() ?: return false
+            if (hi.optString("t") != "welcome") return false
+            links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
+            claimed = true
+            runLink(n, c)
+            return true
+        } finally {
+            // Only the link that is still the current one may announce the Node offline; a replaced one must not
+            // tear down its successor's state.
+            if (claimed && links.release(n.id, c)) {
+                _online.update { it - n.id }
+                sync.onDisconnected(n.id)
+                transfer.onDisconnected(n.id)
+                cam.onDisconnected(n.id)
+            }
+            c.close()
+        }
+    }
+
+    private fun sendHotspot(id: String) {
+        send(id, NetMessages.hotspotCmd(store.hotspot.value))
+    }
+
+    private fun runLink(n: LinkedNode, c: Conn) {
         _online.update { it + n.id }
         send(n.id, cmd("pin").put("pin", store.pin.value))
+        // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
+        sendHotspot(n.id)
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         sync.onConnected(n.id)
@@ -296,7 +376,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private fun onStatus(id: String, m: JSONObject) {
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
+        val net = NodeNet.from(m)
+        _net.update { it + (id to net) }
         val n = store.nodes.value.firstOrNull { it.id == id } ?: return
+        // Remembered so the banner has a reason for a tablet that is offline (and after a restart).
+        val saved = OnlinePolicy.wifiSaved(net, n.wifiSaved)
+        if (saved != n.wifiSaved) store.updateNode(id) { it.copy(wifiSaved = saved) }
         val name = m.optString("name")
         val now = System.currentTimeMillis()
         // Persist what the offline card shows, but not on every tick.
@@ -319,14 +404,22 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val sendDispatcher = Dispatchers.IO.limitedParallelism(1)
 
-    fun send(id: String, o: JSONObject): Boolean = conns[id]?.let { c -> scope.launch(sendDispatcher) { c.send(o) }; true } ?: false
+    fun send(id: String, o: JSONObject): Boolean = links[id]?.let { c -> scope.launch(sendDispatcher) { c.send(o) }; true } ?: false
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 
+    /** Drops the current link (its own loop cleans up) and dials again at once, with exactly one loop for the Node. */
     fun reconnect(id: String) {
-        conns.remove(id)?.close()
-        linkJobs.remove(id)?.cancel()
-        linkJobs[id] = scope.launch { linkLoop(id) }
+        links[id]?.close()
+        loops.restart(id)
+    }
+
+    /** The banner's reason for each offline tablet, using what the Node last said (or what was persisted). */
+    fun offlineReasons(now: Long = System.currentTimeMillis()): Map<String, Reason> {
+        val lan = lanAddress()
+        return OnlinePolicy.offline(store.nodes.value, _online.value).associate { n ->
+            n.id to OnlinePolicy.reason(lan, OnlinePolicy.wifiSaved(_net.value[n.id], n.wifiSaved), n.lastSeen, now)
+        }
     }
 
     // ---- device actions ----
@@ -368,8 +461,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun forget(id: String) {
-        conns.remove(id)?.close()
+        // Dropped on purpose, so the link's own cleanup (which only runs for the current link) is skipped: do it here.
+        if (links.drop(id)?.also { it.close() } != null) { sync.onDisconnected(id); transfer.onDisconnected(id); cam.onDisconnected(id) }
         store.removeNode(id)
+        _net.update { it - id }
         _status.update { it - id }
         _online.update { it - id }
     }
@@ -501,7 +596,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private suspend fun resumeLoop() {
         while (scope.isActive) {
             delay(60_000)
-            conns.keys.forEach { pushResume(it) }
+            links.ids().forEach { pushResume(it) }
         }
     }
 
@@ -518,4 +613,54 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     fun refreshResume(id: String) = scope.launch { pushResume(id) }
 
     companion object { private const val TAG = "NickOS.Master" }
+}
+
+/**
+ * The live connection per Node. The rule that stops two links to one Node (a reconnect racing mDNS discovery, a
+ * "Look again" while a loop is mid-handshake) from tearing each other down: a link may only be released while it is
+ * STILL the current one. The older link's cleanup then finds it was replaced and leaves its successor alone.
+ */
+class LinkTable<C : Any> {
+    private val map = ConcurrentHashMap<String, C>()
+    operator fun get(id: String): C? = map[id]
+    fun ids(): Set<String> = map.keys.toSet()
+
+    /** Makes [c] the current link for [id] and returns the one it replaced (the caller closes it). */
+    fun claim(id: String, c: C): C? = map.put(id, c)
+
+    /** True only if [c] was still current, in which case it is removed. */
+    fun release(id: String, c: C): Boolean = map.remove(id, c)
+
+    /** Removes whatever is current (the Node was unlinked). */
+    fun drop(id: String): C? = map.remove(id)
+}
+
+/** Exactly one link loop per Node, however many threads ask for one. */
+class LinkLoops(private val scope: CoroutineScope, private val body: suspend (String) -> Unit) {
+    private val jobs = HashMap<String, Job>()
+
+    fun ids(): Set<String> = synchronized(this) { jobs.keys.toSet() }
+
+    /** Starts a loop unless one is already running. */
+    fun ensure(id: String) = synchronized(this) {
+        if (jobs[id]?.isActive != true) jobs[id] = scope.launch { body(id) }
+    }
+
+    /** Cancels the running loop, if any, and starts a fresh one. */
+    fun restart(id: String) = synchronized(this) {
+        jobs[id]?.cancel()
+        jobs[id] = scope.launch { body(id) }
+    }
+
+    fun cancel(id: String) = synchronized(this) { jobs.remove(id)?.cancel(); Unit }
+}
+
+/**
+ * Counts consecutive failed dials. [failure] is true once it reaches [limit], meaning the address in use is probably
+ * dead (mDNS does not reliably say a Node went away) and should be forgotten. A success starts the count again.
+ */
+class LinkBackoff(private val limit: Int = 3) {
+    private var misses = 0
+    fun failure(): Boolean { misses++; return misses >= limit }
+    fun success() { misses = 0 }
 }

@@ -25,11 +25,14 @@ data class LinkedNode(
     /** Jellyfin user whose library the Watch tab shows for this tablet. */
     val jfUserId: String? = null,
     val jfUserName: String? = null,
+    /** The Node's last report of whether it has the car hotspot saved; null until it reports. */
+    val wifiSaved: Boolean? = null,
 ) {
     fun toJson() = JSONObject().apply {
         put("id", id); put("name", name); put("color", color); put("avatar", avatar); put("token", token)
         put("host", host); put("port", port); put("lastSeen", lastSeen); put("lastBattery", lastBattery)
         put("jfUserId", jfUserId); put("jfUserName", jfUserName)
+        put("wifiSaved", wifiSaved ?: JSONObject.NULL)
     }
 
     companion object {
@@ -39,9 +42,13 @@ data class LinkedNode(
             host = o.optStr("host"), port = o.optInt("port"), lastSeen = o.optLong("lastSeen"),
             lastBattery = if (o.isNull("lastBattery") || !o.has("lastBattery")) null else o.optInt("lastBattery"),
             jfUserId = o.optStr("jfUserId"), jfUserName = o.optStr("jfUserName"),
+            wifiSaved = if (!o.has("wifiSaved") || o.isNull("wifiSaved")) null else o.optBoolean("wifiSaved"),
         )
     }
 }
+
+/** The car hotspot the Master hands to every Node. The password sits in this app's private prefs, like the PIN. */
+data class Hotspot(val ssid: String, val pass: String)
 
 /** A camera feed on the Master. [rotation] is 0/90/180/270 (portrait baby cams). */
 data class Camera(val id: String, val name: String, val url: String, val rotation: Int = 0) {
@@ -130,6 +137,20 @@ class Store(context: Context) {
         val list = _nodes.value.filterNot { it.id == id }
         writeList("nodes", list) { it.toJson() }; _nodes.value = list
     }
+
+    private val _hotspot = MutableStateFlow(readHotspot())
+    /** Set in Settings, Tablets, Car hotspot; null until the parent saves one. */
+    val hotspot: StateFlow<Hotspot?> = _hotspot
+    fun setHotspot(h: Hotspot?) {
+        val keep = h?.takeIf { it.ssid.isNotEmpty() }
+        p.edit().apply {
+            if (keep == null) remove("hotspot") else putString("hotspot", JSONObject().put("ssid", keep.ssid).put("pass", keep.pass).toString())
+        }.apply()
+        _hotspot.value = keep
+    }
+    private fun readHotspot(): Hotspot? = try {
+        p.getString("hotspot", null)?.let { JSONObject(it) }?.let { Hotspot(it.getString("ssid"), it.optString("pass")) }?.takeIf { it.ssid.isNotEmpty() }
+    } catch (e: Exception) { null }
 
     private val _jellyfin = MutableStateFlow(readJellyfin())
     val jellyfin: StateFlow<JellyfinAccount?> = _jellyfin
@@ -244,7 +265,7 @@ class Store(context: Context) {
     fun resetAll() {
         p.edit().clear().putString("deviceId", deviceId).apply()
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
-        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _jellyfin.value = null; _quickApps.value = emptyList()
+        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
         _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()

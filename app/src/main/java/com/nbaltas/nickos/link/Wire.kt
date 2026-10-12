@@ -36,6 +36,10 @@ import java.net.Socket
  * Node's command "when" has no else branch, and NodeStatus.from treats a missing "caps" as none.
  *
  * Tablet cameras add cmd "camStart"/"camStop", the reply "camState" and "cam1" in "caps" (see cam/CamMessages.kt).
+ *
+ * Hands-off joining adds cmd "wifi" (ssid, pass: the car hotspot, sent in clear like the PIN), a "wifi" object in
+ * "status", "wifi1" in "caps", and a first-line {"t":"who"} answered by {"t":"iam",nodeId,name} and a close, which
+ * the Master's subnet sweep uses to find a Node without multicast (see link/NetMessages.kt).
  */
 object Wire {
     const val SERVICE_TYPE = "_nickos._tcp."
