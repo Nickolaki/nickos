@@ -588,5 +588,52 @@ class DesignScreensTest {
     @Test fun nodeCode960BigFont() = nodeCodeBigFont(1.5f)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun nodeCode1024BigFont() = nodeCodeBigFont(1.5f)
+
+    // ---- Tapo camera on the car network ----
+    private fun tapo(id: String, name: String, host: String) =
+        app.store.saveCamera(Camera(id, name, host = host, user = "nick", pass = "x"))
+
+    private fun camerasTapoStates() {
+        seedCams()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        tapo("baby", "Baby cam", "192.168.49.23")
+        tapo("nursery", "Nursery", "192.168.49.24")
+        shot("Cameras-Tapo-States-${sizeTag()}") {
+            CamerasScreen(
+                {}, {}, live = false,
+                rtspPreset = mapOf("baby" to com.nbaltas.nickos.cam.RtspNews.UNREACHABLE, "nursery" to com.nbaltas.nickos.cam.RtspNews.WRONG_PASSWORD),
+            )
+        }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasTapoStates960() = camerasTapoStates()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun camerasTapoStates1024() = camerasTapoStates()
+
+    private fun camerasAdd() {
+        seedCams()
+        shot("Cameras-Add-${sizeTag()}") {
+            CamerasScreen({}, {}, live = false, startEditor = Camera(com.nbaltas.nickos.data.Store.randomHex(6), ""), foundPreset = listOf("192.168.49.23"))
+        }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasAdd960() = camerasAdd()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun camerasAdd1024() = camerasAdd()
+
+    private fun camerasAddNotFound() {
+        seedCams()
+        shot("Cameras-Add-NotFound-${sizeTag()}") {
+            CamerasScreen({}, {}, live = false, startEditor = Camera(com.nbaltas.nickos.data.Store.randomHex(6), ""), foundPreset = emptyList())
+        }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasAddNotFound960() = camerasAddNotFound()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun camerasAddNotFound1024() = camerasAddNotFound()
 }
 

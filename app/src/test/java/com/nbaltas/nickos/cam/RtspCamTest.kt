@@ -107,4 +107,26 @@ class RtspCamTest {
         assertEquals("", CamText.rtsp(RtspNews.LIVE))
         assertEquals(CamText.RTSP_ERROR, CamText.rtsp(RtspNews.ERROR))
     }
+
+    @Test
+    fun `no dashes in editor copy`() {
+        val dashes = listOf(Char(0x2014), Char(0x2013))
+        listOf(
+            com.nbaltas.nickos.ui.master.EDITOR_LOOKING, com.nbaltas.nickos.ui.master.EDITOR_FOUND_AT,
+            com.nbaltas.nickos.ui.master.EDITOR_NOT_FOUND, com.nbaltas.nickos.ui.master.EDITOR_NO_NETWORK,
+            com.nbaltas.nickos.ui.master.EDITOR_COLON, com.nbaltas.nickos.ui.master.EDITOR_ACCOUNT_HINT,
+            com.nbaltas.nickos.ui.master.EDITOR_PICTURE_HINT, com.nbaltas.nickos.ui.master.EDITOR_URL_HINT,
+            com.nbaltas.nickos.ui.master.NO_CAMERAS_TEXT,
+        ).forEach { s -> dashes.forEach { assertFalse("dash in: $s", s.contains(it)) } }
+    }
+
+    @Test
+    fun `chainOf walks causes and stops on a self cause`() {
+        val inner = java.net.ConnectException("refused")
+        val outer = RuntimeException("outer", inner)
+        val chain = RtspNewsFor.chainOf(outer)
+        assertEquals(listOf("RuntimeException", "ConnectException"), chain.map { it.first })
+        assertEquals(RtspNews.UNREACHABLE, RtspNewsFor.of(0, chain))
+        assertEquals(1, RtspNewsFor.chainOf(IllegalStateException("x")).size)
+    }
 }

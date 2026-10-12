@@ -44,6 +44,19 @@ object RtspNewsFor {
     // Media3 raises a 401 as an RtspPlaybackException; the reason phrase is "Unauthorized" and the status is 401.
     private val AUTH = Regex("unauthorized|\\b401\\b", RegexOption.IGNORE_CASE)
 
+    /** [e] and its causes, outermost first, as (simple class name, message). Stops on a cause that points back at itself. */
+    fun chainOf(e: Throwable): List<Pair<String, String?>> {
+        val out = ArrayList<Pair<String, String?>>()
+        var t: Throwable? = e
+        while (t != null && out.size < 8) {
+            out += t.javaClass.simpleName to t.message
+            val next = t.cause
+            if (next === t) break
+            t = next
+        }
+        return out
+    }
+
     /** [chain] is the exception and its causes, outermost first, as (simple class name, message). */
     fun of(errorCode: Int, chain: List<Pair<String, String?>>): RtspNews = when {
         chain.any { (_, m) -> m != null && AUTH.containsMatchIn(m) } -> RtspNews.WRONG_PASSWORD

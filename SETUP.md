@@ -81,6 +81,17 @@ The Master's Cameras screen shows the kids' tablets' front cameras next to any R
 A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
 
 Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
+
+## Tapo camera in the car
+
+A Tapo C206 shows up on the Cameras screen like any other camera. You set it up once.
+
+1. In the Tapo app, open the camera's settings, Advanced Settings, Camera Account, and make a camera account (a name and a password). This is not your TP-Link login. Avoid a colon in the password.
+2. Join the camera to the same WiFi as the parent tablet. The C206 only uses 2.4 GHz WiFi, so the car network must be 2.4 GHz. Whether the camera will join a network that has no internet is not confirmed yet; try it at home first.
+3. On the parent tablet open Cameras, tap Add camera. NickOS looks for cameras on the network and lists them as "Camera at" and the address. Pick yours, type the camera account name and password, choose Standard or High picture, and Save.
+
+If a tile says it can't reach the camera, check the camera has power and WiFi. NickOS looks for it again by itself and follows it if it picked up a new address. If it says the password was not accepted, fix the camera account in the Tapo app or edit the camera and retype it. There is no pan or tilt control. The screen stays on while the camera is showing.
+
 ## Movies without a server (Watch together)
 
 NickOS now has its own movie library, so a Jellyfin server is optional. It works with ordinary video files (MP4, MKV) in the **Movies** or **Download** folder of any tablet, the parent's tablet included. Copy files there with the Files app, a USB cable, or a browser download. Jellyfin's own downloads can't be used: the Jellyfin app keeps them in a private folder other apps can't read.

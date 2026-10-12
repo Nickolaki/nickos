@@ -52,6 +52,7 @@ import com.composables.icons.lucide.Thermometer
 import com.composables.icons.lucide.VideoOff
 import com.nbaltas.nickos.cam.CamPrefs
 import com.nbaltas.nickos.cam.CamText
+import com.nbaltas.nickos.cam.RtspNews
 import com.nbaltas.nickos.cam.TileDisplay
 import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.LinkedNode
@@ -112,17 +113,21 @@ fun CamTile(
     onMaximize: () -> Unit = {},
     onEdit: () -> Unit = {},
     onAction: () -> Unit = {},
+    preset: RtspNews? = null,
+    onNews: (RtspNews) -> Unit = {},
 ) {
     val tablet = source as? TabletSource
     // The last picture outlives its stream, so it can fade out instead of vanishing.
     val last = remember(source.id) { arrayOfNulls<MjpegClient.Frame>(1) }
     if (frame != null) last[0] = frame
-    /** An RTSP player's news: null while connecting, true once it shows a picture, false when it cannot connect. */
-    var rtspUp by remember(source.id, live) { mutableStateOf<Boolean?>(null) }
-    val picture = if (tablet != null) (frame != null && display.showsVideo) || (leaving && last[0] != null) else rtspUp == true
+    // An RTSP player's news. A tile with no player ([live] false) starts from [preset] (screenshot tests) or just "no picture".
+    var news by remember(source.id, live) { mutableStateOf(if (live) RtspNews.CONNECTING else preset ?: RtspNews.CONNECTING) }
+    // Looking and Moved are the screen's own words about this camera and win over what the player last said.
+    val shown = if (preset == RtspNews.LOOKING || preset == RtspNews.MOVED) preset else news
+    val picture = if (tablet != null) (frame != null && display.showsVideo) || (leaving && last[0] != null) else shown == RtspNews.LIVE
 
     Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
-        Placeholder(source, display, rtspUp, compact, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
+        Placeholder(source, display, shown, preset != null || live, compact, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
 
         if (tablet != null) {
             AnimatedVisibility(visible = picture, enter = fadeIn(tween(prefs.fadeMs)), exit = fadeOut(tween(prefs.fadeMs))) {
@@ -130,8 +135,11 @@ fun CamTile(
             }
         } else if (live) {
             // A TextureView is drawn through the view tree, so it can be faded like anything else.
-            val a by animateFloatAsState(if (rtspUp == true) 1f else 0f, tween(prefs.fadeMs), label = "rtsp")
-            CameraView((source as RtspSource).camera, Modifier.fillMaxSize(), muted = true, alpha = a, bare = true, onPicture = { rtspUp = it })
+            val a by animateFloatAsState(if (news == RtspNews.LIVE) 1f else 0f, tween(prefs.fadeMs), label = "rtsp")
+            CameraView(
+                (source as RtspSource).camera, Modifier.fillMaxSize(), muted = true, alpha = a, bare = true,
+                onNews = { news = it; onNews(it) },
+            )
         }
 
         if (leaving) {
@@ -165,7 +173,8 @@ fun CamTile(
 private fun Placeholder(
     source: CamSource,
     display: TileDisplay,
-    rtspUp: Boolean?,
+    news: RtspNews,
+    words: Boolean,
     compact: Boolean,
     live: Boolean,
     retryInMs: Long?,
@@ -180,17 +189,17 @@ private fun Placeholder(
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp),
     ) {
         if (tablet != null) Avatar(tablet.name, tablet.color, tablet.avatar, if (compact) 40.dp else 72.dp)
-        else Icon(if (rtspUp == false) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (compact) 28.dp else 44.dp))
+        else Icon(if (news.isFailure()) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (compact) 28.dp else 44.dp))
 
         val text = when {
             tablet != null -> CamText.tile(display, tablet.name, minutes)
-            rtspUp == false -> CamText.RTSP_ERROR
-            // The chip along the bottom already names the camera; the icon alone reads as "no picture".
-            else -> ""
+            // A tile with no player and nothing to say: the chip along the bottom already names the camera.
+            !words -> ""
+            else -> CamText.rtsp(news)
         }
         if (text.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (tablet != null && display == TileDisplay.WARMING) PulseDot(live)
+                if ((tablet != null && display == TileDisplay.WARMING) || (tablet == null && news == RtspNews.LOOKING)) PulseDot(live)
                 Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
             }
         }
@@ -212,9 +221,15 @@ private fun Placeholder(
 private fun Words(text: String, size: Int, maxLines: Int) =
     Text(text, style = body(size.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
+/** The news states that mean "no picture and a reason the parent can act on". */
+internal fun RtspNews.isFailure(): Boolean = when (this) {
+    RtspNews.UNREACHABLE, RtspNews.WRONG_PASSWORD, RtspNews.CANT_PLAY, RtspNews.ERROR, RtspNews.MOVED -> true
+    else -> false
+}
+
 /** The "something is happening" dot. Still when [live] is false, so a screenshot is the same every time. */
 @Composable
-private fun PulseDot(live: Boolean) {
+internal fun PulseDot(live: Boolean) {
     if (!live) { Dot(C.accent, 12.dp); return }
     val a by rememberInfiniteTransition(label = "pulse").animateFloat(0.4f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulse")
     Box(Modifier.alpha(a)) { Dot(C.accent, 12.dp) }
