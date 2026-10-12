@@ -19,6 +19,10 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nbaltas.nickos.data.Store
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.unit.dp
 import com.nbaltas.nickos.ui.node.BedtimeToast
 import com.nbaltas.nickos.ui.node.LockedScreen
 
@@ -77,7 +81,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP }
+        ).apply { gravity = if (fullScreen) Gravity.TOP else Gravity.BOTTOM }
         wm.addView(view, lp)
         owner.resume()
         return view
@@ -97,7 +101,13 @@ private fun LockedOverlayContent(store: Store) {
 @androidx.compose.runtime.Composable
 private fun ToastOverlayContent(rt: NodeRuntime) {
     val left by rt.bedtimeWarning.collectAsStateWithLifecycle()
-    left?.let { BedtimeToast(it) }
+    left?.let {
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier
+                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                .padding(bottom = 28.dp),
+        ) { BedtimeToast(it) }
+    }
 }
 
 private class OverlayOwner : LifecycleOwner, SavedStateRegistryOwner {

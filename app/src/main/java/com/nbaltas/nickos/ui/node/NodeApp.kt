@@ -130,7 +130,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),
         // so the toast always draws here on the home screen. The wall too without the overlay permission.
-        warn?.let { if (lockedBy == null) BedtimeToast(it) }
+        warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
     }
 }
