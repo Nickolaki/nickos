@@ -147,6 +147,12 @@ class Store(context: Context) {
     @Synchronized
     fun setHotspot(h: Hotspot?) {
         val keep = h?.takeIf { it.ssid.isNotEmpty() }
+        // A different network name means no Node has it saved any more (Android 7 may hand back a new one after a
+        // reboot). Same name with a new passphrase is not cleared: the watchdog re-saves every minute.
+        if (keep?.ssid != _hotspot.value?.ssid && _nodes.value.any { it.wifiSaved != null }) {
+            val list = _nodes.value.map { it.copy(wifiSaved = null) }
+            writeList("nodes", list) { it.toJson() }; _nodes.value = list
+        }
         p.edit().apply {
             if (keep == null) remove("hotspot")
             else putString("hotspot", JSONObject().put("ssid", keep.ssid).put("pass", keep.pass).put("direct", keep.direct).toString())

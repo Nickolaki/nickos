@@ -1,6 +1,5 @@
 package com.nbaltas.nickos.master
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -10,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.R
@@ -27,9 +27,13 @@ class MasterService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS car network", NotificationManager.IMPORTANCE_MIN))
-        val n = Notification.Builder(this, CHANNEL)
+        // Channels exist from Android 8; the compat builder ignores the channel id below that.
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS car network", NotificationManager.IMPORTANCE_MIN))
+        }
+        val n = NotificationCompat.Builder(this, CHANNEL)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(TITLE)
             .setContentText(TEXT)

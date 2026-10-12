@@ -376,7 +376,13 @@ private fun NothingPlaying(v: NodeView, onFind: () -> Unit) {
 
 @Composable
 private fun OfflineBody(v: NodeView, onAll: () -> Unit) {
-    val m = App.get(LocalContext.current).master
+    val app = App.get(LocalContext.current)
+    val m = app.master
+    // Read so the page recomposes when the car network or the saved hotspot changes.
+    m.carNet.state.collectAsState().value
+    val hotspot = app.store.hotspot.collectAsState().value
+    val reason = m.offlineReasons(rememberNow(1000))[v.node.id]
+    val tips = offlineTips(reason, hotspot?.takeIf { !it.direct }?.ssid)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 80.dp, end = 80.dp, top = 40.dp, bottom = 72.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterVertically),
@@ -388,8 +394,9 @@ private fun OfflineBody(v: NodeView, onAll: () -> Unit) {
         val seen = seenAgo(v.node.lastSeen).replaceFirstChar { it.uppercase() }.replace("Seen", "Last seen")
         Muted(listOfNotNull(seen.ifEmpty { null }, v.node.lastBattery?.let { "battery was $it%" }).joinToString(" · "), 20)
         Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Tip(Lucide.Power, "Make sure it's switched on and charged")
-            Tip(Lucide.Wifi, "Check it's on the same WiFi as this tablet")
+            tips.forEach { (icon, text) ->
+                Tip(when (icon) { TipIcon.WIFI_OFF -> Lucide.WifiOff; TipIcon.WIFI -> Lucide.Wifi; TipIcon.POWER -> Lucide.Power }, text)
+            }
         }
         Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             NickButton("Try again", { m.reconnect(v.node.id) }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
