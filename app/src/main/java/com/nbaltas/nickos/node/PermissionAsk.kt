@@ -1,0 +1,54 @@
+package com.nbaltas.nickos.node
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+/** The two one-time system screens a normally installed Node needs before the Master can change brightness or turn the screen off. */
+enum class PermStep { BRIGHTNESS, SCREEN_OFF }
+
+/**
+ * When the Node pops up its own "let the parent tablet change brightness?" card, and which system screens Allow walks
+ * through. Pure rules, so they can be tested without a tablet. A Device Owner is never asked: it can do both already.
+ */
+object PermissionAsk {
+    const val TITLE = "Let the parent tablet change brightness and turn the screen off?"
+    const val BODY = "Android needs one OK from a grown-up on this tablet. It will show you one or two Android screens. Switch NickOS on in each, then you come back here."
+    const val ALLOW = "Allow"
+    const val NOT_NOW = "Not now"
+
+    /** Something is still missing on a tablet that is not Device Owner. */
+    fun needed(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean) =
+        !deviceOwner && !(brightnessOk && screenOffOk)
+
+    /**
+     * Show the card? Not when nothing is needed, not while a video is playing in kid mode, and not after "Not now"
+     * or after Allow was tapped this session, unless the Master asked since.
+     */
+    fun showCard(
+        deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean,
+        declined: Boolean, playing: Boolean, masterAsked: Boolean,
+    ) = needed(deviceOwner, brightnessOk, screenOffOk) && !playing && (masterAsked || !declined)
+
+    /** The next system screen to open, skipping what is already allowed and what was already shown (so a "no" never loops). */
+    fun nextStep(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean, tried: Set<PermStep>): PermStep? {
+        if (deviceOwner) return null
+        if (!brightnessOk && PermStep.BRIGHTNESS !in tried) return PermStep.BRIGHTNESS
+        if (!screenOffOk && PermStep.SCREEN_OFF !in tried) return PermStep.SCREEN_OFF
+        return null
+    }
+}
+
+/** Memory-only state for the card. A new app start (or an update) starts fresh, which is what "ask again" means. */
+class PermissionAskState {
+    @Volatile var declined = false
+        private set
+    private val _masterAsked = MutableStateFlow(false)
+    /** The Master tapped a greyed control and wants the card now. */
+    val masterAsked: StateFlow<Boolean> = _masterAsked
+
+    fun masterAsks() { _masterAsked.value = true }
+    /** "Not now". */
+    fun decline() { declined = true; _masterAsked.value = false }
+    /** "Allow" was tapped: the walk has begun, so the card must not come back by itself if a screen is dismissed. */
+    fun begin() = decline()
+}

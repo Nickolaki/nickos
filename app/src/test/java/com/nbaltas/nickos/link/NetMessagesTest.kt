@@ -74,4 +74,21 @@ class NetMessagesTest {
         val set = NetMessages.decodeWifiCmd(wire(NetMessages.hotspotCmd(com.nbaltas.nickos.data.Hotspot("CarSpot", "correct horse"))))!!
         assertEquals("CarSpot", set.ssid)
     }
+
+    @Test
+    fun `ask permission command round trips as an ordinary cmd`() {
+        val m = wire(NetMessages.askPermissionCmd())
+        assertEquals("cmd", m.getString("t"))
+        assertEquals("askPerm", m.getString("c"))
+        assertTrue(NetMessages.isAskPermission(m))
+    }
+
+    @Test
+    fun `unknown or malformed commands are not an ask and never throw`() {
+        assertFalse(NetMessages.isAskPermission(null))
+        assertFalse(NetMessages.isAskPermission(JSONObject()))
+        assertFalse(NetMessages.isAskPermission(JSONObject("""{"t":"cmd","c":"volume","v":3}""")))
+        assertFalse(NetMessages.isAskPermission(JSONObject("""{"t":"status","c":"askPerm"}""")))
+        assertFalse(NetMessages.isAskPermission(JSONObject("""{"t":"cmd","c":"somethingNewer"}""")))
+    }
 }
