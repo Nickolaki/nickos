@@ -498,7 +498,7 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
                     Box(Modifier.size(96.dp).clip(RoundedCornerShape(28.dp)).background(C.surface2), contentAlignment = Alignment.Center) {
                         Icon(Lucide.Server, null, tint = C.accent, modifier = Modifier.size(44.dp))
                     }
-                    Title("Connect Jellyfin", 52)
+                    Title("Connect Jellyfin (optional, legacy)", 52)
                     Chip(height = 36.dp) { Text("Optional", style = body(15.sp, 600), color = C.text) }
                     Muted("Browse your family's shows and movies from here, and play them on any tablet.", 21)
                 }

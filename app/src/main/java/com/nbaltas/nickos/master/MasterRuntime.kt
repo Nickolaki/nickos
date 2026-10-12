@@ -14,8 +14,12 @@ import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
 import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.link.Conn
+import com.nbaltas.nickos.link.LanAddress
+import com.nbaltas.nickos.link.MediaServer
+import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.node.LocalVideos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,7 +57,12 @@ data class NodeStatus(
     val jf: String?,
     val names: List<String>,
     val version: String,
+    /** "sync1" when this Node understands Watch together. Old Nodes omit the field entirely. */
+    val caps: List<String> = emptyList(),
 ) {
+    /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
+    val supportsSync: Boolean get() = "sync1" in caps
+
     companion object {
         fun from(o: JSONObject): NodeStatus {
             val skew = System.currentTimeMillis() - o.optLong("now", System.currentTimeMillis())
@@ -66,6 +75,7 @@ data class NodeStatus(
                 bedtimeAt = if (bt > 0) bt + skew else 0,
                 owner = o.optBoolean("owner"), usage = o.optBoolean("usage"), overlay = o.optBoolean("overlay"),
                 jf = o.optStr("jf"), names = o.optJSONArray("names").strings(), version = o.optString("version"),
+                caps = o.optJSONArray("caps").strings(),
             )
         }
 
@@ -124,6 +134,16 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     val displayName get() = store.name.value.ifBlank { "Parent's Tablet" }
 
+    /** Watch together: this tablet's own movies, and the library, clocks and session across tablets. */
+    val videos = LocalVideos(ctx)
+    val sync = SyncController(this, store)
+    /** Sending movies between tablets. This tablet hands out its own through [server]. */
+    val server = MediaServer.of(videos, WifiHold(ctx))
+    val transfer = TransferController(this, store)
+
+    fun lanAddress(): String? = LanAddress.own(ctx)
+    fun localUrl(fid: String): String? = lanAddress()?.takeIf { server.start() }?.let { server.url(it, fid) }
+
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
     @Synchronized
@@ -142,6 +162,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }
+        sync.startTicker()
+        transfer.startTicker()
         scope.launch {
             var last = store.pin.value
             store.pin.collect { p -> if (p != last) { last = p; conns.keys.forEach { send(it, cmd("pin").put("pin", p)) } } }
@@ -229,6 +251,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}") }
                 conns.remove(id)?.close()
                 _online.update { it - id }
+                sync.onDisconnected(id)
+                transfer.onDisconnected(id)
             }
             delay(3000)
         }
@@ -245,12 +269,16 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         send(n.id, cmd("pin").put("pin", store.pin.value))
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
+        sync.onConnected(n.id)
+        transfer.onConnected(n.id)
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
                 "status" -> onStatus(n.id, m)
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
+                "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
+                "serving", "jobs" -> transfer.onMessage(n.id, m)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }

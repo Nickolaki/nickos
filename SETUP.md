@@ -72,6 +72,19 @@ While Device Owner is set, NickOS can't be uninstalled until you use that button
 Rename the Master under Settings → Linked tablets (it shows up on kid tablets as
 "Linked to Dad's tablet" and "Screen locked by Dad").
 
+## Movies without a server (Watch together)
+
+NickOS now has its own movie library, so a Jellyfin server is optional. It works with ordinary video files (MP4, MKV) in the **Movies** or **Download** folder of any tablet, the parent's tablet included. Copy files there with the Files app, a USB cable, or a browser download. Jellyfin's own downloads can't be used: the Jellyfin app keeps them in a private folder other apps can't read.
+
+On the Master: tap the TV icon in the top bar. You see every movie and show on every tablet, and which tablets have each one.
+
+- **Send** a movie to a kid's tablet: open the movie, tap Send next to the tablet (or "Send to all"). The copy goes over your WiFi from whichever tablet has the file, usually the parent's. It carries on by itself if the WiFi drops or the tablet sleeps, and it checks the copy is complete at the end. Do this at home; then the movie is on the tablet for the car.
+- **Play** a movie on one tablet or several at once: tick the tablets, Play. Pause, skip, next episode, stop and volume act on all of them together, and each tablet also has its own volume slider. A tablet that comes online late joins at the right spot. Shows are grouped when the filename has an episode code like `S02E05`.
+
+Kid tablets with the kid lock get video access by themselves. Without the kid lock, open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap **Allow videos** once. Kid tablets on an older NickOS show "Update needed" until they are updated from Settings → About.
+
+Jellyfin still works: open a tablet, Watch tab, "Jellyfin (legacy)".
+
 ## Updates
 
 The parent tablet checks for a new NickOS every 6 hours and shows an **Update** pill on its home

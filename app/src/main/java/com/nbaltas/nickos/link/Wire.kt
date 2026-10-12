@@ -27,6 +27,13 @@ import java.net.Socket
  * Master → Node: {"t":"pair",code,...} | {"t":"hello",masterId,token} | {"t":"cmd","c":...}
  * Node → Master: {"t":"paired",token,...} | {"t":"welcome"} | {"t":"denied"} | {"t":"status",...}
  *                | {"t":"apps",list} | {"t":"want",itemId} | {"t":"reset"} (about to wipe itself)
+ *
+ * Watch together adds nine commands and six replies (see sync/SyncMessages.kt for encode/decode):
+ * cmd "ping"/"videos"/"sync"/"syncPause"/"syncStop"/"serve"/"fetch"/"cancel"/"jobs" from the
+ * Master, and "pong"/"videos"/"syncState"/"serving"/"jobs" from the Node, plus a "caps" array
+ * inside "status" (a constant, so it does not change the status dedupe key). An old Node with
+ * no "caps" field, or an old Master that never sends the new commands, both keep working: the
+ * Node's command "when" has no else branch, and NodeStatus.from treats a missing "caps" as none.
  */
 object Wire {
     const val SERVICE_TYPE = "_nickos._tcp."

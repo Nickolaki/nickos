@@ -71,6 +71,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     val overlay = NodeOverlay(ctx, store, this)
 
+    /** Watch together: the movie library, the synced player and the answers to its commands. */
+    val together = NodeTogether(ctx, store, device, scope, { homeVisible }, ::broadcast)
+    val videos get() = together.videos
+    val syncPlayer get() = together.player
+
     @Synchronized
     fun start() {
         if (server != null) return
@@ -85,6 +90,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         jobs += scope.launch { acceptLoop(ss) }
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
+        together.start()
         applyLockdown()
     }
 
@@ -191,7 +197,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     // ---- commands from a Master ----
     private fun command(masterId: String, m: JSONObject) {
         val master = store.masters.value.firstOrNull { it.id == masterId }
-        when (m.getString("c")) {
+        val c = m.getString("c")
+        // Watch together answers the asking Master only, and never with a status broadcast (pings are frequent).
+        if (together.command(c, m) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
+        if (c in NodeTogether.LEAVES_PLAYER) syncPlayer.stop()
+        when (c) {
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))
@@ -280,6 +290,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
+            .put("caps", JSONArray(NodeTogether.CAPS))
             .put("now", System.currentTimeMillis())
     }
 
@@ -325,6 +336,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         sessions.forEach { it.second.close() }; sessions.clear()
         nsdListener?.let { try { ctx.getSystemService(NsdManager::class.java).unregisterService(it) } catch (_: Exception) {} }
         nsdListener = null
+        together.release()
         overlay.hideAll()
     }
 

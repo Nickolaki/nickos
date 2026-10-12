@@ -390,15 +390,16 @@ fun NickSlider(
 }
 
 @Composable
-fun NickSwitch(on: Boolean, onToggle: (Boolean) -> Unit) {
+fun NickSwitch(on: Boolean, enabled: Boolean = true, onToggle: (Boolean) -> Unit) {
     val c = C
     Box(
-        Modifier.size(60.dp, 34.dp).clip(RoundedCornerShape(17.dp)).background(if (on) c.accent else c.line)
-            .tap { onToggle(!on) }
+        Modifier.size(60.dp, 34.dp).clip(RoundedCornerShape(17.dp))
+            .background((if (on) c.accent else c.line).copy(alpha = if (enabled) 1f else 0.4f))
+            .let { if (enabled) it.tap { onToggle(!on) } else it }
     ) {
         Box(
             Modifier.padding(4.dp).offset(x = if (on) 26.dp else 0.dp).size(26.dp).clip(CircleShape)
-                .background(if (on) c.onAccent else Color(0xFFC5CBD6))
+                .background((if (on) c.onAccent else Color(0xFFC5CBD6)).copy(alpha = if (enabled) 1f else 0.6f))
         )
     }
 }

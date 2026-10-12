@@ -519,7 +519,7 @@ private fun UserPicker(v: NodeView, jf: Jellyfin) {
 }
 
 @Composable
-fun CenterMessage(title: String, text: String, content: @Composable () -> Unit) {
+fun CenterMessage(title: String, text: String, titleLines: Int = 2, content: @Composable () -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 80.dp, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterVertically),
@@ -527,7 +527,7 @@ fun CenterMessage(title: String, text: String, content: @Composable () -> Unit) 
         Box(Modifier.size(112.dp).clip(RoundedCornerShape(31.dp)).background(C.surface2), contentAlignment = Alignment.Center) {
             Icon(Lucide.Server, null, tint = C.accent, modifier = Modifier.size(48.dp))
         }
-        Title(title, 44, lineHeight = 1.05f)
+        Title(title, 44, lineHeight = 1.05f, maxLines = titleLines)
         Muted(text, 20, Modifier.widthIn(max = 640.dp))
         content()
     }

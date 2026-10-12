@@ -234,6 +234,10 @@ class NodeDevice(private val ctx: Context) {
             if (Build.VERSION.SDK_INT >= 33) dpm.setPermissionGrantState(
                 admin, ctx.packageName, android.Manifest.permission.POST_NOTIFICATIONS, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
             )
+            // Watch together reads the tablet's video files (and writes them, before Android 10).
+            LocalVideos.permissions().forEach {
+                dpm.setPermissionGrantState(admin, ctx.packageName, it, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+            }
             dpm.setStatusBarDisabled(admin, true)
         } catch (e: Exception) { Log.w(TAG, "lockdown", e) }
     }
