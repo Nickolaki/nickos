@@ -64,6 +64,27 @@ object TogetherText {
     fun size(bytes: Long): String =
         if (bytes >= GB) String.format(Locale.US, "%.1f GB", bytes / GB.toDouble()) else "${bytes / MB} MB"
 
+    /** "9.1 GB" under 10 GB, "35 GB" above, and "" when [bytes] is unknown (negative). */
+    fun gb(bytes: Long): String = when {
+        bytes < 0 -> ""
+        bytes >= 10 * GB -> "${bytes / GB} GB"
+        else -> String.format(Locale.US, "%.1f GB", bytes / GB.toDouble())
+    }
+
+    /** The line above a tablet's library: "12 movies on this tablet · 9.1 GB free". */
+    fun libraryHeader(movies: Int, free: Long): String =
+        (if (movies == 1) "1 movie on this tablet" else "$movies movies on this tablet") + gb(free).let { if (it.isEmpty()) "" else " · $it free" }
+
+    /** The toast after a delete finished. [err] null means it worked. */
+    fun deleteResult(err: String?, title: String, kid: String): String = when (err) {
+        null -> "Deleted $title from $kid"
+        "notOwned" -> "NickOS can't delete $title from here. It was copied onto the tablet by hand, so it has to be deleted there."
+        "missing" -> "$title was already gone."
+        else -> "Couldn't delete $title. Try again."
+    }
+
+    fun deleteTimeout(kid: String): String = "$kid didn't answer. Try again."
+
     fun percent(done: Long, size: Long): Int = if (size <= 0) 0 else (done * 100 / size).toInt().coerceIn(0, 100)
 
     /** "42% · 1.2 of 2.9 GB" for a running copy. */

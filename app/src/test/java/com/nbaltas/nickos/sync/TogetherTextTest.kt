@@ -10,6 +10,23 @@ class TogetherTextTest {
     private val gb = 1024L * 1024 * 1024
 
     @Test
+    fun `free space reads one decimal under 10 GB, none above, and nothing when unknown`() {
+        assertEquals("9.1 GB", TogetherText.gb(9_770_000_000))
+        assertEquals("38 GB", TogetherText.gb(38 * gb))
+        assertEquals("", TogetherText.gb(-1))
+        assertEquals("12 movies on this tablet · 9.1 GB free", TogetherText.libraryHeader(12, 9_770_000_000))
+        assertEquals("1 movie on this tablet", TogetherText.libraryHeader(1, -1))
+    }
+
+    @Test
+    fun `delete toasts use the exact copy`() {
+        assertEquals("Deleted Star Harbour from Hailey", TogetherText.deleteResult(null, "Star Harbour", "Hailey"))
+        assertEquals("Star Harbour was already gone.", TogetherText.deleteResult("missing", "Star Harbour", "Hailey"))
+        assertEquals("Couldn't delete Star Harbour. Try again.", TogetherText.deleteResult("io", "Star Harbour", "Hailey"))
+        assertEquals("Hailey didn't answer. Try again.", TogetherText.deleteTimeout("Hailey"))
+    }
+
+    @Test
     fun `times and lengths`() {
         assertEquals("18:02", TogetherText.fmtMs(1_082_000))
         assertEquals("1:32:05", TogetherText.fmtMs(5_525_000))

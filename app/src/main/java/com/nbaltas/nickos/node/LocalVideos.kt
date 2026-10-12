@@ -94,6 +94,63 @@ class LocalVideos(private val ctx: Context) {
         return last
     }
 
+    /** How [delete] went. [removed] rows are gone, [notOwned] refused (hand-copied files), [io] failed otherwise. */
+    data class DeleteOutcome(val removed: Int, val notOwned: Int, val missing: Boolean, val io: Int = 0) {
+        val ok: Boolean get() = removed > 0 && notOwned == 0 && io == 0
+        /** "missing", "notOwned" or "io" when not [ok]. A movie that is partly gone reports why a copy is left. */
+        val err: String? get() = when {
+            ok -> null
+            missing -> "missing"
+            notOwned > 0 -> "notOwned"
+            else -> "io"
+        }
+    }
+
+    /**
+     * Removes EVERY copy of [fid] (Movies and Download can both hold one; [scan] shows them as one),
+     * then rescans so [find] and the download jobs stop believing the movie is here. A row is
+     * matched by the fid cached for it or by being the row [last] holds for it; no file is read.
+     * Rows NickOS did not create throw SecurityException on Android 10+ and count as [DeleteOutcome.notOwned].
+     */
+    @Synchronized
+    fun delete(fid: String): DeleteOutcome {
+        var removed = 0; var notOwned = 0; var io = 0; var matched = 0
+        val keep = last.filter { it.fid == fid }.map { it.id }.toSet()
+        val cols = buildList {
+            add(MediaStore.Video.Media._ID); add(MediaStore.Video.Media.SIZE); add(MediaStore.Video.Media.DATE_MODIFIED)
+            if (Build.VERSION.SDK_INT >= 29) { add(MediaStore.Video.Media.RELATIVE_PATH); add(MediaStore.Video.Media.IS_PENDING) }
+            else add(MediaStore.Video.Media.DATA)
+        }.toTypedArray()
+        val rows = ArrayList<Pair<Long, Uri>>()
+        try {
+            resolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cols, null, null, null)?.use { c ->
+                val pending = c.getColumnIndex("is_pending")
+                while (c.moveToNext()) {
+                    if (pending >= 0 && c.getInt(pending) == 1) continue
+                    val folder = if (Build.VERSION.SDK_INT >= 29) c.getString(3) else relativeOf(c.getString(3))
+                    if (!inLibrary(folder)) continue
+                    val id = c.getLong(0)
+                    val cached = fids.getString("$id:${c.getLong(1)}:${c.getLong(2)}", null)?.substringBefore(':')
+                    if (cached == fid || id in keep) rows += id to ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+        } catch (e: Exception) { Log.w(TAG, "delete query", e); io++ }
+        for ((_, uri) in rows) {
+            matched++
+            try { if (resolver.delete(uri, null, null) > 0) removed++ }
+            catch (e: SecurityException) { Log.w(TAG, "delete $uri: not ours"); notOwned++ }
+            catch (e: Exception) { Log.w(TAG, "delete $uri", e); io++ }
+        }
+        thumbs.remove(fid)
+        scan()
+        return DeleteOutcome(removed, notOwned, matched == 0 && io == 0, io)
+    }
+
+    /** Free bytes on shared storage, or -1 when it cannot be read. */
+    fun freeBytes(): Long = try {
+        android.os.StatFs(Environment.getExternalStorageDirectory().path).availableBytes
+    } catch (e: Exception) { -1L }
+
     /** The video with this [fid]; looks at the last scan first and rescans once on a miss. */
     fun find(fid: String, rescan: Boolean = true): LocalVideo? =
         last.firstOrNull { it.fid == fid } ?: if (rescan) scan().firstOrNull { it.fid == fid } else null
@@ -105,13 +162,14 @@ class LocalVideos(private val ctx: Context) {
      * budget runs out, later files go without a thumbnail rather than being left out.
      */
     fun reply(): SyncMessages.VideosMsg {
-        if (!hasPermission()) return SyncMessages.VideosMsg(false, emptyList())
+        if (!hasPermission()) return SyncMessages.VideosMsg(false, emptyList(), freeBytes())
         var budget = REPLY_BUDGET
-        return SyncMessages.VideosMsg(true, scan().map { v ->
+        val list = scan()
+        return SyncMessages.VideosMsg(true, list.map { v ->
             val t = thumb(v)?.takeIf { it.length <= budget }
             if (t != null) budget -= t.length
             SyncMessages.VideoEntry(v.fid, v.title, v.name, v.size, v.durMs, t)
-        })
+        }, freeBytes())
     }
 
     /** Base64 JPEG (320 x 180 or so), or null when this file gives none. One bad file never throws. */

@@ -6,7 +6,9 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.sync.SyncMessages
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -61,12 +63,25 @@ class NodeTogether(
             "fetch" -> SyncMessages.decodeFetchCmd(m)?.let { f -> scope.launch { jobs.fetch(f) } }
             "cancel" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { jobs.cancel(fid) } }
             "jobs" -> reply(jobs.message())
+            // Deleting touches MediaStore, so not on the socket thread. The asking Master gets `deleted`, every Master the new list.
+            "delete" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { reply(deleteMovie(fid)); broadcast(videosMessage()) } }
             else -> return false
         }
         return true
     }
 
-    private fun videosMessage(): JSONObject = videos.reply().let { SyncMessages.encodeVideos(it.perm, it.list) }
+    private fun videosMessage(): JSONObject = videos.reply().let { SyncMessages.encodeVideos(it.perm, it.list, it.free) }
+
+    /** Stops the synced player if it is on [fid], then removes every copy of it. */
+    private suspend fun deleteMovie(fid: String): JSONObject {
+        // The stop and the "ignore a queued load of this movie" run on the main thread in order with
+        // the player's other updates; the file is only removed once they have.
+        val stopped = CompletableDeferred<Unit>()
+        player.forget(fid) { stopped.complete(Unit) }
+        withTimeoutOrNull(3000) { stopped.await() }
+        val o = videos.delete(fid)
+        return SyncMessages.encodeDeleted(fid, o.ok, o.err, o.removed, videos.freeBytes())
+    }
 
     /** Another tablet is about to fetch [fid] from this one: make sure the server is up and say where. */
     private fun serving(fid: String): JSONObject {
@@ -88,7 +103,7 @@ class NodeTogether(
 
     companion object {
         /** What this build tells a Master it can do, inside `status`. */
-        val CAPS = listOf("sync1")
+        val CAPS = listOf("sync1", "del1")
         /** Commands that mean the parent wants this tablet doing something else: the movie stops. */
         val LEAVES_PLAYER = setOf("home", "open", "lockApp", "unlink")
     }
