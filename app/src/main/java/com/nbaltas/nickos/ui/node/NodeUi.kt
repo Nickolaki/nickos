@@ -361,12 +361,19 @@ fun LockedScreen(store: Store, by: String?) {
 
 // ---------------- Bedtime ----------------
 
+/** In-app placement: bottom centre of the screen, clear of the header. */
 @Composable
-fun BedtimeToast(secondsLeft: Int) {
+fun BedtimeToastAtBottom(secondsLeft: Int) {
     Box(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 28.dp),
         contentAlignment = Alignment.BottomCenter,
-    ) {
+    ) { BedtimeToast(secondsLeft) }
+}
+
+/** Just the pill. The caller decides where it goes. */
+@Composable
+fun BedtimeToast(secondsLeft: Int) {
+    Box {
         Row(
             Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(32.dp))
                 .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg).padding(horizontal = 26.dp, vertical = 22.dp),

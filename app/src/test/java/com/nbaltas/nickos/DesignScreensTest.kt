@@ -54,7 +54,7 @@ import com.nbaltas.nickos.ui.master.TAB_NOW
 import com.nbaltas.nickos.ui.master.TAB_WATCH
 import com.nbaltas.nickos.ui.master.TogetherScreen
 import com.nbaltas.nickos.ui.master.rememberNodeViews
-import com.nbaltas.nickos.ui.node.BedtimeToast
+import com.nbaltas.nickos.ui.node.BedtimeToastAtBottom
 import com.nbaltas.nickos.ui.node.HomeApp
 import com.nbaltas.nickos.ui.node.LockedScreen
 import com.nbaltas.nickos.ui.node.NodeHome
@@ -417,5 +417,5 @@ class DesignScreensTest {
     @Test fun nodeHomePortrait() { nodeSeed(); shot("Node-Home-Portrait") { kidHome() } }
     @Test fun nodePin() { nodeSeed(); shot("Node-PIN") { kidHome(); PinPad("1234", {}, {}) } }
     @Test fun nodeLocked() { nodeSeed(); shot("Node-Locked") { LockedScreen(app.store, "Dad's Tablet") } }
-    @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToast(300) } }
+    @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
 }
