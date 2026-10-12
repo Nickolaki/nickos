@@ -105,7 +105,8 @@ class SocketProber(private val timeoutMs: Int = 400, private val totalMs: Long =
  */
 class Sweep(
     private val scope: CoroutineScope,
-    private val ownIp: () -> String?,
+    /** Every site-local address of this tablet: the home WiFi and a Wi-Fi Direct group it hosts can be up together. */
+    private val ownIps: () -> List<String>,
     /** Linked Node ids that are neither online nor in the found table right now. */
     private val missing: () -> Set<String>,
     private val prober: Prober,
@@ -119,8 +120,8 @@ class Sweep(
         /** A Node must be missing this long before the timer starts a pass. */
         val missingForMs: Long = 15_000,
         val repeatMs: Long = 20_000,
-        /** Hard cut-off for one pass. 253 hosts at 32 in flight and 400 ms is about 3 s; this is the safety net. */
-        val passBudgetMs: Long = 8_000,
+        /** Hard cut-off for one pass. Two /24s at 32 in flight and 400 ms is about 7 s; this is the safety net. */
+        val passBudgetMs: Long = 14_000,
         val tickMs: Long = 2_000,
         val port: Int = Wire.PORT,
     )
@@ -135,8 +136,12 @@ class Sweep(
 
     /** One pass. Returns the ids reported. Public for tests; the runtime uses [now] and [start]. */
     suspend fun pass(): Set<String> {
-        val ip = ownIp() ?: return emptySet()
-        val hosts = Subnet.hosts(ip) ?: return emptySet()
+        val ips = ownIps().distinct()
+        // The car network (Wi-Fi Direct, 192.168.49.x) first: in the car it is the one that matters, and a pass cut
+        // short by the budget must have covered it.
+        val hosts = ips.sortedByDescending { it.startsWith(DIRECT_PREFIX) }
+            .flatMap { Subnet.hosts(it).orEmpty() }.distinct().filterNot { it in ips }
+        if (hosts.isEmpty()) return emptySet()
         val wanted = missing()
         if (wanted.isEmpty()) return emptySet()
         val epoch = table.epoch
@@ -154,7 +159,7 @@ class Sweep(
                             // A stranger, or a Node that is already online, is ignored; each id is reported once per pass.
                             if (id !in wanted || !reported.add(id)) continue
                             // The tablet moved networks while this pass ran: its answers describe the old one.
-                            if (ownIp() != ip) { reported.remove(id); continue }
+                            if (ownIps().toSet() != ips.toSet()) { reported.remove(id); continue }
                             val addr = host to config.port
                             if (table.put(epoch, id, addr)) onFound(id, addr) else reported.remove(id)
                         }
@@ -207,5 +212,9 @@ class Sweep(
         passJob = scope.launch { runPass() }
     }
 
-    companion object { private const val TAG = "NickOS.Sweep" }
+    companion object {
+        private const val TAG = "NickOS.Sweep"
+        /** A Wi-Fi Direct group owner is always 192.168.49.1 and its clients 192.168.49.x. */
+        private const val DIRECT_PREFIX = "192.168.49."
+    }
 }

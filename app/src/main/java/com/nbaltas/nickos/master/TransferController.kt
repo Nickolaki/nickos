@@ -194,8 +194,10 @@ class TransferController(
      */
     private fun dispatch(item: LibraryItem, to: Set<String>, quiet: Boolean): Boolean {
         if (Library.SELF in item.owners) {
-            val url = port.localUrl(item.fid) ?: return false.also { if (!quiet) port.say(NO_WIFI) }
-            to.forEach { fetch(it, item, url) }
+            // One url per tablet: each reaches this one over its own link, and the addresses differ across networks.
+            val urls = to.associateWith { port.localUrl(item.fid, it) }
+            urls.forEach { (id, url) -> if (url != null) fetch(id, item, url) }
+            if (urls.values.none { it != null }) return false.also { if (!quiet) port.say(NO_WIFI) }
             return true
         }
         val src = source(item, to) ?: return false.also { if (!quiet) port.say(NO_SOURCE) }

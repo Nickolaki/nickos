@@ -12,25 +12,35 @@ data class NodeNet(val supportsWifi: Boolean, val wifi: NetMessages.WifiStatus) 
 }
 
 /**
- * Why a linked tablet is offline, for the home banner. Three reasons, in priority order, no more:
- * a) this tablet has no LAN address of its own, so nothing can be found;
- * b) the Node never got the hotspot details (or predates the feature);
- * c) everything is in place, so we are looking for it.
+ * Why a linked tablet is offline, for the home banner. Four reasons, in priority order, no more:
+ * a) the car network this tablet hosts is down (one line for all tablets, not one per tablet);
+ * b) with a typed-in hotspot: this tablet has no LAN address of its own, so nothing can be found;
+ * c) the Node never got the network details (or predates the feature);
+ * d) everything is in place, so we are looking for it.
  */
 sealed class Reason {
+    data class CarNetDown(val why: Why) : Reason()
     object MasterNotOnWifi : Reason() { override fun toString() = "MasterNotOnWifi" }
     object NoHotspotDetails : Reason() { override fun toString() = "NoHotspotDetails" }
     data class Looking(val lastSeenAgoMs: Long?) : Reason()
 }
 
 object OnlinePolicy {
+    /** How long a car network may stay Starting before it counts as failed. */
+    const val STARTING_GRACE_MS = 20_000L
+
     /**
-     * [masterLan] is this tablet's own LAN address (the ap/swlan address counts when it hosts the hotspot).
+     * [carNet] is the state of the network this tablet hosts and [manual] says the parent typed a hotspot in instead
+     * (so the hosted network is deliberately off). [startingSince] is when [carNet] became Starting.
+     * [masterLan] is this tablet's own LAN address, which only matters for a typed-in hotspot.
      * [wifiSaved] is the Node's last report: true, false, or null when never reported since linking.
      * Null counts as "no details": there is no evidence the Node has them.
      */
-    fun reason(masterLan: String?, wifiSaved: Boolean?, lastSeen: Long, now: Long): Reason = when {
-        masterLan == null -> Reason.MasterNotOnWifi
+    fun reason(carNet: CarNetState, manual: Boolean, masterLan: String?, wifiSaved: Boolean?, lastSeen: Long, now: Long,
+               startingSince: Long = now): Reason = when {
+        !manual && carNet is CarNetState.Off && carNet.why != Why.MANUAL -> Reason.CarNetDown(carNet.why)
+        !manual && carNet is CarNetState.Starting && now - startingSince > STARTING_GRACE_MS -> Reason.CarNetDown(Why.FAILED)
+        manual && masterLan == null -> Reason.MasterNotOnWifi
         wifiSaved != true -> Reason.NoHotspotDetails
         else -> Reason.Looking(if (lastSeen > 0) (now - lastSeen).coerceAtLeast(0) else null)
     }

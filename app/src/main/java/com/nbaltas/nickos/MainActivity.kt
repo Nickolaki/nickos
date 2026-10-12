@@ -21,6 +21,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.nbaltas.nickos.data.Role
+import com.nbaltas.nickos.master.MasterService
 import com.nbaltas.nickos.node.NodeService
 import com.nbaltas.nickos.ui.master.MasterApp
 import com.nbaltas.nickos.ui.node.NodeApp
@@ -73,11 +74,27 @@ class MainActivity : ComponentActivity() {
 
     private fun onRoleChanged(role: Role) {
         when (role) {
-            Role.MASTER -> { app.master.start(); showSystemBars(true) }
+            Role.MASTER -> { app.master.start(); MasterService.start(this); askForCarNetPermission(); showSystemBars(true) }
             Role.NODE -> { NodeService.start(this); enterKidMode() }
-            Role.NONE -> showSystemBars(true)
+            Role.NONE -> { MasterService.stop(this); showSystemBars(true) }
         }
     }
+
+    /** The Wi-Fi Direct group needs one permission (nearby devices, or location on older Android). Asked once per start. */
+    private fun askForCarNetPermission() {
+        val perm = app.master.carNet.permissionToRequest() ?: return
+        if (askedCarNet) return
+        askedCarNet = true
+        try { requestPermissions(arrayOf(perm), REQ_CARNET) } catch (_: Exception) {}
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_CARNET) app.master.carNet.recheck()
+    }
+
+    private var askedCarNet = false
 
     override fun onResume() {
         super.onResume()
@@ -131,5 +148,5 @@ class MainActivity : ComponentActivity() {
         if (onBackPressedDispatcher.hasEnabledCallbacks()) onBackPressedDispatcher.onBackPressed()
     }
 
-    companion object { const val PARENT_MINUTES = 10 }
+    companion object { const val PARENT_MINUTES = 10; private const val REQ_CARNET = 41 }
 }

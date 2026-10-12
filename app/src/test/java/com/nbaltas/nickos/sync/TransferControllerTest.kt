@@ -256,6 +256,24 @@ class TransferControllerTest {
     }
 
     @Test
+    fun `each tablet is given this master's address on its own link`() {
+        self(star)
+        port.lanFor[H] = "192.168.49.1"            // Hailey is on the car network, Leo on the home WiFi
+        t.sendNow("f1", setOf(H, L))
+        assertEquals("http://192.168.49.1:47471/v/f1?k=selfkey", SyncMessages.decodeFetchCmd(port.cmds(H, "fetch").single())!!.url)
+        assertEquals("http://192.168.1.2:47471/v/f1?k=selfkey", SyncMessages.decodeFetchCmd(port.cmds(L, "fetch").single())!!.url)
+    }
+
+    @Test
+    fun `a tablet with no usable address is skipped while the others still get the movie`() {
+        self(star)
+        port.noUrlFor += H
+        t.sendNow("f1", setOf(H, L))
+        assertTrue(port.cmds(H, "fetch").isEmpty())
+        assertEquals(1, port.cmds(L, "fetch").size)
+    }
+
+    @Test
     fun `a movie that left the library cannot be sent`() {
         t.sendNow("gone", setOf(L))
         assertTrue(port.sent.isEmpty())
