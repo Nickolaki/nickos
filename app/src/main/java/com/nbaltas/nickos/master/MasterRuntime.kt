@@ -16,6 +16,8 @@ import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
 import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.link.Conn
+import com.nbaltas.nickos.link.Handshake
+import com.nbaltas.nickos.link.LinkFlags
 import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
@@ -110,6 +112,7 @@ data class Playback(val session: JfSession, val at: Long, val remoteSessionId: S
 class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val nsd = ctx.getSystemService(NsdManager::class.java)
+    private val linkFlags = LinkFlags(ctx)
     private val resolver = Resolver(nsd)
     private val links = LinkTable<Conn>()
     private val loops = LinkLoops(scope) { id -> linkLoop(id) }
@@ -323,17 +326,18 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private fun tryPair(id: String, addr: Pair<String, Int>, code: String): PairResult? = try {
         val c = Conn.open(addr.first, addr.second, 2500)
         c.socket.soTimeout = 4000
-        c.send(JSONObject().put("t", "pair").put("code", code).put("masterId", store.deviceId)
-            .put("masterName", displayName).put("pin", store.pin.value))
-        val r = c.read()
-        c.close()
-        if (r?.optString("t") == "paired") {
+        // No PIN goes out here: it reaches the Node on the first sealed session (runLink). A tablet that cannot
+        // produce the code's mac, or that claims a different id than the one we dialed, is dropped.
+        val out = try { Handshake.pair(c, store.deviceId, displayName, code, expectNodeId = id) } finally { c.close() }
+        if (out != null) {
+            val r = out.reply
             val node = LinkedNode(
-                id = r.optString("nodeId", id), name = r.optString("name"), color = r.optInt("color"),
-                avatar = r.optString("avatar", "initial"), token = r.getString("token"),
+                id = out.nodeId, name = r.optString("name"), color = r.optInt("color"),
+                avatar = r.optString("avatar", "initial"), token = out.token,
                 host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
             )
             store.upsertNode(node)
+            linkFlags.setSec2(node.id, true)
             val st = NodeStatus.from(r)
             _status.update { it + (node.id to st) }
             PairResult(node, st)
@@ -363,15 +367,28 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     /** True when the Node welcomed us (even if the link later dropped); false when it could not be reached. */
     private fun session(n: LinkedNode, addr: Pair<String, Int>): Boolean {
-        val c = Conn.open(addr.first, addr.second)
+        var c = Conn.open(addr.first, addr.second)
         var claimed = false
         try {
             c.socket.soTimeout = 25_000 // Node sends status at least every 10s
-            c.send(JSONObject().put("t", "hello").put("masterId", store.deviceId).put("token", n.token).put("masterName", displayName))
-            val hi = c.read() ?: return false
-            if (hi.optString("t") != "welcome") return false
+            var legacy = false
+            when (Handshake.helloResult(c, store.deviceId, displayName, n.token)) {
+                Handshake.Hello.OK -> linkFlags.setSec2(n.id, true)
+                // An old Node does not know v2 and says denied. Only while this Node has never done sec2 do we fall back
+                // to the v1 hello (token in clear), once, to let it update itself. After one v2 handshake: never.
+                Handshake.Hello.DENIED -> {
+                    if (linkFlags.sec2(n.id)) return false
+                    c.close()
+                    c = Conn.open(addr.first, addr.second)
+                    c.socket.soTimeout = 25_000
+                    if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return false
+                    legacy = true
+                }
+                Handshake.Hello.FAIL -> return false
+            }
             links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
             claimed = true
+            if (legacy) send(n.id, cmd("update")) // the Node installs the sec2 build from the track and the link comes back sealed
             runLink(n, c)
             return true
         } finally {

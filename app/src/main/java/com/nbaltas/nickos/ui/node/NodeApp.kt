@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -82,6 +83,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                 val color by store.color.collectAsState()
                 val avatar by store.avatar.collectAsState()
                 LaunchedEffect(Unit) { rt.openPairing(); rt.paired.collect { screen = NodeScreen.HOME; onKidMode() } }
+                DisposableEffect(Unit) { onDispose { rt.closePairing() } } // Back or any exit must not leave the code live
                 Column(Modifier.fillMaxSize().background(C.bg)) {
                     SetupHeader("Add a parent tablet", { rt.closePairing(); screen = NodeScreen.MENU })
                     PairingCodeBody(name, color, avatar, code)
