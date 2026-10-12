@@ -1,6 +1,13 @@
 package com.nbaltas.nickos.ui.setup
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,7 +99,7 @@ import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 import kotlinx.coroutines.launch
 
-private enum class Step { WELCOME, ROLE, NODE_NAME, NODE_CODE, MASTER_ADD, MASTER_LINKED, MASTER_JELLYFIN }
+private enum class Step { WELCOME, ROLE, NODE_NAME, NODE_CODE, MASTER_NET, MASTER_ADD, MASTER_LINKED, MASTER_JELLYFIN }
 
 /** First run: Welcome → Role → (Node: name → code) | (Master: add tablet → linked → Jellyfin). */
 @Composable
@@ -111,6 +118,7 @@ fun SetupFlow() {
         Step.WELCOME -> null
         Step.ROLE -> { { step = Step.WELCOME } }
         Step.NODE_NAME -> if (provisioned) null else { { step = Step.ROLE } }
+        Step.MASTER_NET -> { { step = Step.ROLE } }
         Step.MASTER_ADD -> { { step = Step.ROLE } }
         Step.NODE_CODE -> { { step = Step.NODE_NAME } }
         Step.MASTER_LINKED -> null
@@ -121,7 +129,8 @@ fun SetupFlow() {
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (step) {
             Step.WELCOME -> Welcome { step = Step.ROLE }
-            Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_ADD }, onNode = { step = Step.NODE_NAME })
+            Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_NET }, onNode = { step = Step.NODE_NAME })
+            Step.MASTER_NET -> MasterNetScreen(back!!) { step = Step.MASTER_ADD }
             Step.NODE_NAME -> NodeNameScreen(back) { step = Step.NODE_CODE }
             Step.NODE_CODE -> NodeCodeScreen(back!!) { app.store.setRole(Role.NODE) }
             Step.MASTER_ADD -> AddTabletScreen(back = back!!, step = "Master · Add tablet") { linked = it; step = Step.MASTER_LINKED }
@@ -218,6 +227,16 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     val name by store.name.collectAsState()
     val color by store.color.collectAsState()
     val avatar by store.avatar.collectAsState()
+    // The battery exemption dialog has to come before NodeService starts lockdown: a system dialog under lock task is suppressed.
+    val ctx = LocalContext.current
+    val battery = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { onContinue() }
+    val proceed = {
+        val exempt = try { (ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName) } catch (e: Exception) { true }
+        if (exempt) onContinue()
+        else try {
+            battery.launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:${ctx.packageName}")))
+        } catch (e: Exception) { onContinue() }
+    }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Node · Step 2 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -267,7 +286,7 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        NickButton("Continue", onContinue, Modifier.widthIn(min = 240.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight, enabled = name.isNotBlank())
+                        NickButton("Continue", proceed, Modifier.widthIn(min = 240.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight, enabled = name.isNotBlank())
                     }
                 }
             }
@@ -368,6 +387,46 @@ private fun wifiAddress(): String? = try {
 } catch (e: Exception) { null }
 
 // ---------------- Master ----------------
+
+/** The muted line on the car network page; Android 10 to 12 also needs Location switched on. */
+internal fun masterNetMuted(sdk: Int): String =
+    "Android asks for one permission to do this. NickOS never uses your location." + if (sdk in 29..32) " Location also has to be switched on." else ""
+
+internal const val MASTER_NET_TITLE = "The car network"
+internal const val MASTER_NET_BODY =
+    "NickOS runs a small WiFi network from this tablet. In the car, the kids' tablets join it on their own. There is nothing to switch on."
+
+/** Setup, Master: ask for the one permission the car network needs. Skipped when there is nothing to ask. */
+@Composable
+internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        app.master.carNet.recheck(); onNext()
+    }
+    LaunchedEffect(Unit) { if (app.master.carNet.permissionToRequest().isEmpty()) onNext() }
+    Column(Modifier.fillMaxSize()) {
+        SetupHeader("Master · Car network", onBack)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+        ) {
+            Box(Modifier.size(112.dp).clip(RoundedCornerShape(32.dp)).background(C.accent), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(52.dp))
+            }
+            Title(MASTER_NET_TITLE, 52, lineHeight = 1.05f)
+            Text(MASTER_NET_BODY, style = body(23.sp, 500, 1.4f), color = C.text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
+            Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(19.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                NickButton("Allow", {
+                    val p = app.master.carNet.permissionToRequest()
+                    if (p.isEmpty()) { app.master.carNet.recheck(); onNext() } else ask.launch(p.toTypedArray())
+                }, style = BtnStyle.PRIMARY, big = true)
+                NickButton("Not now", onNext, style = BtnStyle.GHOST, big = true)
+            }
+        }
+    }
+}
 
 /** Enter a Node's 6-digit code. Used in setup, from the home "Add tablet" card and Settings. */
 @Composable
