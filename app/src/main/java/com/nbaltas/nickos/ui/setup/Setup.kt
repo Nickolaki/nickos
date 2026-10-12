@@ -298,7 +298,7 @@ internal fun NodeCodeScreen(onBack: () -> Unit, onPaired: () -> Unit) {
 
 /** Also shown from the Node's parent menu when pairing a second Master. */
 @Composable
-fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?) {
+fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?, address: String? = remember { wifiAddress() }) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -332,7 +332,6 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?) {
             Icon(Lucide.Wifi, null, tint = C.muted, modifier = Modifier.size(22.dp))
             Text("Waiting for the Master tablet on this WiFi…", style = body(18.sp), color = C.muted)
         }
-        val address = remember { wifiAddress() }
         if (address != null) Text("Address: $address", style = body(16.sp, 600), color = C.muted)
     }
 }

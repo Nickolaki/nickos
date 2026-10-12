@@ -440,7 +440,7 @@ class DesignScreensTest {
         shot("Node-Code") {
             androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
                 com.nbaltas.nickos.ui.theme.SetupHeader("Node · Step 3 of 3", {})
-                com.nbaltas.nickos.ui.setup.PairingCodeBody("Hailey's Tablet", 0, app.store.avatar.value, "482916")
+                com.nbaltas.nickos.ui.setup.PairingCodeBody("Hailey's Tablet", 0, app.store.avatar.value, "482916", address = "192.168.1.20")
             }
         }
     }
