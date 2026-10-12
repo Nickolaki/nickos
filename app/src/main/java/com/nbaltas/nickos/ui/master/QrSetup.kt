@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import com.nbaltas.nickos.update.Updater
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -55,12 +57,22 @@ import kotlinx.coroutines.withContext
  * Only works on a new or factory-reset tablet: that's Android's rule for Device Owner.
  */
 @Composable
-fun QrSetupScreen(onBack: () -> Unit, qrDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default) {
+fun QrSetupScreen(
+    onBack: () -> Unit,
+    qrDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
+    /** The release certificate checksum the update server publishes, or null. Fetched once; tests pass a fake. */
+    serverSignature: suspend () -> String? = { Updater.check()?.signature },
+) {
     val ctx = LocalContext.current
     var ssid by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
-    val qr by produceState<Bitmap?>(null, ssid, pass) {
-        value = withContext(qrDispatcher) { qrBitmap(Provisioning.qrPayload(ctx, ssid.trim(), pass), 900) }
+    var fromServer by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        val s = try { serverSignature() } catch (e: Exception) { null }
+        if (Provisioning.validChecksum(s)) fromServer = s
+    }
+    val qr by produceState<Bitmap?>(null, ssid, pass, fromServer) {
+        value = withContext(qrDispatcher) { qrBitmap(Provisioning.qrPayload(ctx, ssid.trim(), pass, fromServer), 900) }
     }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · New kid tablet", onBack)
@@ -69,17 +81,17 @@ fun QrSetupScreen(onBack: () -> Unit, qrDispatcher: kotlinx.coroutines.Coroutine
             val landscape = maxWidth > maxHeight && maxWidth >= 700.dp
             val narrow = maxWidth < 1000.dp && !landscape
             val compact = landscape && (maxWidth < 1100.dp || maxHeight < 800.dp)
-            val qrSize = if (compact) (maxHeight - 40.dp).coerceIn(260.dp, 460.dp) else 460.dp
+            val qrSize = if (compact) (maxHeight - 40.dp - 30.dp).coerceIn(260.dp, 460.dp) else 460.dp
             val steps: @Composable (Modifier) -> Unit = { mod ->
                 Column(mod, verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 20.dp)) {
                     Title("Set up a new kid tablet", if (compact) 38 else 48, lineHeight = 1.02f)
                     Muted("No cables or computer needed. The kid lock is switched on from the start.", if (compact) 17 else 20)
-                    Step(1, "Start from a new or factory-reset tablet (Settings → System → Reset).")
-                    Step(2, "On its first \"Welcome\" screen, tap the same empty spot 6 times.")
-                    Step(3, "Connect to WiFi if it asks, then point it at this code.")
-                    Step(4, "It installs NickOS by itself. Then name the tablet and pair it with its 6-digit code.")
+                    Step(1, "Start from a new or factory reset tablet. Settings, System, Reset options, Erase all data.")
+                    Step(2, "On its first Welcome screen, tap the same empty spot 6 times. A QR scanner opens.")
+                    Step(3, "Point it at this code. It joins the WiFi below, or asks you to pick one.")
+                    Step(4, "It downloads NickOS and switches the kid lock on. When it finishes, NickOS opens. Name the tablet and enter its 6 digit code on this tablet.")
                     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Muted("Optional: put your WiFi in the code so the tablet joins it by itself.", 16)
+                        Muted("Put your home WiFi here and the tablet joins it by itself during setup.", 16)
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Column(Modifier.weight(1f)) { FieldLabel("WiFi name"); NickField(ssid, { ssid = it }) }
                             Column(Modifier.weight(1f)) { FieldLabel("WiFi password"); NickField(pass, { pass = it }, password = true) }
@@ -88,8 +100,11 @@ fun QrSetupScreen(onBack: () -> Unit, qrDispatcher: kotlinx.coroutines.Coroutine
                 }
             }
             val code: @Composable () -> Unit = {
-                Box(Modifier.size(qrSize).clip(RoundedCornerShape(36.dp)).background(Color.White).padding(if (compact) 16.dp else 24.dp), contentAlignment = Alignment.Center) {
-                    qr?.let { Image(it.asImageBitmap(), "Setup QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None) }
+                Column(Modifier.width(qrSize), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(qrSize).clip(RoundedCornerShape(36.dp)).background(Color.White).padding(if (compact) 16.dp else 24.dp), contentAlignment = Alignment.Center) {
+                        qr?.let { Image(it.asImageBitmap(), "Setup QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None) }
+                    }
+                    Muted(checksumLine(fromServer != null), 14, maxLines = 3)
                 }
             }
             if (narrow) {
@@ -105,6 +120,11 @@ fun QrSetupScreen(onBack: () -> Unit, qrDispatcher: kotlinx.coroutines.Coroutine
         }
     }
 }
+
+/** Which checksum the code carries, in words a parent can act on. */
+internal fun checksumLine(fromServer: Boolean) =
+    if (fromServer) "Code matches the NickOS on the update server."
+    else "Code matches this tablet's NickOS. If the kid tablet says it can't set up, check for updates here first."
 
 @Composable
 private fun Step(n: Int, text: String) {
