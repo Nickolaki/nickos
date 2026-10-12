@@ -222,7 +222,7 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
             ) {
                 BackButton(onBack)
                 Title("Cameras", 40, Modifier.weight(1f), maxLines = 1)
-                IconCircle(Lucide.Settings, { onSettings(5) }, size = if (phone) 48.dp else 60.dp)
+                IconCircle(Lucide.Settings, { onSettings(2) }, size = if (phone) 48.dp else 60.dp)
                 if (roomy) Segmented(listOf("Auto" to null, "Grid" to null, "Spotlight" to null), override, { override = it })
                 // Phone width: "Add camera" leaves the title no room.
                 NickButton(if (phone) "Add" else "Add camera", { editing = Camera(Store.randomHex(6), "", "rtsp://") }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
@@ -307,7 +307,7 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
                                             onTap = onTap,
                                             onMaximize = { full = id },
                                             onRotate = { store.setCamRotation(src.node.id, (rotations[src.node.id] ?: 0) + 90) },
-                                            onAction = { if (t?.display == TileDisplay.UPDATE_NEEDED) onSettings(4) else ctl.arm(src.node.id) },
+                                            onAction = { if (t?.display == TileDisplay.UPDATE_NEEDED) onSettings(5) else ctl.arm(src.node.id) },
                                         )
                                     }
                                     // While this camera is open full screen its tile gives up its player: one

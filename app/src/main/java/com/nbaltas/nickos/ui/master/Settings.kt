@@ -86,8 +86,8 @@ import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 
 private val sections = listOf<Pair<String, ImageVector>>(
-    "Linked tablets" to Lucide.Tablet, "Jellyfin (legacy)" to Lucide.Server, "Parent PIN" to Lucide.KeyRound,
-    "Theme" to Lucide.Contrast, "About" to Lucide.Info, "Cameras" to Lucide.Camera,
+    "Linked tablets" to Lucide.Tablet, "Jellyfin" to Lucide.Server, "Cameras" to Lucide.Camera,
+    "Parent PIN" to Lucide.KeyRound, "Theme" to Lucide.Contrast, "About" to Lucide.Info,
 )
 
 @Composable
@@ -118,9 +118,9 @@ fun SettingsScreen(section: Int, onSection: (Int) -> Unit, onBack: () -> Unit, o
                 when (section) {
                     0 -> TabletsSection(onAdd)
                     1 -> JellyfinSection()
-                    2 -> PinSection()
-                    3 -> ThemeSection()
-                    5 -> CamerasSection()
+                    2 -> CamerasSection()
+                    3 -> PinSection()
+                    4 -> ThemeSection()
                     else -> AboutSection()
                 }
             }
@@ -209,9 +209,10 @@ private fun JellyfinSection() {
     val nodes by app.store.nodes.collectAsState()
     var picking by remember { mutableStateOf<LinkedNode?>(null) }
     var formKey by remember { mutableStateOf(0) }
-    SectionPage("Jellyfin (legacy)", {
+    SectionPage("Jellyfin", {
         if (account != null) NickButton("Disconnect", { app.store.setJellyfin(null); formKey++ }, style = BtnStyle.DANGER)
     }) {
+        Muted("Optional. The NickOS library works without it.", 15)
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Dot(if (account != null) C.online else C.offline)

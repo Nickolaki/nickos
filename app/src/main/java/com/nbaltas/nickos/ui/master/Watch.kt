@@ -262,7 +262,7 @@ private fun LandscapeCard(item: JfItem, jf: Jellyfin, nextUp: Boolean, onClick: 
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(item.displayTitle, style = body(18.sp, 700), color = C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val sub = when {
-                nextUp && item.isEpisode -> "${item.epCode} — ${item.name}"
+                nextUp && item.isEpisode -> "${item.epCode} · ${item.name}"
                 item.isEpisode -> "${item.epCode} · ${minutesText(item.leftMin)} left"
                 item.inProgress -> "${minutesText(item.leftMin)} left"
                 else -> item.year?.toString() ?: ""
