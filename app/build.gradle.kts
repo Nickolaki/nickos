@@ -38,6 +38,14 @@ android {
             storePassword = localProperties.getProperty("release.storePassword", "")
             keyAlias = localProperties.getProperty("release.keyAlias", "")
             keyPassword = localProperties.getProperty("release.keyPassword", "")
+            // Android 7.0's installer screen refuses an APK with only a v2 signature ("There was a
+            // problem parsing the package"), and AGP drops v1 by default once minSdk is 24. Keep both.
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
