@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,9 @@ import com.composables.icons.lucide.Moon
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Store
+import com.nbaltas.nickos.node.KioskStatus
+import com.nbaltas.nickos.node.PinGate
+import com.nbaltas.nickos.node.PinResult
 import com.nbaltas.nickos.node.parentName
 import com.nbaltas.nickos.ui.theme.Artwork
 import com.nbaltas.nickos.ui.theme.Avatar
@@ -278,8 +282,16 @@ fun loadHomeApp(ctx: android.content.Context, pkg: String): HomeApp? = try {
 /** "Grown-ups only" card. Calls [onOk] when the 4 digits match [pin]. */
 @Composable
 fun PinPad(pin: String, onOk: () -> Unit, onCancel: () -> Unit, subtitle: String = "Enter the parent PIN to leave kid mode") {
+    // The wrong-PIN counter lives on the runtime (not here), or Cancel and holding the avatar again would reset it.
+    val gate = App.get(LocalContext.current).node.pinGate
     var entered by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
+    var left by remember { mutableIntStateOf(PinGate.MAX_WRONG) }
+    var lockedUntil by remember { mutableLongStateOf(gate.lockedUntil(screenNow()) ?: 0L) }
+    val now = rememberNow(1000)
+    val locked = now < lockedUntil
+    val secondsLeft = ((lockedUntil - now + 999) / 1000).coerceAtLeast(1)
+    val keyH = if (LocalConfiguration.current.screenHeightDp < 700) 72.dp else 80.dp
     Box(Modifier.fillMaxSize().background(Color(0xC7080918)).tap {}, contentAlignment = Alignment.Center) {
         Column(
             Modifier.width(500.dp).shadow(40.dp, RoundedCornerShape(40.dp)).clip(RoundedCornerShape(40.dp))
@@ -290,18 +302,32 @@ fun PinPad(pin: String, onOk: () -> Unit, onCancel: () -> Unit, subtitle: String
                 Icon(Lucide.Lock, null, tint = NodeText, modifier = Modifier.size(30.dp))
                 Text("Grown-ups only", style = disp(32.sp), color = NodeText)
             }
-            Text(if (wrong) "That's not it. Try again." else subtitle, style = body(18.sp), color = if (wrong) C.danger else NodePalette.soft)
+            Text(
+                when {
+                    locked -> "Too many tries. Wait $secondsLeft seconds."
+                    wrong -> "That's not it. Try again." + if (left <= 2) " $left more and the pad locks." else ""
+                    else -> subtitle
+                },
+                style = body(18.sp), color = if (wrong || locked) C.danger else NodePalette.soft,
+            )
             PinDots(entered.length, color = NodeText)
             Keypad(
                 onDigit = { d ->
+                    if (locked) return@Keypad
                     if (entered.length < 4) {
                         entered += d; wrong = false
-                        if (entered.length == 4) { if (entered == pin) onOk() else { wrong = true; entered = "" } }
+                        if (entered.length == 4) {
+                            when (val r = gate.tryPin(entered, pin, screenNow())) {
+                                PinResult.Ok -> { entered = ""; onOk() }
+                                is PinResult.Wrong -> { wrong = true; left = r.left; entered = "" }
+                                is PinResult.Locked -> { wrong = false; lockedUntil = r.untilMs; entered = "" }
+                            }
+                        }
                     }
                 },
                 onDelete = { entered = entered.dropLast(1) },
                 modifier = Modifier.width(420.dp),
-                keyHeight = 80.dp,
+                keyHeight = keyH,
                 keyColor = NodePalette.key,
                 leftLabel = "Cancel",
                 onLeft = onCancel,
@@ -397,7 +423,11 @@ fun BedtimeToast(secondsLeft: Int) {
 /** Not in the design handoff; built from the same PIN-card language. */
 @Composable
 fun ParentMenu(
-    lockdownOn: Boolean,
+    /** Owner by default so existing screens compile unchanged. */
+    kiosk: KioskStatus = KioskStatus.Owner,
+    onFinishKiosk: () -> Unit = {},
+    /** True while the parent PIN is still 0000. */
+    pinIsDefault: Boolean = false,
     onKidMode: () -> Unit,
     onAllApps: () -> Unit,
     onSettings: () -> Unit,
@@ -413,16 +443,25 @@ fun ParentMenu(
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color(0xC7080918)).tap {}, contentAlignment = Alignment.Center) {
         Column(
-            Modifier.width(560.dp).clip(RoundedCornerShape(40.dp)).background(NodePalette.pinCard).padding(horizontal = 40.dp, vertical = 36.dp),
+            // Scrolls: on a 600 dp tablet the menu is taller than the screen once every row is showing.
+            Modifier.padding(vertical = 12.dp).width(560.dp).clip(RoundedCornerShape(40.dp)).background(NodePalette.pinCard)
+                .verticalScroll(rememberScrollState()).padding(horizontal = 40.dp, vertical = 36.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Grown-up menu", style = disp(32.sp), color = NodeText)
+            val incomplete = kiosk is KioskStatus.Incomplete
             Text(
-                if (lockdownOn) "Kid lock is on." else "Kid lock is off: the kid can leave with the home button. See SETUP.md to switch it on.",
-                style = body(17.sp), color = if (lockdownOn) NodePalette.soft else C.danger,
+                when (kiosk) {
+                    KioskStatus.Owner -> "Kid lock is on."
+                    KioskStatus.Ready -> "Kid lock is on. NickOS is the home screen. For the full lock with no settings and no notifications, see the PC step in SETUP.md."
+                    is KioskStatus.Incomplete -> "Kid lock is not finished. The kids can leave NickOS."
+                },
+                style = body(17.sp), color = if (incomplete) C.danger else NodePalette.soft,
             )
+            if (pinIsDefault) Text("The parent PIN is still 0000. Change it on the Master tablet in Settings, Parent PIN.", style = body(17.sp), color = C.danger)
             Spacer(Modifier.height(6.dp))
-            MenuButton("Back to kid mode", primary = true, onClick = onKidMode)
+            if (incomplete) MenuButton("Finish kid lock", primary = true, onClick = onFinishKiosk)
+            MenuButton("Back to kid mode", primary = !incomplete, onClick = onKidMode)
             MenuButton("All apps", onClick = onAllApps)
             MenuButton("Android settings", onClick = onSettings)
             if (onAllowCamera != null) MenuButton("Allow camera", onClick = onAllowCamera)

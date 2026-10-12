@@ -48,7 +48,7 @@ class NodeDevice(private val ctx: Context) {
     @Volatile var lastLaunched: String? = null
 
     val isDeviceOwner get() = dpm.isDeviceOwnerApp(ctx.packageName)
-    private val isAdmin get() = dpm.isAdminActive(admin)
+    val isAdmin get() = dpm.isAdminActive(admin)
 
     // ---- battery / screen ----
     fun battery(): Pair<Int, Boolean> {
@@ -222,6 +222,34 @@ class NodeDevice(private val ctx: Context) {
 
     fun canOverlay() = Settings.canDrawOverlays(ctx)
 
+    // ---- launcher mode (a tablet that is not Device Owner) ----
+    /** Whether NickOS is the home screen. The resolver's own package (`android`) means no default is set. */
+    fun isHome(): Boolean {
+        val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return ctx.packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName == ctx.packageName
+    }
+
+    /** Asks for the home role: the system dialog on Android 10+, else the Home app settings page. */
+    fun homeRequestIntent(): Intent {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val rm = ctx.getSystemService(android.app.role.RoleManager::class.java)
+            if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
+                return rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
+            }
+        }
+        return Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    fun overlayIntent() = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
+
+    fun usageIntent() = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+
+    fun adminIntent() = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+        .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+        .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Lets NickOS turn the screen off at bedtime.")
+
+    fun kioskState() = KioskState(isDeviceOwner, isHome(), canOverlay(), hasUsageAccess(), isAdmin)
+
     // ---- lockdown ----
     /**
      * Kiosk mode, the same Android feature Fully Kiosk Plus uses. Only works as Device Owner.
@@ -263,7 +291,11 @@ class NodeDevice(private val ctx: Context) {
     }
 
     fun releaseLockdown() {
-        if (!isDeviceOwner) return
+        if (!isDeviceOwner) {
+            // Launcher mode: a plain device admin would block uninstalling NickOS after a reset.
+            if (isAdmin) try { dpm.removeActiveAdmin(admin) } catch (e: Exception) { Log.w(TAG, "remove admin", e) }
+            return
+        }
         try {
             dpm.setStatusBarDisabled(admin, false)
             dpm.setKeyguardDisabled(admin, false)

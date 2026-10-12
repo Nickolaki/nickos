@@ -284,6 +284,7 @@ private fun PinSection() {
     var first by remember { mutableStateOf<String?>(null) }
     var entered by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    val currentPin by app.store.pin.collectAsState()
     SectionPage("Parent PIN") {
         BoxWithConstraints {
             val narrow = maxWidth < 800.dp
@@ -291,6 +292,7 @@ private fun PinSection() {
                 Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Used to leave kid mode on every Node tablet.", style = body(21.sp, 500, 1.45f), color = C.text)
                     Muted("Changing it here updates all linked tablets.", 17)
+                    if (com.nbaltas.nickos.node.PinPolicy.isWeak(currentPin)) Text("This is still the starting PIN. Anyone who knows NickOS knows it.", style = body(18.sp, 700), color = C.danger)
                     message?.let { (ok, m) -> Text(m, style = body(18.sp, 700), color = if (ok) C.online else C.danger) }
                 }
             }
@@ -306,7 +308,8 @@ private fun PinSection() {
                             if (entered.length < 4) entered += d
                             if (entered.length == 4) {
                                 val f = first
-                                if (f == null) { first = entered; entered = ""; message = null }
+                                if (f == null && com.nbaltas.nickos.node.PinPolicy.isWeak(entered)) { entered = ""; message = false to "Pick a PIN that is not 0000 and not four of the same digit." }
+                                else if (f == null) { first = entered; entered = ""; message = null }
                                 else if (f == entered) { app.store.setPin(entered); first = null; entered = ""; message = true to "PIN changed on this tablet and every linked tablet." }
                                 else { first = null; entered = ""; message = false to "Those didn't match. Start again." }
                             }
