@@ -588,5 +588,33 @@ class DesignScreensTest {
     @Test fun nodeCode960BigFont() = nodeCodeBigFont(1.5f)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun nodeCode1024BigFont() = nodeCodeBigFont(1.5f)
+
+    // ---- controls and relink fix: the Device tab and the Node's Grown-up menu at both real tablet sizes ----
+    private fun deviceTab() = shot("Control-Device-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDevice960() = deviceTab()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDevice1024() = deviceTab()
+
+    /** A Node that has not been given the brightness / screen off permission: the Master greys the controls and says why. */
+    private fun deviceTabNoPerms() {
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin").copy(brightnessOk = false, screenOffOk = false)))
+        shot("Control-Device-NoPerms-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceNoPerms960() = deviceTabNoPerms()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceNoPerms1024() = deviceTabNoPerms()
+
+    private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
+        com.nbaltas.nickos.ui.node.ParentMenu(true, {}, {}, {}, {}, {}, {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {})
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeParentMenu960() = nodeMenu()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeParentMenu1024() = nodeMenu()
 }
 
