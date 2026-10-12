@@ -64,6 +64,7 @@ import com.nbaltas.nickos.ui.node.PinPad
 import com.nbaltas.nickos.ui.node.TogetherScreen as NodeTogetherScreen
 import com.nbaltas.nickos.ui.setup.AddTabletScreen
 import com.nbaltas.nickos.ui.setup.NodeNameScreen
+import com.nbaltas.nickos.ui.setup.PairingCodeBody
 import com.nbaltas.nickos.ui.setup.RoleScreen
 import com.nbaltas.nickos.ui.setup.Welcome
 import com.nbaltas.nickos.ui.theme.C
@@ -104,10 +105,13 @@ class DesignScreensTest {
         const val CHANGE_THRESHOLD = 0.0005f
     }
 
+    /** Set only by the landscape sweep below: renders go to design/screens/sweep/<name><suffix>.png. */
+    private var sweepSuffix = ""
+
     private fun shot(name: String, content: @Composable () -> Unit) {
         try {
             captureRoboImage(
-                "../design/screens/$name.png",
+                if (sweepSuffix.isEmpty()) "../design/screens/$name.png" else "../design/screens/sweep/$name$sweepSuffix.png",
                 roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
             ) {
                 NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
@@ -138,6 +142,8 @@ class DesignScreensTest {
         TimeZone.setDefault(TimeZone.getTimeZone("Australia/Sydney"))
         Locale.setDefault(Locale.ENGLISH)
         screenNow = { FIXED_NOW }
+        // The update check runs on app start and its answer is global: pin it so About never depends on test order.
+        set(com.nbaltas.nickos.update.Updater, "_state", com.nbaltas.nickos.update.UpdateState.Idle)
         val s = app.store
         s.resetAll()
         s.setName("Dad's Tablet")
@@ -448,4 +454,84 @@ class DesignScreensTest {
             TabletPickPanel(item, deleteNode, null, m.sync, m.transfer, canDelete = true, onBack = {})
         }
     }
+
+    // ---- pairing at real tablet sizes (a 6-digit code must never be cut to 3) ----
+    private fun sizeTag(): String {
+        val c = app.resources.configuration
+        return "${c.screenWidthDp}x${c.screenHeightDp}"
+    }
+
+    private fun nodeCode() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeCode960() = nodeCode()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeCode1024() = nodeCode()
+    @Config(qualifiers = "w1100dp-h680dp-land-mdpi")
+    @Test fun nodeCode1100() = nodeCode()
+    @Config(qualifiers = "w600dp-h960dp-port-mdpi")
+    @Test fun nodeCodePortrait() = nodeCode()
+
+    private fun masterCode() = shot("Master-AddCode-${sizeTag()}") { AddTabletScreen({}, "Master · Add tablet") {} }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterAddCode960() = masterCode()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun masterAddCode1024() = masterCode()
+    @Config(qualifiers = "w1100dp-h680dp-land-mdpi")
+    @Test fun masterAddCode1100() = masterCode()
+    @Config(qualifiers = "w600dp-h960dp-port-mdpi")
+    @Test fun masterAddCodePortrait() = masterCode()
+
+    private fun qrSetup() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.robolectric.Shadows.shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).signatures = arrayOf(android.content.pm.Signature("0102030405"))
+        qrShot()
+    }
+    private fun qrShot() = shot("Master-QrSetup-${sizeTag()}") { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) }
+
+    @Config(sdk = [27], qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterQrSetup960() = qrSetup()
+    @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun masterQrSetup1024() = qrSetup()
+
+    // ---- landscape sweep: every tablet screen at the two real landscape sizes ----
+    // Developer tool, off by default (it would write ~80 pictures). Turn it on by creating the file .pipeline/sweep,
+    // run ./gradlew :app:recordRoborazziDebug --tests "*landscapeSweep*", then LOOK at design/screens/sweep.
+    private fun sweepOn() = java.io.File("../.pipeline/sweep").exists()
+
+    private fun sweepAt(qualifiers: String) {
+        org.junit.Assume.assumeTrue(sweepOn())
+        org.robolectric.RuntimeEnvironment.setQualifiers(qualifiers)
+        sweepSuffix = "-" + sizeTag()
+        val screens: List<() -> Unit> = listOf(
+            ::setupWelcome, ::setupRole, ::nodeName, ::masterAddCode, ::masterHome, ::masterHomeEmpty,
+            ::controlNowPlaying, ::controlNothingPlaying, ::controlOffline, ::controlApps, ::controlDevice, ::controlWatchLibrary,
+            ::settingsTablets, ::settingsJellyfin, ::settingsCameras, ::settingsPin, ::settingsTheme, ::settingsAbout,
+            ::camerasSingle, ::camerasGrid, ::camerasSpotlight, ::camerasStates, ::camerasNothingOn, ::camerasEmpty,
+            ::togetherLibrary, ::togetherShows, ::togetherPick, ::togetherLibraryEmpty, ::togetherRemote,
+            ::masterTabletLibrary, ::masterTabletPickDelete,
+            ::nodeHome, ::nodePin, ::nodeLocked, ::nodeBedtime, ::nodeTogether, ::nodeCode,
+        )
+        try {
+            screens.forEach { render -> seed(); render() }
+        } finally { sweepSuffix = "" }
+    }
+
+    @Test fun landscapeSweep960() = sweepAt("w960dp-h600dp-land-mdpi")
+    @Test fun landscapeSweep1024() = sweepAt("w1024dp-h768dp-land-mdpi")
+
+    // ---- big system font: the code must still be 6 digits on one line ----
+    private fun nodeCodeBigFont(scale: Float) { nodeSeed(); shot("Node-Code-${sizeTag()}-font${(scale * 100).toInt()}") {
+        val d = androidx.compose.ui.platform.LocalDensity.current
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
+            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916")
+        }
+    } }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeCode960BigFont() = nodeCodeBigFont(1.5f)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeCode1024BigFont() = nodeCodeBigFont(1.5f)
 }
+
