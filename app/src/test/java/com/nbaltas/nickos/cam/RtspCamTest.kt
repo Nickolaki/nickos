@@ -121,6 +121,34 @@ class RtspCamTest {
     }
 
     @Test
+    fun `hostOf reads the host out of a stream address`() {
+        assertEquals("192.168.49.23", RtspUrl.hostOf("rtsp://nick:pa%40ss@192.168.49.23:554/stream2"))
+        assertEquals("192.168.49.9", RtspUrl.hostOf("rtsp://192.168.49.9/live"))
+        assertEquals("cam.local", RtspUrl.hostOf("rtsp://u:a/b@cam.local:8554/x"))
+        assertNull(RtspUrl.hostOf("no scheme"))
+        assertNull(RtspUrl.hostOf(""))
+    }
+
+    @Test
+    fun `an older url only camera's host is taken`() {
+        val legacy = Camera("old", "Porch", "rtsp://admin:pw@192.168.49.30:554/ch1")
+        val tapo = Camera("t", "Baby", host = "192.168.49.23")
+        val taken = AdoptPolicy.takenHosts(listOf(legacy, tapo))
+        assertEquals(setOf("192.168.49.30", "192.168.49.23"), taken)
+        // The legacy camera answered and the Tapo's old address did not: it must not be moved onto the legacy one.
+        assertEquals(Adopt.NotFound, AdoptPolicy.decide(listOf("192.168.49.30"), "192.168.49.99", taken))
+    }
+
+    @Test
+    fun `a move needs the candidate to accept the saved account`() = kotlinx.coroutines.runBlocking {
+        assertEquals(Adopt.Move("b"), AdoptPolicy.settle(listOf("b"), "a", emptySet()) { true })
+        assertEquals(Adopt.Unverified("b"), AdoptPolicy.settle(listOf("b"), "a", emptySet()) { false })
+        // Keep and NotFound never ask the camera.
+        assertEquals(Adopt.Keep, AdoptPolicy.settle(listOf("a"), "a", emptySet()) { error("no") })
+        assertEquals(Adopt.NotFound, AdoptPolicy.settle(emptyList(), "a", emptySet()) { error("no") })
+    }
+
+    @Test
     fun `chainOf walks causes and stops on a self cause`() {
         val inner = java.net.ConnectException("refused")
         val outer = RuntimeException("outer", inner)

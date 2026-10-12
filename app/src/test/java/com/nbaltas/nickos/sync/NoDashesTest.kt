@@ -93,6 +93,7 @@ class NoDashesTest {
         File(testDir, "cam/RtspCamTest.kt"),
         File(testDir, "master/CamFinderTest.kt"),
         File(testDir, "master/RtspKnockTest.kt"),
+        File(testDir, "master/RtspDescribeTest.kt"),
         File(moduleDir, "cam/ServiceLifecycle.kt"),
         File(moduleDir, "node/CamServer.kt"),
         File(moduleDir, "node/CamStreamer.kt"),

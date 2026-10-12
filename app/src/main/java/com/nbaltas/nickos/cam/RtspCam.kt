@@ -21,6 +21,19 @@ object RtspUrl {
     fun tapo(host: String, user: String, pass: String, hd: Boolean): String =
         "rtsp://${enc(user)}:${enc(pass)}@$host:554/${if (hd) "stream1" else "stream2"}"
 
+    /** The host of a stream address ("rtsp://u:p@192.168.1.5:554/x" is "192.168.1.5"), or null when there is none. */
+    fun hostOf(url: String): String? {
+        val scheme = url.indexOf("://")
+        if (scheme < 0) return null
+        var rest = url.substring(scheme + 3)
+        val at = rest.lastIndexOf('@')
+        if (at >= 0) rest = rest.substring(at + 1)
+        val end = rest.indexOfFirst { it == '/' || it == '?' || it == '#' }.let { if (it < 0) rest.length else it }
+        val auth = rest.substring(0, end)
+        val host = if (auth.startsWith("[")) auth.substringAfter('[').substringBefore(']') else auth.substringBefore(':')
+        return host.takeIf { it.isNotEmpty() }
+    }
+
     /** "rtsp://u:secret@h/x" becomes "rtsp://u:***@h/x"; a url with no userinfo is returned unchanged. */
     fun redact(url: String): String {
         val scheme = url.indexOf("://")
@@ -73,6 +86,8 @@ sealed class Adopt {
     object Keep : Adopt()        // the saved host answered after all
     object Ambiguous : Adopt()   // more than one candidate
     object NotFound : Adopt()
+    /** One free candidate, but it did not accept the saved account on the saved path: the parent confirms. */
+    data class Unverified(val host: String) : Adopt()
 }
 
 object AdoptPolicy {
@@ -82,4 +97,17 @@ object AdoptPolicy {
         val free = found.filterNot { it in taken }
         return when (free.size) { 0 -> Adopt.NotFound; 1 -> Adopt.Move(free[0]); else -> Adopt.Ambiguous }
     }
+
+    /**
+     * [decide], then a Move is only kept when [accepts] says the candidate answered a DESCRIBE with the saved
+     * account on the saved path; otherwise it is [Adopt.Unverified] and nothing is saved.
+     */
+    suspend fun settle(found: List<String>, current: String, taken: Set<String>, accepts: suspend (String) -> Boolean): Adopt {
+        val d = decide(found, current, taken)
+        return if (d is Adopt.Move && !accepts(d.host)) Adopt.Unverified(d.host) else d
+    }
+
+    /** Hosts other saved cameras use, from their fields or (older cameras) from their stream address. */
+    fun takenHosts(others: List<com.nbaltas.nickos.data.Camera>): Set<String> =
+        others.flatMap { listOfNotNull(it.host, RtspUrl.hostOf(it.url)) }.toSet()
 }

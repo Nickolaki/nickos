@@ -115,6 +115,8 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.master.CamController
 import com.nbaltas.nickos.master.CamFinder
+import com.nbaltas.nickos.master.Described
+import com.nbaltas.nickos.master.RtspDescribe
 import com.nbaltas.nickos.master.CarNetState
 import com.nbaltas.nickos.master.RtspKnock
 import com.nbaltas.nickos.ui.node.kidName
@@ -235,12 +237,19 @@ fun CamerasScreen(
                 val found = CamFinder({ ownAddresses(app) }, RtspKnock()).find()
                 val now = store.cameras.value
                 val cur = now.firstOrNull { it.id == c.id } ?: return@launch
-                val taken = now.filter { it.id != c.id }.mapNotNull { it.host }.toSet()
-                when (val d = AdoptPolicy.decide(found, cur.host.orEmpty(), taken)) {
-                    // Exactly one camera answered where none of ours lives: it is this one. The new address
-                    // rebuilds the stream address, which restarts the player.
+                // Other cameras' hosts, from their fields and from older stream addresses.
+                val taken = AdoptPolicy.takenHosts(now.filter { it.id != c.id })
+                val path = if (cur.hd) "stream1" else "stream2"
+                val verdict = AdoptPolicy.settle(found, cur.host.orEmpty(), taken) { h ->
+                    RtspDescribe().check(h, cur.user, cur.pass, path) == Described.OK
+                }
+                when (val d = verdict) {
+                    // Exactly one camera answered where none of ours lives AND it accepted this camera's account
+                    // on this camera's path: it is this one. The new address rebuilds the stream address,
+                    // which restarts the player.
                     is Adopt.Move -> { misses[c.id] = 0; scanned -= c.id; says.remove(c.id); store.saveCamera(cur.copy(host = d.host)) }
-                    Adopt.Ambiguous -> says[c.id] = RtspNews.MOVED
+                    // Found something, but it did not prove it is this camera: the parent confirms in the editor.
+                    is Adopt.Unverified, Adopt.Ambiguous -> says[c.id] = RtspNews.MOVED
                     else -> says.remove(c.id)
                 }
             } finally {
@@ -416,7 +425,14 @@ fun CamerasScreen(
 
         full?.let { id ->
             when (val src = roster.sources[id]) {
-                is RtspSource -> FullScreen(src.name, false, { full = null }) { CameraView(src.camera, Modifier.fillMaxSize(), muted = false) }
+                is RtspSource -> FullScreen(src.name, false, { full = null }) {
+                    // Full screen holds the only player for this camera, so it runs the same recovery as the tile.
+                    CameraView(
+                        src.camera, Modifier.fillMaxSize(), muted = false,
+                        onNews = { n -> onRtspNews(src.camera, n) },
+                        say = says[src.camera.id] ?: rtspPreset[src.camera.id],
+                    )
+                }
                 is TabletSource -> {
                     val t = byNode[src.node.id]
                     val frame by ctl.frames(src.node.id).collectAsState()
@@ -721,50 +737,58 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun CameraView(c: Camera, modifier: Modifier, muted: Boolean, alpha: Float = 1f, bare: Boolean = false, onNews: (RtspNews) -> Unit = {}) {
+fun CameraView(
+    c: Camera, modifier: Modifier, muted: Boolean, alpha: Float = 1f, bare: Boolean = false,
+    onNews: (RtspNews) -> Unit = {},
+    /** What the screen itself says about this camera (Looking, Moved); shown instead of the player's own news. */
+    say: RtspNews? = null,
+) {
     val ctx = LocalContext.current
     val url = c.streamUrl()
     var news by remember(url) { mutableStateOf(RtspNews.CONNECTING) }
     val report by rememberUpdatedState(onNews)
-    var active by remember { mutableStateOf(true) }
-    val player = remember(url) {
-        ExoPlayer.Builder(ctx).build().apply {
+    // Leaving the screen (Home, screen off) releases the player and its connection; coming back builds a fresh
+    // one and the video surface follows it. A camera nobody is looking at holds no stream.
+    var stopped by remember { mutableStateOf(false) }
+    val player = remember(url, stopped) {
+        if (stopped) null else ExoPlayer.Builder(ctx).build().apply {
             if (url.startsWith("rtsp", ignoreCase = true)) {
                 setMediaSource(RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(MediaItem.fromUri(url)))
             } else setMediaItem(MediaItem.fromUri(url))
             volume = if (muted) 0f else 1f
             playWhenReady = true
-            fun say(n: RtspNews) { news = n; report(n) }
+            fun tell(n: RtspNews) { news = n; report(n) }
             addListener(object : Player.Listener {
-                override fun onPlayerError(e: PlaybackException) { say(RtspNewsFor.of(e.errorCode, RtspNewsFor.chainOf(e))) }
-                override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) say(RtspNews.LIVE) }
-                override fun onRenderedFirstFrame() { say(RtspNews.LIVE) }
+                override fun onPlayerError(e: PlaybackException) { tell(RtspNewsFor.of(e.errorCode, RtspNewsFor.chainOf(e))) }
+                override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) tell(RtspNews.LIVE) }
+                override fun onRenderedFirstFrame() { tell(RtspNews.LIVE) }
             })
             prepare()
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
-    // Home or the screen going off pauses the stream; coming back plays it again. Backing out still releases it.
-    LifecycleStartEffect(player) {
-        active = true
-        player.play()
-        onStopOrDispose { active = false; player.pause() }
+    val current by rememberUpdatedState(player)
+    DisposableEffect(player) { onDispose { player?.release() } }
+    LifecycleStartEffect(url) {
+        stopped = false
+        onStopOrDispose { current?.release(); stopped = true }
     }
-    LaunchedEffect(player) { report(RtspNews.CONNECTING) }
+    LaunchedEffect(player) { if (player != null) { news = RtspNews.CONNECTING; report(RtspNews.CONNECTING) } }
     // Cameras drop out; keep retrying quietly while the tile is on screen. A wrong password is retried slowly:
     // some cameras lock the account after a run of bad logins.
-    LaunchedEffect(player, active) {
-        while (active) {
+    LaunchedEffect(player) {
+        if (player == null) return@LaunchedEffect
+        while (true) {
             delay(if (news == RtspNews.WRONG_PASSWORD) 30_000L else 5_000L)
-            if (active && news.isFailure()) { player.prepare(); player.play() }
+            if (news.isFailure()) { player.prepare(); player.play() }
         }
     }
-    player.volume = if (muted) 0f else 1f
+    player?.volume = if (muted) 0f else 1f
+    val shown = if (say == RtspNews.LOOKING || say == RtspNews.MOVED) say else news
 
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val sideways = c.rotation % 180 != 0
         // Keyed on the player: a new stream address makes a new player, and the video surface must follow it.
-        key(player) {
+        if (player != null) key(player) {
             AndroidView(
                 factory = { TextureView(it).also { tv -> player.setVideoTextureView(tv) } },
                 modifier = Modifier
@@ -777,14 +801,14 @@ fun CameraView(c: Camera, modifier: Modifier, muted: Boolean, alpha: Float = 1f,
                     .graphicsLayer { rotationZ = c.rotation.toFloat(); this.alpha = alpha },
             )
         }
-        if (!bare && news != RtspNews.LIVE) {
+        if (!bare && shown != RtspNews.LIVE) {
             Column(
                 Modifier.padding(40.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (news.isFailure()) Icon(Lucide.VideoOff, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(36.dp))
+                if (shown.isFailure()) Icon(Lucide.VideoOff, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(36.dp))
                 Text(
-                    CamText.rtsp(news), style = body(16.sp, 600), color = Color.White.copy(alpha = 0.8f),
+                    CamText.rtsp(shown), style = body(16.sp, 600), color = Color.White.copy(alpha = 0.8f),
                     textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
             }
