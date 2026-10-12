@@ -80,14 +80,17 @@ class AndroidP2pPort(ctx: Context) : P2pPort {
         receiver?.let { try { app.unregisterReceiver(it) } catch (_: Exception) {} }
         receiver = null
         // Release the framework's client for this channel (API 27+): without it every stop and start leaks one.
-        try { channel?.close() } catch (_: Throwable) {}
+        // Throwable on purpose: a NoSuchMethodError is an Error, not an Exception.
+        if (Build.VERSION.SDK_INT >= 27) try { channel?.close() } catch (_: Throwable) {}
         channel = null
     }
 
     override fun supported(): Boolean =
-        Build.VERSION.SDK_INT >= 29 && manager != null && app.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)
+        manager != null && app.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)
 
     override fun hasPermission(): Boolean {
+        // Below Android 10 the legacy createGroup needs no runtime permission.
+        if (Build.VERSION.SDK_INT < 29) return true
         val perm = if (Build.VERSION.SDK_INT >= 33) CarNet.NEARBY_WIFI_DEVICES else CarNet.ACCESS_FINE_LOCATION
         return app.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
     }
@@ -135,11 +138,14 @@ class AndroidP2pPort(ctx: Context) : P2pPort {
         return LanAddress.all(app).firstOrNull { LanAddress.isDirect(it.first) }?.second
     }
 
+    /**
+     * Below Android 10 [ssid] and [pass] are IGNORED: the legacy call makes a group with a name and passphrase the
+     * system chooses, which the caller reads back from [groupInfo].
+     */
     override suspend fun createGroup(ssid: String, pass: String): Outcome {
         val m = manager ?: return Outcome.UNSUPPORTED
-        if (Build.VERSION.SDK_INT < 29) return Outcome.UNSUPPORTED
         val ch = channel() ?: return Outcome.ERROR
-        val cfg = try {
+        val cfg = if (Build.VERSION.SDK_INT < 29) null else try {
             WifiP2pConfig.Builder().setNetworkName(ssid).setPassphrase(pass)
                 .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ).enablePersistentMode(true).build()
         } catch (e: Exception) { return Outcome.ERROR }
@@ -158,7 +164,7 @@ class AndroidP2pPort(ctx: Context) : P2pPort {
                         })
                     }
                 }
-                try { m.createGroup(ch, cfg, l) } catch (e: SecurityException) { if (k.isActive) k.resume(Outcome.ERROR) }
+                try { if (cfg == null || Build.VERSION.SDK_INT < 29) m.createGroup(ch, l) else m.createGroup(ch, cfg, l) } catch (e: SecurityException) { if (k.isActive) k.resume(Outcome.ERROR) }
                 catch (e: Exception) { if (k.isActive) k.resume(Outcome.ERROR) }
             }
         } ?: Outcome.ERROR }

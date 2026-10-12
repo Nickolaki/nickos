@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.R
@@ -24,9 +25,13 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS link", NotificationManager.IMPORTANCE_MIN))
-        val n = Notification.Builder(this, CHANNEL)
+        if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); stopSelf(); return }
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "NickOS link", NotificationManager.IMPORTANCE_MIN))
+        }
+        val n = NotificationCompat.Builder(this, CHANNEL)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("NickOS")
             .setContentText("Linked to the parent tablet")
@@ -39,7 +44,7 @@ class NodeService : Service() {
         App.get(this).node.start()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = if (NodeSupport.ok()) START_STICKY else START_NOT_STICKY
 
     override fun onDestroy() {
         if (instance === this) instance = null
@@ -68,7 +73,7 @@ class NodeService : Service() {
         /** See [cameraType]. False when the service is not running. */
         fun camera(on: Boolean): Boolean = instance?.cameraType(on) ?: false
 
-        fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, NodeService::class.java))
+        fun start(ctx: Context) { if (NodeSupport.ok()) ContextCompat.startForegroundService(ctx, Intent(ctx, NodeService::class.java)) }
 
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, NodeService::class.java))
@@ -83,6 +88,7 @@ class BootReceiver : BroadcastReceiver() {
         val role = App.get(ctx).store.role.value
         if (role == Role.MASTER) { com.nbaltas.nickos.master.MasterService.start(ctx); return }
         if (role != Role.NODE) return
+        if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); return }
         NodeService.start(ctx)
         // After a self-update the kiosk task died with the old process: put the kid home back.
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
