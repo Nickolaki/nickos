@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,21 +55,25 @@ import kotlinx.coroutines.withContext
  * Only works on a new or factory-reset tablet: that's Android's rule for Device Owner.
  */
 @Composable
-fun QrSetupScreen(onBack: () -> Unit) {
+fun QrSetupScreen(onBack: () -> Unit, qrDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default) {
     val ctx = LocalContext.current
     var ssid by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
     val qr by produceState<Bitmap?>(null, ssid, pass) {
-        value = withContext(Dispatchers.Default) { qrBitmap(Provisioning.qrPayload(ctx, ssid.trim(), pass), 900) }
+        value = withContext(qrDispatcher) { qrBitmap(Provisioning.qrPayload(ctx, ssid.trim(), pass), 900) }
     }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · New kid tablet", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val narrow = maxWidth < 1000.dp
+            // Landscape tablets (Orbic 960x600, Galaxy Tab S2 1024x768): code beside the steps, code sized to the height.
+            val landscape = maxWidth > maxHeight && maxWidth >= 700.dp
+            val narrow = maxWidth < 1000.dp && !landscape
+            val compact = landscape && (maxWidth < 1100.dp || maxHeight < 800.dp)
+            val qrSize = if (compact) (maxHeight - 40.dp).coerceIn(260.dp, 460.dp) else 460.dp
             val steps: @Composable (Modifier) -> Unit = { mod ->
-                Column(mod, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Title("Set up a new kid tablet", 48, lineHeight = 1.02f)
-                    Muted("No cables or computer needed. The kid lock is switched on from the start.", 20)
+                Column(mod, verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 20.dp)) {
+                    Title("Set up a new kid tablet", if (compact) 38 else 48, lineHeight = 1.02f)
+                    Muted("No cables or computer needed. The kid lock is switched on from the start.", if (compact) 17 else 20)
                     Step(1, "Start from a new or factory-reset tablet (Settings → System → Reset).")
                     Step(2, "On its first \"Welcome\" screen, tap the same empty spot 6 times.")
                     Step(3, "Connect to WiFi if it asks, then point it at this code.")
@@ -83,7 +88,7 @@ fun QrSetupScreen(onBack: () -> Unit) {
                 }
             }
             val code: @Composable () -> Unit = {
-                Box(Modifier.size(460.dp).clip(RoundedCornerShape(36.dp)).background(Color.White).padding(24.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(qrSize).clip(RoundedCornerShape(36.dp)).background(Color.White).padding(if (compact) 16.dp else 24.dp), contentAlignment = Alignment.Center) {
                     qr?.let { Image(it.asImageBitmap(), "Setup QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None) }
                 }
             }
@@ -93,8 +98,8 @@ fun QrSetupScreen(onBack: () -> Unit) {
                 }
             } else {
                 Row(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 80.dp, end = 80.dp, bottom = 48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(64.dp), verticalAlignment = Alignment.CenterVertically,
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = if (compact) 32.dp else 80.dp, end = if (compact) 32.dp else 80.dp, bottom = if (compact) 16.dp else 48.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 32.dp else 64.dp), verticalAlignment = Alignment.CenterVertically,
                 ) { steps(Modifier.weight(1f)); code() }
             }
         }
@@ -107,7 +112,7 @@ private fun Step(n: Int, text: String) {
         Box(Modifier.size(40.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
             Text("$n", style = disp(20.sp), color = C.onAccent)
         }
-        Text(text, style = body(19.sp, 600, 1.35f), color = C.text, modifier = Modifier.width(560.dp))
+        Text(text, style = body(19.sp, 600, 1.35f), color = C.text, modifier = Modifier.widthIn(max = 560.dp))
     }
 }
 

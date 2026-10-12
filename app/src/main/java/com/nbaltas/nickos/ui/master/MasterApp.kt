@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -194,6 +195,7 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
     val pad = if (portrait) 32.dp else 40.dp
     Column(Modifier.fillMaxSize()) {
         TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether)
+        CarNetBanner(pad, onSettings)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
             return@Column
@@ -219,6 +221,27 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
                 }
             }
         }
+    }
+}
+
+/** One warning row, only when the car network itself is down (the one offline reason fixed from this tablet) and no typed hotspot is in use. */
+@Composable
+private fun CarNetBanner(pad: Dp, onSettings: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    // Read so the banner recomposes when any input of offlineReasons() changes.
+    app.master.carNet.state.collectAsState().value
+    app.store.hotspot.collectAsState().value
+    app.master.online.collectAsState().value
+    val now = rememberNow(1000)
+    val why = carNetDownWhy(app.master.offlineReasons(now).values) ?: return
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        Modifier.fillMaxWidth().padding(start = pad, end = pad, bottom = 12.dp).clip(shape).background(C.surface)
+            .border(2.dp, C.dangerLine, shape).clickable(onClick = onSettings).padding(horizontal = 22.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Icon(Lucide.WifiOff, null, tint = C.danger, modifier = Modifier.size(24.dp))
+        Text(carNetBanner(why), style = body(18.sp, 700), color = C.text, modifier = Modifier.weight(1f))
     }
 }
 

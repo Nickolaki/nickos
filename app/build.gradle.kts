@@ -20,7 +20,7 @@ android {
 
     defaultConfig {
         applicationId = "com.nbaltas.nickos"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 35
         versionCode = 4
         versionName = "0.4"
@@ -52,6 +52,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time (the Watch tab) does not exist below API 26: desugaring supplies it on the Android 7 Master.
+        isCoreLibraryDesugaringEnabled = true
+    }
+
+    // NewApi is the gate that lists every call above minSdk (24). Nothing else is checked: the project never ran lint.
+    lint {
+        checkOnly += setOf("NewApi")
+        abortOnError = true
     }
 
     kotlinOptions {
@@ -84,6 +92,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("io.coil-kt:coil-compose:2.6.0")

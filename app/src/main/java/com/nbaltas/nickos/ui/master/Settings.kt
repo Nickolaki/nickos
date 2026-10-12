@@ -1,5 +1,9 @@
 package com.nbaltas.nickos.ui.master
 
+import android.content.Intent
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,10 +60,18 @@ import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Server
 import com.composables.icons.lucide.Tablet
 import com.composables.icons.lucide.Unlink
+import com.composables.icons.lucide.Wifi
+import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
 import com.nbaltas.nickos.cam.CamPrefs
+import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedNode
+import com.nbaltas.nickos.master.CarNetState
+import com.nbaltas.nickos.master.NodeNet
+import com.nbaltas.nickos.master.OnlinePolicy
+import com.nbaltas.nickos.master.Reason
+import com.nbaltas.nickos.master.Why
 import com.nbaltas.nickos.jellyfin.JfUser
 import com.nbaltas.nickos.update.UpdateState
 import com.nbaltas.nickos.update.Updater
@@ -72,6 +85,9 @@ import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Dot
 import com.nbaltas.nickos.ui.theme.DarkColors
+import com.nbaltas.nickos.ui.theme.EyebrowText
+import com.nbaltas.nickos.ui.theme.FieldLabel
+import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.Keypad
 import com.nbaltas.nickos.ui.theme.LightColors
 import com.nbaltas.nickos.ui.theme.Muted
@@ -146,6 +162,8 @@ private fun TabletsSection(onAdd: () -> Unit) {
     val app = App.get(LocalContext.current)
     val views = rememberNodeViews()
     val name by app.store.name.collectAsState()
+    val net by app.master.net.collectAsState()
+    val hotspot by app.store.hotspot.collectAsState()
     var renaming by remember { mutableStateOf<String?>(null) } // node id, or "" for this tablet
     var confirmUnlink by remember { mutableStateOf<String?>(null) }
     SectionPage("Linked tablets", { NickButton("Add tablet", onAdd, style = BtnStyle.PRIMARY, leading = Lucide.Plus) }) {
@@ -162,6 +180,7 @@ private fun TabletsSection(onAdd: () -> Unit) {
             }
             NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
         }
+        CarNetCard()
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             views.forEach { v ->
                 val buttons: @Composable () -> Unit = {
@@ -183,6 +202,7 @@ private fun TabletsSection(onAdd: () -> Unit) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(v.node.name, style = body(22.sp, 800), color = C.text, maxLines = 1)
                                 StatusLine(v, 16, 10.dp, if (v.online) "Online" else statusText(v))
+                                Muted(tabletNetLine(v.online, net[v.node.id], v.node.wifiSaved, hotspot), 15)
                             }
                             Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                             if (!narrow) buttons()
@@ -197,6 +217,143 @@ private fun TabletsSection(onAdd: () -> Unit) {
     renaming?.let { id ->
         if (id.isEmpty()) RenameDialog(name.ifBlank { "Parent's Tablet" }, "Rename this tablet") { n -> renaming = null; if (n != null) app.store.setName(n) }
         else views.firstOrNull { it.node.id == id }?.let { v -> RenameDialog(v.node.name) { n -> renaming = null; if (n != null) app.master.rename(id, n) } }
+    }
+}
+
+// ---------------- Car network ----------------
+
+/** What a button on the car network card does. */
+internal enum class CarAction { ALLOW, OPEN_LOCATION, DIFFERENT, USE_CAR_NET }
+
+internal data class CarButton(val label: String, val action: CarAction)
+
+/** Everything the card says for one state: title, one line, an optional primary and ghost button, and whether the manual fields show. */
+internal data class CardCopy(val title: String, val line: String?, val primary: CarButton? = null, val ghost: CarButton? = null, val fields: Boolean = false)
+
+/** The card's words by state. [manual] is the hotspot the parent typed in, if any; [sdk] is this tablet's Android version. */
+internal fun carNetCopy(state: CarNetState, manual: Hotspot?, sdk: Int): CardCopy = when (state) {
+    is CarNetState.Starting -> CardCopy("Starting the car network", null)
+    is CarNetState.On -> CardCopy(
+        state.ssid, "On. The tablets join it on their own. There is nothing to switch on in the car.",
+        ghost = CarButton("Use a different hotspot", CarAction.DIFFERENT),
+    )
+    is CarNetState.Off -> when (state.why) {
+        Why.NO_PERMISSION -> CardCopy(
+            "Car network is off", "NickOS needs permission to run it from this tablet. It never uses your location.",
+            primary = CarButton("Allow", CarAction.ALLOW),
+        )
+        Why.NO_LOCATION -> CardCopy(
+            "Car network is off", "Android needs Location switched on for this tablet to run the network. NickOS does not read where you are.",
+            primary = CarButton("Open location settings", CarAction.OPEN_LOCATION),
+        )
+        Why.WIFI_OFF -> CardCopy("Car network is off", "WiFi is switched off on this tablet. Turn it on. It does not need to join anything.")
+        Why.TETHERING_ON -> CardCopy("Car network is paused", "This tablet's own hotspot is on. The car network comes back when the hotspot is off.")
+        Why.FAILED, Why.UNSUPPORTED -> CardCopy(
+            "Car network can't run on this tablet",
+            "Use a phone or tablet hotspot instead. Enter its name and password here and the tablets will join that.",
+            fields = true,
+        )
+        Why.MANUAL -> CardCopy(
+            manual?.ssid ?: "Hotspot", "The tablets join this hotspot when it is on. Switch it on each trip.",
+            ghost = if (sdk >= 29) CarButton("Use the car network instead", CarAction.USE_CAR_NET) else null,
+        )
+    }
+}
+
+/** True when the typed hotspot can be sent: a name of at most 32 bytes and a password that is empty or 8 to 63 long. */
+internal fun hotspotFieldsOk(name: String, pass: String): Boolean =
+    name.isNotBlank() && name.toByteArray().size <= 32 && (pass.isEmpty() || pass.length in 8..63)
+
+internal const val HOTSPOT_SAVE_NOTE = "Saved to every tablet the next time it is online."
+
+/** The line under a tablet's status on Settings, Tablets. [net] is its last live report, used only while it is [online]. */
+internal fun tabletNetLine(online: Boolean, net: NodeNet?, persistedSaved: Boolean?, hotspot: Hotspot?): String {
+    val live = if (online) net else null
+    val saved = OnlinePolicy.wifiSaved(live, persistedSaved) == true
+    val manual = hotspot?.direct == false
+    val base = when {
+        live != null && live.supportsWifi && live.wifi.approve && !live.wifi.deviceOwner -> "Needs one tap on the tablet: Allow in the NickOS notification"
+        saved -> if (manual) "Hotspot saved" else "Car network saved"
+        hotspot != null -> "Hasn't got the car network yet. Link it on the home WiFi once."
+        else -> "Nothing to send yet."
+    }
+    return if (live != null && live.supportsWifi && !live.wifi.doze) "$base · Battery saver can delay rejoining" else base
+}
+
+/** The reason as it reads in the banner and on the offline page. */
+internal fun carNetWhy(why: Why): String = when (why) {
+    Why.NO_PERMISSION -> "it needs permission"
+    Why.NO_LOCATION -> "Location is off on this tablet"
+    Why.WIFI_OFF -> "WiFi is off on this tablet"
+    Why.TETHERING_ON -> "your hotspot is on"
+    Why.FAILED, Why.UNSUPPORTED -> "it can't run on this tablet"
+    Why.MANUAL -> "you are using your own hotspot"
+}
+
+internal fun carNetBanner(why: Why): String = "Car network is off: ${carNetWhy(why)}. Tap to fix."
+
+/** The car network reason among the offline tablets' reasons, or null. The home banner shows only when there is one. */
+internal fun carNetDownWhy(reasons: Collection<Reason>): Why? = reasons.filterIsInstance<Reason.CarNetDown>().firstOrNull()?.why
+
+internal enum class TipIcon { WIFI_OFF, WIFI, POWER }
+
+/** The tips on a tablet's offline page. [manualSsid] is set when the parent typed a hotspot in. */
+internal fun offlineTips(reason: Reason?, manualSsid: String?): List<Pair<TipIcon, String>> = when (reason) {
+    is Reason.CarNetDown -> listOf(TipIcon.WIFI_OFF to "The car network is off: ${carNetWhy(reason.why)}. Fix it in Settings, Tablets.")
+    is Reason.MasterNotOnWifi -> listOf(TipIcon.WIFI to "Switch on the hotspot ${manualSsid ?: ""} and it will join.")
+    is Reason.NoHotspotDetails -> listOf(TipIcon.WIFI to "It hasn't got the car network yet. Link it on the home WiFi once.")
+    else -> listOf(
+        TipIcon.POWER to "Make sure it's switched on and charged.",
+        TipIcon.WIFI to if (manualSsid != null) "It joins $manualSsid on its own once the hotspot is on." else "It joins the car network on its own when it's in range.",
+    )
+}
+
+@Composable
+private fun CarNetCard() {
+    val ctx = LocalContext.current
+    val app = App.get(ctx)
+    val state by app.master.carNet.state.collectAsState()
+    val hotspot by app.store.hotspot.collectAsState()
+    val manual = hotspot?.takeIf { !it.direct }
+    val copy = carNetCopy(state, manual, Build.VERSION.SDK_INT)
+    var reveal by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable(manual?.ssid) { mutableStateOf(manual?.ssid ?: "") }
+    var pass by rememberSaveable(manual?.pass) { mutableStateOf(manual?.pass ?: "") }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { app.master.carNet.recheck() }
+    fun act(a: CarAction) {
+        when (a) {
+            CarAction.ALLOW -> {
+                val p = app.master.carNet.permissionToRequest()
+                if (p.isEmpty()) app.master.carNet.recheck() else ask.launch(p.toTypedArray())
+            }
+            CarAction.OPEN_LOCATION -> ctx.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            CarAction.DIFFERENT -> reveal = true
+            CarAction.USE_CAR_NET -> { reveal = false; app.store.setHotspot(null); app.master.carNet.poke() }
+        }
+    }
+    val up = state is CarNetState.On
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 22.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        EyebrowText("Car network")
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(26.dp))
+            Text(copy.title, style = body(22.sp, 800), color = C.text, maxLines = 2, modifier = Modifier.weight(1f))
+        }
+        copy.line?.let { Muted(it, 16) }
+        if (copy.primary != null || copy.ghost != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            copy.primary?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.PRIMARY) }
+            copy.ghost?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.GHOST) }
+        }
+        if (copy.fields || reveal) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column { FieldLabel("Hotspot name"); NickField(name, { name = it }, Modifier.widthIn(max = 460.dp), placeholder = "e.g. Dad's phone") }
+            Column { FieldLabel("Password"); NickField(pass, { pass = it }, Modifier.widthIn(max = 460.dp), placeholder = "8 to 63 characters") }
+            NickButton("Save", {
+                app.store.setHotspot(Hotspot(name.trim(), pass, direct = false)); reveal = false
+            }, Modifier.height(52.dp), BtnStyle.PRIMARY, enabled = hotspotFieldsOk(name.trim(), pass))
+            Muted(HOTSPOT_SAVE_NOTE, 15)
+        }
     }
 }
 

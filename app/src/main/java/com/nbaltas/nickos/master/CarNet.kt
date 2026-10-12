@@ -28,7 +28,10 @@ sealed class CarNetState {
     /** Making the group. */
     object Starting : CarNetState() { override fun toString() = "Starting" }
     /** The group is up: [ssid] is its name, [ownIp] this Master's address on it (read from the system, not assumed). */
-    data class On(val ssid: String, val ownIp: String?) : CarNetState()
+    data class On(val ssid: String, val ownIp: String?, val pass: String? = null) : CarNetState() {
+        /** [pass] is only set on Android 7 to 9, where the system picks the credentials; it must stay out of every log line. */
+        override fun toString() = "On($ssid, $ownIp)"
+    }
     data class Off(val why: Why) : CarNetState()
 }
 
@@ -99,25 +102,32 @@ object CarNetPolicy {
     }
 
     fun next(i: Inputs): Action {
-        // 1. UNSUPPORTED (SDK below 29 has no WifiP2pConfig.Builder; the manual hotspot is the only way)
-        if (i.sdk < 29 || !i.supported) return Action.Nothing(CarNetState.Off(Why.UNSUPPORTED))
-        val ours = i.live?.takeIf { it.name == i.wanted.ssid }
+        // 1. UNSUPPORTED (below Android 7 there is no usable Wi-Fi Direct group owner; the manual hotspot is the only way)
+        if (!i.supported || i.sdk < 24) return Action.Nothing(CarNetState.Off(Why.UNSUPPORTED))
+        // LEGACY (24..28): no WifiP2pConfig.Builder, so the system picks the name and passphrase. We learn them from
+        // the live group (which we must own) instead of prescribing them, and need no permission or Location toggle.
+        val legacy = i.sdk in 24..28
+        val ours = i.live?.takeIf { if (legacy) it.isOwner else it.name == i.wanted.ssid }
         fun pause(why: Why) = if (ours != null) Action.Remove(CarNetState.Off(why)) else Action.Nothing(CarNetState.Off(why))
         // 2. MANUAL: the parent typed a hotspot in; our group would only get in its way
         if (i.manual) return pause(Why.MANUAL)
         // 3. NO_PERMISSION, 4. NO_LOCATION (29..32 only: 33+ has NEARBY_WIFI_DEVICES and needs no location)
-        if (!i.permission) return Action.Nothing(CarNetState.Off(Why.NO_PERMISSION))
-        if (i.sdk in 29..32 && !i.locationOn) return Action.Nothing(CarNetState.Off(Why.NO_LOCATION))
+        if (!legacy && !i.permission) return Action.Nothing(CarNetState.Off(Why.NO_PERMISSION))
+        if (!legacy && i.sdk in 29..32 && !i.locationOn) return Action.Nothing(CarNetState.Off(Why.NO_LOCATION))
         // 5. WIFI_OFF: the system took the group with it, and the Master cannot turn WiFi on
         if (!i.wifiOn) return Action.Nothing(CarNetState.Off(Why.WIFI_OFF))
         // 6. TETHERING_ON: a chip that cannot be an access point and a group owner at once. A pause, never a retry.
         if (i.tetheringOn) return pause(Why.TETHERING_ON)
 
         val live = i.live
+        // Never adopt (or push to the Nodes) a group without a real WPA2 passphrase (8 to 63 characters): remove it.
+        if (legacy && ours != null && ours.passphrase != null && ours.passphrase.length in 8..63) {
+            return Action.Nothing(CarNetState.On(ours.name, ours.ownerIp, ours.passphrase))
+        }
         // A group left over from a crash is normal: adopt it. It must be ours, we must own it, and (when the system
         // says) the passphrase must be the one the Nodes saved: an old persistent group with our name and an old
         // passphrase is exactly what a Node cannot join.
-        if (live != null && live.name == i.wanted.ssid && live.isOwner && (live.passphrase == null || live.passphrase == i.wanted.pass)) {
+        if (!legacy && live != null && live.name == i.wanted.ssid && live.isOwner && (live.passphrase == null || live.passphrase == i.wanted.pass)) {
             return Action.Nothing(CarNetState.On(live.name, live.ownerIp))
         }
         val make = if (live != null) Action.RemoveThenCreate else Action.Create
@@ -227,7 +237,9 @@ class CarNet(
                 val g = withTimeoutOrNull(config.callTimeoutMs) { try { port.groupInfo() } catch (e: Exception) { null } }
                 // A query that failed or timed out (null) is not proof there is no group: remove best-effort then.
                 // Only a group that is positively someone else's is left alone.
-                if (g == null || g.name == ssid) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
+                // Legacy (24..28): the system named the group, so ours is the one we own, not the one named [ssid].
+                val legacy = sdk in 24..28
+                if (g == null || (if (legacy) g.isOwner else g.name == ssid)) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
                 try { port.close() } catch (_: Exception) {}
             }
         }
@@ -259,7 +271,8 @@ class CarNet(
         val supported = !unsupportedSeen && safe(false) { port.supported() }
         val permission = safe(false) { port.hasPermission() }
         val wifiOn = safe(false) { port.wifiOn() }
-        val live = if (sdk >= 29 && supported && permission && wifiOn) {
+        val legacy = sdk in 24..28
+        val live = if (supported && wifiOn && (legacy || (sdk >= 29 && permission))) {
             withTimeoutOrNull(config.callTimeoutMs) { try { port.groupInfo() } catch (e: Exception) { null } }
         } else null
         val action = CarNetPolicy.next(CarNetPolicy.Inputs(
@@ -296,7 +309,9 @@ class CarNet(
                 val changed = _state.value != s
                 failures = 0; createdOkAt = 0; forceRemove = false
                 publish(s)
-                if (changed) try { onUp(want) } catch (e: Exception) { log("onUp failed: ${e.javaClass.simpleName}") }
+                // Legacy: the credentials are the live group's, not the wanted ones.
+                val up = if (s.pass != null) Hotspot(s.ssid, s.pass, direct = true) else want
+                if (changed) try { onUp(up) } catch (e: Exception) { log("onUp failed: ${e.javaClass.simpleName}") }
             }
             s is CarNetState.Off && s.why == Why.FAILED -> publish(s)
             else -> { resetCounters(); publish(s) }

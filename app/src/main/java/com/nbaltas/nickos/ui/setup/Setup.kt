@@ -1,6 +1,13 @@
 package com.nbaltas.nickos.ui.setup
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +52,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -90,7 +99,7 @@ import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 import kotlinx.coroutines.launch
 
-private enum class Step { WELCOME, ROLE, NODE_NAME, NODE_CODE, MASTER_ADD, MASTER_LINKED, MASTER_JELLYFIN }
+private enum class Step { WELCOME, ROLE, NODE_NAME, NODE_CODE, MASTER_NET, MASTER_ADD, MASTER_LINKED, MASTER_JELLYFIN }
 
 /** First run: Welcome → Role → (Node: name → code) | (Master: add tablet → linked → Jellyfin). */
 @Composable
@@ -109,6 +118,7 @@ fun SetupFlow() {
         Step.WELCOME -> null
         Step.ROLE -> { { step = Step.WELCOME } }
         Step.NODE_NAME -> if (provisioned) null else { { step = Step.ROLE } }
+        Step.MASTER_NET -> { { step = Step.ROLE } }
         Step.MASTER_ADD -> { { step = Step.ROLE } }
         Step.NODE_CODE -> { { step = Step.NODE_NAME } }
         Step.MASTER_LINKED -> null
@@ -119,7 +129,8 @@ fun SetupFlow() {
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (step) {
             Step.WELCOME -> Welcome { step = Step.ROLE }
-            Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_ADD }, onNode = { step = Step.NODE_NAME })
+            Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_NET }, onNode = { step = Step.NODE_NAME })
+            Step.MASTER_NET -> MasterNetScreen(back!!) { step = Step.MASTER_ADD }
             Step.NODE_NAME -> NodeNameScreen(back) { step = Step.NODE_CODE }
             Step.NODE_CODE -> NodeCodeScreen(back!!) { app.store.setRole(Role.NODE) }
             Step.MASTER_ADD -> AddTabletScreen(back = back!!, step = "Master · Add tablet") { linked = it; step = Step.MASTER_LINKED }
@@ -135,19 +146,23 @@ fun SetupFlow() {
 
 @Composable
 internal fun Welcome(onStart: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // A short landscape tablet (~600dp tall) must show "Get started" without scrolling.
+    val short = maxHeight < 700.dp
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (short) 24.dp else 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(if (short) 14.dp else 28.dp, Alignment.CenterVertically),
     ) {
-        NickLogo(128.dp)
-        Text("NickOS", style = disp(104.sp, 800, 1f).copy(letterSpacing = (-0.03).em), color = C.text)
+        NickLogo(if (short) 80.dp else 128.dp)
+        Text("NickOS", style = disp(if (short) 72.sp else 104.sp, 800, 1f).copy(letterSpacing = (-0.03).em), color = C.text)
         Text(
             "One home screen for every tablet in the family.", style = body(30.sp, 600, 1.25f), color = C.text,
             textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp),
         )
         Muted("Tablets talk to each other over your home or car WiFi. No internet needed.", 20, Modifier.widthIn(max = 620.dp))
-        NickButton("Get started", onStart, Modifier.padding(top = 20.dp).widthIn(min = 320.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
+        NickButton("Get started", onStart, Modifier.padding(top = if (short) 6.dp else 20.dp).widthIn(min = 320.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
+    }
     }
 }
 
@@ -212,13 +227,26 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     val name by store.name.collectAsState()
     val color by store.color.collectAsState()
     val avatar by store.avatar.collectAsState()
+    // The battery exemption dialog has to come before NodeService starts lockdown: a system dialog under lock task is suppressed.
+    val ctx = LocalContext.current
+    val battery = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { onContinue() }
+    val proceed = {
+        val exempt = try { (ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName) } catch (e: Exception) { true }
+        if (exempt) onContinue()
+        else try {
+            battery.launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:${ctx.packageName}")))
+        } catch (e: Exception) { onContinue() }
+    }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Node · Step 2 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val narrow = maxWidth < 900.dp
+            // On a landscape tablet narrower than ~1100dp the 380dp preview left the colour and avatar rows clipped.
+            val landscape = maxWidth >= 700.dp && maxWidth > maxHeight
+            val compact = landscape && maxWidth < 1100.dp
+            val narrow = maxWidth < 900.dp && !landscape
             val preview: @Composable () -> Unit = {
-                Column(Modifier.width(380.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                    Avatar(name.ifBlank { "?" }, color, avatar, if (narrow) 180.dp else 280.dp)
+                Column(Modifier.width(if (compact) 280.dp else 380.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Avatar(name.ifBlank { "?" }, color, avatar, if (narrow) 180.dp else if (compact) 200.dp else 280.dp)
                     Title(name.ifBlank { "Your tablet" }, 34, maxLines = 1)
                     Muted("Preview", 17)
                 }
@@ -258,7 +286,7 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        NickButton("Continue", onContinue, Modifier.widthIn(min = 240.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight, enabled = name.isNotBlank())
+                        NickButton("Continue", proceed, Modifier.widthIn(min = 240.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight, enabled = name.isNotBlank())
                     }
                 }
             }
@@ -268,8 +296,8 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
                 }
             } else {
                 Row(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 80.dp, end = 80.dp, bottom = 56.dp),
-                    horizontalArrangement = Arrangement.spacedBy(72.dp), verticalAlignment = Alignment.CenterVertically,
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = if (compact) 40.dp else 80.dp, end = if (compact) 40.dp else 80.dp, bottom = if (compact) 24.dp else 56.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 40.dp else 72.dp), verticalAlignment = Alignment.CenterVertically,
                 ) { preview(); form(Modifier.weight(1f)) }
             }
         }
@@ -299,8 +327,15 @@ internal fun NodeCodeScreen(onBack: () -> Unit, onPaired: () -> Unit) {
 /** Also shown from the Node's parent menu when pairing a second Master. */
 @Composable
 fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?, address: String? = remember { wifiAddress() }) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // The code is always on ONE line, so its size comes from the width we have, never from a fixed 168sp.
+    val sidePad = if (maxWidth < 900.dp) 20.dp else 40.dp
+    val boxPad = if (maxWidth < 900.dp) 28.dp else 56.dp
+    // On a short landscape screen the big code would push the instructions off the bottom.
+    val codeMax = if (maxHeight < 700.dp) 132 else CODE_MAX_SP
+    val availWidth = maxWidth - sidePad * 2 - boxPad * 2
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = sidePad, end = sidePad, bottom = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterVertically),
     ) {
@@ -310,15 +345,20 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?, add
         }
         Title("Pair with the parent tablet", 48, lineHeight = 1.05f)
         val shape = RoundedCornerShape(36.dp)
-        Box(Modifier.clip(shape).background(C.surface).border(2.dp, C.line, shape).padding(horizontal = 56.dp, vertical = 28.dp)) {
+        Box(Modifier.clip(shape).background(C.surface).border(2.dp, C.line, shape).padding(horizontal = boxPad, vertical = 28.dp)) {
             val c = code ?: "······"
-            BoxWithConstraints {
-                Text(
-                    c.take(3) + " " + c.drop(3),
-                    style = disp(168.sp, 800, 1f).copy(letterSpacing = 0.06.em, fontFeatureSettings = "tnum"),
-                    color = C.text, maxLines = 1,
-                )
-            }
+            val grouped = c.take(3) + "\u200a" + c.drop(3)
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val style = disp(codeMax.sp, 800, 1f).copy(letterSpacing = 0.06.em, fontFeatureSettings = "tnum")
+            val fullWidth = measurer.measure(grouped, style, softWrap = false, maxLines = 1).size.width
+            val availPx = with(density) { availWidth.toPx() }
+            val sp = if (fullWidth <= availPx * 0.96f || fullWidth == 0) codeMax else (codeMax * availPx * 0.96f / fullWidth).toInt().coerceAtLeast(40)
+            Text(
+                grouped,
+                style = style.copy(fontSize = sp.sp, lineHeight = sp.sp),
+                color = C.text, maxLines = 1, softWrap = false,
+            )
         }
         Text(
             buildAnnotatedString {
@@ -334,7 +374,10 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?, add
         }
         if (address != null) Text("Address: $address", style = body(16.sp, 600), color = C.muted)
     }
+    }
 }
+
+private const val CODE_MAX_SP = 168
 
 /** This tablet's LAN IPv4, for typing on the Master when the tablets can't find each other. */
 private fun wifiAddress(): String? = try {
@@ -344,12 +387,52 @@ private fun wifiAddress(): String? = try {
 
 // ---------------- Master ----------------
 
+/** The muted line on the car network page; Android 10 to 12 also needs Location switched on. */
+internal fun masterNetMuted(sdk: Int): String =
+    "Android asks for one permission to do this. NickOS never uses your location." + if (sdk in 29..32) " Location also has to be switched on." else ""
+
+internal const val MASTER_NET_TITLE = "The car network"
+internal const val MASTER_NET_BODY =
+    "NickOS runs a small WiFi network from this tablet. In the car, the kids' tablets join it on their own. There is nothing to switch on."
+
+/** Setup, Master: ask for the one permission the car network needs. Skipped when there is nothing to ask. */
+@Composable
+internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        app.master.carNet.recheck(); onNext()
+    }
+    LaunchedEffect(Unit) { if (app.master.carNet.permissionToRequest().isEmpty()) onNext() }
+    Column(Modifier.fillMaxSize()) {
+        SetupHeader("Master · Car network", onBack)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+        ) {
+            Box(Modifier.size(112.dp).clip(RoundedCornerShape(32.dp)).background(C.accent), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(52.dp))
+            }
+            Title(MASTER_NET_TITLE, 52, lineHeight = 1.05f)
+            Text(MASTER_NET_BODY, style = body(23.sp, 500, 1.4f), color = C.text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
+            Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(19.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                NickButton("Allow", {
+                    val p = app.master.carNet.permissionToRequest()
+                    if (p.isEmpty()) { app.master.carNet.recheck(); onNext() } else ask.launch(p.toTypedArray())
+                }, style = BtnStyle.PRIMARY, big = true)
+                NickButton("Not now", onNext, style = BtnStyle.GHOST, big = true)
+            }
+        }
+    }
+}
+
 /** Enter a Node's 6-digit code. Used in setup, from the home "Add tablet" card and Settings. */
 @Composable
 fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, onLinked: (MasterRuntime.PairResult) -> Unit) {
     val app = App.get(LocalContext.current)
     val scope = rememberCoroutineScope()
-    var digits by remember { mutableStateOf("") }
+    var digits by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     // Typed address for networks where the tablets can't find each other by themselves.
@@ -369,7 +452,11 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
     Column(Modifier.fillMaxSize()) {
         SetupHeader(step, back)
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val narrow = maxWidth < 1000.dp
+            // Landscape tablets (~960x600) are wide but short: put the pad beside the text and shrink it, instead of
+            // stacking it below the fold.
+            val landscape = maxWidth >= 700.dp && maxWidth > maxHeight
+            val compact = landscape && (maxWidth < 1000.dp || maxHeight < 700.dp)
+            val narrow = maxWidth < 1000.dp && !landscape
             val intro: @Composable (Modifier) -> Unit = { m ->
                 Column(m, verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Title("Add tablet", 56)
@@ -385,7 +472,7 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                         "Tablet not found? Type its address",
                         style = body(19.sp, 700), color = C.accent, modifier = Modifier.clickable { typing = true },
                     )
-                    if (!narrow) {
+                    if (!narrow && !compact) {
                         Column(
                             Modifier.padding(top = 20.dp).size(300.dp, 200.dp).border(3.dp, C.line, RoundedCornerShape(28.dp)),
                             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
@@ -400,19 +487,19 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
             val phone = maxWidth < 600.dp
             val pad: @Composable () -> Unit = {
                 // 6 boxes of 76 + gaps = 526dp.
-                Column(Modifier.widthIn(max = 540.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 12.dp)) {
+                Column(Modifier.widthIn(max = if (compact) 440.dp else 540.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(if (phone || compact) 8.dp else 12.dp)) {
                         (0 until 6).forEach { i ->
                             if (i == 3) Spacer(Modifier.width(if (phone) 4.dp else 10.dp))
                             val active = i == digits.length && !busy
                             Box(
-                                Modifier.size(if (phone) 48.dp else 76.dp, if (phone) 68.dp else 100.dp).clip(RoundedCornerShape(20.dp)).background(C.surface)
+                                Modifier.size(if (phone) 48.dp else if (compact) 60.dp else 76.dp, if (phone) 68.dp else if (compact) 80.dp else 100.dp).clip(RoundedCornerShape(20.dp)).background(C.surface)
                                     .border(3.dp, if (active) C.accent else C.line, RoundedCornerShape(20.dp)),
                                 contentAlignment = Alignment.Center,
                             ) { Text(digits.getOrNull(i)?.toString() ?: "", style = disp(if (phone) 36.sp else 56.sp), color = C.text) }
                         }
                     }
-                    Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.height(if (compact) 28.dp else 32.dp), contentAlignment = Alignment.Center) {
                         when {
                             busy -> Text("Looking for the tablet…", style = body(16.sp, 600), color = C.muted)
                             error != null -> Text(error!!, style = body(16.sp, 600), color = C.danger)
@@ -422,7 +509,8 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                         onDigit = { d -> if (!busy && digits.length < 6) { digits += d; error = null; if (digits.length == 6) submit(digits) } },
                         onDelete = { if (!busy) digits = digits.dropLast(1) },
                         modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-                        keyHeight = 76.dp,
+                        keyHeight = if (compact) 58.dp else 76.dp,
+                        gap = if (compact) 10.dp else 14.dp,
                     )
                 }
             }
@@ -432,9 +520,9 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                 }
             } else {
                 Row(
-                    Modifier.fillMaxSize().padding(start = 80.dp, end = 80.dp, bottom = 48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(72.dp), verticalAlignment = Alignment.CenterVertically,
-                ) { intro(Modifier.weight(1f)); pad() }
+                    Modifier.fillMaxSize().padding(start = if (compact) 40.dp else 80.dp, end = if (compact) 40.dp else 80.dp, bottom = if (compact) 16.dp else 48.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 40.dp else 72.dp), verticalAlignment = Alignment.CenterVertically,
+                ) { intro(Modifier.weight(1f).verticalScroll(rememberScrollState())); pad() }
             }
         }
     }
