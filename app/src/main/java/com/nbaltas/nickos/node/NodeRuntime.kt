@@ -156,7 +156,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private var jobs = mutableListOf<Job>()
 
     /** Saves the car hotspot so Android joins it unaided; see [WifiJoin]. */
-    val wifi = WifiJoin(ctx, { device.isDeviceOwner })
+    val wifi = WifiJoin(ctx, { device.isDeviceOwner }, currentSsid = {
+        @Suppress("DEPRECATION")
+        val s = (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager).connectionInfo?.ssid
+        s?.takeIf { it.isNotEmpty() && !it.contains("unknown ssid", ignoreCase = true) }
+    })
     private var netWatch: NetWatch? = null
     private var approvalReceiver: android.content.BroadcastReceiver? = null
 
@@ -207,7 +211,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         approvalReceiver = wifi.watchApproval()
         // Every network change: advertise again (the old mDNS record points at the old network), and turn WiFi
         // back on if it dropped. The ServerSocket binds the wildcard address, so it needs nothing.
-        netWatch = NetWatch(ctx) { wifi.ensureOn(); advertiser.refresh() }.also { it.start() }
+        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh() }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }

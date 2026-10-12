@@ -67,4 +67,11 @@ class NetMessagesTest {
         assertFalse(NetMessages.supportsWifi(old))
         assertFalse(NetMessages.supportsWifi(JSONObject().put("t", "status")))
     }
+
+    @Test
+    fun `a cleared hotspot is sent as forget so an offline node drops it on reconnect`() {
+        assertTrue(NetMessages.decodeWifiCmd(wire(NetMessages.hotspotCmd(null)))!!.forget)
+        val set = NetMessages.decodeWifiCmd(wire(NetMessages.hotspotCmd(com.nbaltas.nickos.data.Hotspot("CarSpot", "correct horse"))))!!
+        assertEquals("CarSpot", set.ssid)
+    }
 }

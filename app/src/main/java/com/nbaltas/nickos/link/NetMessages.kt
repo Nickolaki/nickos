@@ -38,6 +38,9 @@ object NetMessages {
     fun wifiCmd(ssid: String, pass: String): JSONObject =
         JSONObject().put("t", "cmd").put("c", "wifi").put("ssid", ssid).put("pass", pass)
 
+    /** What the Master sends on every connect: the saved hotspot, or an empty ssid ("forget") when there is none. */
+    fun hotspotCmd(h: com.nbaltas.nickos.data.Hotspot?): JSONObject = wifiCmd(h?.ssid ?: "", h?.pass ?: "")
+
     /**
      * Null for a command the Node must not act on: an SSID over 32 bytes, or a password that is neither
      * empty (open network) nor 8 to 63 characters (WPA2). Empty ssid means forget.

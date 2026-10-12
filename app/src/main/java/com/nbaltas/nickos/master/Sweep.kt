@@ -59,24 +59,36 @@ fun interface Prober {
 }
 
 /** The real prober: a short TCP connect, one line out, one bounded line back. */
-class SocketProber(private val timeoutMs: Int = 400) : Prober {
-    override suspend fun probe(host: String, port: Int): String? = withContext(Dispatchers.IO) {
+class SocketProber(private val timeoutMs: Int = 400, private val totalMs: Long = 1_000) : Prober {
+    /**
+     * soTimeout only bounds ONE read, so a host trickling a byte every 300 ms could hold a probe for minutes, and a
+     * blocking read ignores coroutine cancellation. The guard closes the socket when the overall deadline passes AND
+     * when the probe is cancelled (the pass ended, the network changed), which makes the blocked read throw.
+     */
+    override suspend fun probe(host: String, port: Int): String? = coroutineScope {
+        val s = Socket()
+        val guard = launch { try { delay(totalMs) } finally { try { s.close() } catch (e: Exception) { } } }
         try {
-            Socket().use { s ->
-                s.connect(InetSocketAddress(host, port), timeoutMs)
-                s.soTimeout = timeoutMs
-                s.getOutputStream().apply { write((NetMessages.who().toString() + "\n").toByteArray()); flush() }
-                // A stranger may stream forever: take at most 512 bytes and stop at the first newline.
-                val buf = StringBuilder()
-                val ins = s.getInputStream()
-                while (buf.length < 512) {
-                    val b = ins.read()
-                    if (b < 0 || b == '\n'.code) break
-                    buf.append(b.toChar())
-                }
-                NetMessages.decodeIamLine(buf.toString())?.nodeId
+            withContext(Dispatchers.IO) {
+                try {
+                    s.connect(InetSocketAddress(host, port), timeoutMs)
+                    s.soTimeout = timeoutMs
+                    s.getOutputStream().apply { write((NetMessages.who().toString() + "\n").toByteArray()); flush() }
+                    // A stranger may stream forever: take at most 512 bytes and stop at the first newline.
+                    val buf = StringBuilder()
+                    val ins = s.getInputStream()
+                    while (buf.length < 512) {
+                        val b = ins.read()
+                        if (b < 0 || b == '\n'.code) break
+                        buf.append(b.toChar())
+                    }
+                    NetMessages.decodeIamLine(buf.toString())?.nodeId
+                } catch (e: Exception) { null }
             }
-        } catch (e: Exception) { null }
+        } finally {
+            guard.cancel()
+            try { s.close() } catch (e: Exception) { }
+        }
     }
 }
 

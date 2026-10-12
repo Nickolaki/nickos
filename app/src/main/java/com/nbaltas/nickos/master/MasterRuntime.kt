@@ -345,16 +345,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun sendHotspot(id: String) {
-        // No hotspot saved means "forget it": an empty ssid.
-        val h = store.hotspot.value
-        send(id, NetMessages.wifiCmd(h?.ssid ?: "", h?.pass ?: ""))
+        send(id, NetMessages.hotspotCmd(store.hotspot.value))
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
         _online.update { it + n.id }
         send(n.id, cmd("pin").put("pin", store.pin.value))
-        // Only send the hotspot when there is one: a Node that never had one has nothing to forget.
-        if (store.hotspot.value != null) sendHotspot(n.id)
+        // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
+        sendHotspot(n.id)
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         sync.onConnected(n.id)

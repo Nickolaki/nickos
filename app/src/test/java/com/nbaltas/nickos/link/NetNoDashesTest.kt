@@ -17,7 +17,7 @@ class NetNoDashesTest {
         File(test, "link/SubnetTest.kt"), File(test, "link/NetMessagesTest.kt"), File(test, "link/ChangeGateTest.kt"),
         File(test, "link/NetNoDashesTest.kt"), File(test, "master/SweepTest.kt"), File(test, "master/OnlinePolicyTest.kt"),
         File(test, "master/LinkStateTest.kt"), File(test, "master/StoreHotspotTest.kt"),
-        File(test, "node/AdvertiserTest.kt"), File(test, "node/WifiJoinTest.kt"),
+        File(test, "node/AdvertiserTest.kt"), File(test, "node/WifiJoinTest.kt"), File(test, "node/WifiJoin29Test.kt"), File(test, "master/SocketProberTest.kt"),
     )
 
     @Test

@@ -139,4 +139,33 @@ class WifiJoinTest {
         assertTrue(plain(34).watchApproval() != null)
         assertNull(plain(28).watchApproval())
     }
+
+    @Test
+    fun `approval is detected by being connected to the saved ssid, with no broadcast`() {
+        var on: String? = null
+        val j = WifiJoin(ctx, { false }, 34, currentSsid = { on })
+        j.save("TestCar", "testpass1")
+        assertTrue(j.state("TestCar").approve)
+        on = "\"SomeoneElse\""
+        assertTrue(j.state("TestCar").approve)            // another network proves nothing
+        on = null                                          // SSID hidden from this app: stay on "needs approval"
+        assertTrue(j.state("TestCar").approve)
+        on = "\"TestCar\""
+        val s = j.state("TestCar")
+        assertTrue(s.saved)
+        assertFalse(s.approve)
+        on = null
+        assertTrue(j.state("TestCar").saved)               // approval sticks once seen
+    }
+
+    @Test
+    fun `a new password asks for approval again`() {
+        var on: String? = "TestCar"
+        val j = WifiJoin(ctx, { false }, 34, currentSsid = { on })
+        j.save("TestCar", "testpass1")
+        assertTrue(j.state("TestCar").saved)
+        on = null
+        j.save("TestCar", "testpass2")
+        assertTrue(j.state("TestCar").approve)
+    }
 }

@@ -31,6 +31,8 @@ class WifiJoin(
     private val ctx: Context,
     private val isDeviceOwner: () -> Boolean,
     private val sdk: Int = Build.VERSION.SDK_INT,
+    /** The SSID of the WiFi this tablet is on right now (unquoted), or null when unknown or unreadable. */
+    private val currentSsid: () -> String? = { null },
 ) {
     private val wifi get() = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private val prefs: SharedPreferences = ctx.getSharedPreferences("nickos_wifi", Context.MODE_PRIVATE)
@@ -85,7 +87,10 @@ class WifiJoin(
             } catch (e: Exception) { Log.w(TAG, "suggestion failed", e) }
         }
         if (mode == MODE_NONE) return false
+        // The suggestion's passphrase is kept (this app's private prefs) so the EXACT suggestion can be rebuilt to
+        // remove it on API 29, where WifiManager.getNetworkSuggestions() does not exist.
         prefs.edit().putString(K_SSID, ssid).putString(K_FP, fp).putInt(K_NETID, netId).putString(K_MODE, mode)
+            .putString(K_PASS, if (mode == MODE_SUGGEST) pass else null)
             .putBoolean(K_APPROVED, false).apply()
         return true
     }
@@ -97,9 +102,13 @@ class WifiJoin(
         val mode = prefs.getString(K_MODE, null)
         if (mode == MODE_CONFIG && id >= 0) try { wifi.removeNetwork(id) } catch (e: Exception) { Log.w(TAG, "removeNetwork", e) }
         if (mode == MODE_SUGGEST && ssid != null && sdk >= 29) try {
-            wifi.removeNetworkSuggestions(wifi.networkSuggestions.filter { it.ssid == ssid })
+            // getNetworkSuggestions() is API 30: on 29 it is a NoSuchMethodError (an Error, not an Exception), so
+            // rebuild the one suggestion this app added and remove that.
+            val mine = if (sdk >= 30) wifi.networkSuggestions.filter { it.ssid == ssid }
+                else listOf(suggestion(ssid, prefs.getString(K_PASS, "") ?: ""))
+            wifi.removeNetworkSuggestions(mine)
         } catch (e: Exception) { Log.w(TAG, "removeSuggestions", e) }
-        prefs.edit().remove(K_SSID).remove(K_FP).remove(K_NETID).remove(K_MODE).remove(K_APPROVED).apply()
+        prefs.edit().remove(K_SSID).remove(K_FP).remove(K_NETID).remove(K_MODE).remove(K_APPROVED).remove(K_PASS).apply()
     }
 
     @Suppress("DEPRECATION")
@@ -114,6 +123,7 @@ class WifiJoin(
      * true only for that SSID, so a stale entry for an old hotspot never reads as ready.
      */
     fun state(ssid: String? = null): NetMessages.WifiStatus {
+        refreshApproval()
         val saved = prefs.getString(K_SSID, null)
         val mode = prefs.getString(K_MODE, null)
         val matches = saved != null && (ssid == null || ssid == saved)
@@ -123,6 +133,20 @@ class WifiJoin(
             deviceOwner = isDeviceOwner(),
             doze = dozeExempt(),
         )
+    }
+
+    /**
+     * The suggestion is added with app interaction NOT required, and Android only sends the post-connection
+     * broadcast to apps that ask for interaction and hold location, so that broadcast never arrives here. Approval
+     * is proved instead by being connected to the saved SSID right now (no location permission is requested; where
+     * Android hides the SSID from this app it reads as null and the Node keeps saying "needs approval", which is
+     * the safe way to be wrong).
+     */
+    fun refreshApproval() {
+        if (prefs.getString(K_MODE, null) != MODE_SUGGEST || prefs.getBoolean(K_APPROVED, false)) return
+        val saved = prefs.getString(K_SSID, null) ?: return
+        val now = try { currentSsid()?.trim('"') } catch (e: Exception) { null }
+        if (now != null && now == saved) prefs.edit().putBoolean(K_APPROVED, true).apply()
     }
 
     private fun dozeExempt(): Boolean = try {
@@ -167,6 +191,7 @@ class WifiJoin(
         private const val K_NETID = "netId"
         private const val K_MODE = "mode"
         private const val K_APPROVED = "approved"
+        private const val K_PASS = "sugpass"
         private const val MODE_NONE = "none"
         private const val MODE_CONFIG = "config"
         private const val MODE_SUGGEST = "suggest"
