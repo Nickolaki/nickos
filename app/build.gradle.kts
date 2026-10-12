@@ -84,6 +84,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.9.0")
     // Watch together: one tablet serves a movie file to the others over the home WiFi.
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    // Tablet cameras: a Node's front camera, frame by frame, for the Master's Cameras screen.
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
     // QR code for zero-adb kid tablet setup.
     implementation("com.google.zxing:core:3.5.3")
     // Lucide: the icon set the design handoff was drawn with.

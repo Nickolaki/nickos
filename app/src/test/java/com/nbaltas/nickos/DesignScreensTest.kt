@@ -1,5 +1,11 @@
 package com.nbaltas.nickos
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
+import android.os.SystemClock
 import android.Manifest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -8,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.nbaltas.nickos.cam.NodeCam
+import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.JellyfinAccount
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.LinkedNode
@@ -15,13 +23,16 @@ import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
+import com.nbaltas.nickos.master.CamController
 import com.nbaltas.nickos.master.ClockInfo
 import com.nbaltas.nickos.master.DeviceLibrary
 import com.nbaltas.nickos.master.MasterRuntime
+import com.nbaltas.nickos.master.MjpegClient
 import com.nbaltas.nickos.master.NodeStatus
 import com.nbaltas.nickos.master.NodeSyncState
 import com.nbaltas.nickos.master.Playback
 import com.nbaltas.nickos.master.RemoteApp
+import com.nbaltas.nickos.ui.master.CamerasScreen
 import com.nbaltas.nickos.node.PlayerUi
 import com.nbaltas.nickos.sync.Library
 import com.nbaltas.nickos.sync.SyncMessages
@@ -110,15 +121,8 @@ class DesignScreensTest {
     )
 
     @Suppress("UNCHECKED_CAST")
-    private fun set(m: MasterRuntime, field: String, value: Any) {
-        val f = MasterRuntime::class.java.getDeclaredField(field).apply { isAccessible = true }
-        (f.get(m) as MutableStateFlow<Any>).value = value
-    }
-
-    /** Same as [set] but for any object (used to seed [SyncController]/[TransferController] private state). */
-    @Suppress("UNCHECKED_CAST")
     private fun set(target: Any, field: String, value: Any) {
-        val f = target::class.java.getDeclaredField(field).apply { isAccessible = true }
+        val f = target.javaClass.getDeclaredField(field).apply { isAccessible = true }
         (f.get(target) as MutableStateFlow<Any>).value = value
     }
 
@@ -149,6 +153,126 @@ class DesignScreensTest {
     @Test fun settingsPin() = shot("Settings-PIN") { SettingsScreen(2, {}, {}, {}) }
     @Test fun settingsTheme() = shot("Settings-Theme") { SettingsScreen(3, {}, {}, {}) }
     @Test fun settingsAbout() = shot("Settings-About") { SettingsScreen(4, {}, {}, {}) }
+    @Test fun settingsCameras() = shot("Settings-Cameras") { SettingsScreen(5, {}, {}, {}) }
+
+    // ---- cameras (section 11 of the tablet-cameras brief) ----
+    private val CH = "aaaaaaaaaaaa"
+    private val CL = "bbbbbbbbbbbb"
+    private val CM = "cccccccccccc"
+    private val CZ = "dddddddddddd"
+
+    private fun seedCams() {
+        val s = app.store
+        s.resetAll()
+        s.setName("Dad's Tablet")
+        s.upsertNode(LinkedNode(CH, "Hailey's Tablet", 0, "initial", "t"))
+        s.upsertNode(LinkedNode(CL, "Leo's Tablet", 3, "initial", "t"))
+        s.upsertNode(LinkedNode(CM, "Mia's Tablet", 5, "initial", "t"))
+        set(app.master, "_online", setOf(CH, CL, CM))
+        set(app.master, "_status", mapOf(CH to camStatus(true), CL to camStatus(true), CM to camStatus(true)))
+    }
+
+    private fun camStatus(cam: Boolean) = NodeStatus(
+        battery = 80, charging = false, screenOn = true, volume = 60, brightness = 75, fg = null, fgLabel = null,
+        allowed = emptyList(), lockedApp = null, lockedBy = null, bedtimeAt = 0, owner = true, usage = true, overlay = true,
+        jf = null, names = emptyList(), version = BuildConfig.VERSION_NAME, caps = if (cam) listOf("sync1", "cam1") else listOf("sync1"),
+    )
+
+    private val camController: CamController get() = app.master.cam
+
+    private fun cams(armed: Set<String>, states: Map<String, NodeCam>) {
+        set(camController, "_armed", armed)
+        set(camController, "_states", states)
+    }
+
+    /** A synthetic 640x480 picture, a different gradient per tablet, so a live tile shows something. */
+    private fun camPicture(id: String, from: Int, to: Int) {
+        val bmp = Bitmap.createBitmap(640, 480, Bitmap.Config.RGB_565)
+        Canvas(bmp).drawRect(0f, 0f, 640f, 480f, Paint().apply { shader = LinearGradient(0f, 0f, 640f, 480f, from, to, Shader.TileMode.CLAMP) })
+        camController.frameFlow(id).value = MjpegClient.Frame(bmp, 0, SystemClock.elapsedRealtime())
+    }
+
+    private fun camNow() = SystemClock.elapsedRealtime()
+    private fun camLive(level: String = NodeCam.LEVEL_NORMAL) = NodeCam(NodeCam.LIVE, level = level, port = 47472, key = "k", maxMs = 600_000, receivedAt = camNow())
+    private fun camOff(reason: String) = NodeCam(NodeCam.OFF, reason = reason, maxMs = 600_000, receivedAt = camNow())
+    private fun camRtsp(id: String, name: String) = app.store.saveCamera(Camera(id, name, "rtsp://example.invalid/stream"))
+
+    private val camBlue = 0xFF2B5B8A.toInt() to 0xFF9AD0E8.toInt()
+    private val camGreen = 0xFF2E6B4F.toInt() to 0xFFB9E6A8.toInt()
+    private val camPlum = 0xFF5B3A78.toInt() to 0xFFE8B4D8.toInt()
+
+    @Test fun camerasSingle() {
+        seedCams()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        shot("Cameras-Single") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Test fun camerasPair() {
+        seedCams()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camRtsp("front", "Front door")
+        shot("Cameras-Pair") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Test fun camerasGrid() {
+        seedCams()
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(NodeCam.LEVEL_HOT), CM to NodeCam(NodeCam.WARMING, port = 47472, key = "k", receivedAt = camNow())))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camRtsp("front", "Front door")
+        shot("Cameras-Grid") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Test fun camerasSpotlight() {
+        seedCams()
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(), CM to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camPicture(CM, camPlum.first, camPlum.second)
+        camRtsp("front", "Front door")
+        camRtsp("yard", "Back yard")
+        // Five sources is a spotlight by itself; startSpotlight puts Leo in it, as a tap on his tile would.
+        shot("Cameras-Spotlight") { CamerasScreen({}, {}, live = false, startSpotlight = "t:$CL") }
+    }
+
+    @Test fun camerasStates() {
+        seedCams()
+        app.store.upsertNode(LinkedNode(CZ, "Zoe's Tablet", 2, "initial", "t"))
+        set(app.master, "_online", setOf(CH, CL, CM, CZ))
+        set(app.master, "_status", mapOf(CH to camStatus(true), CL to camStatus(true), CM to camStatus(true), CZ to camStatus(false)))
+        cams(
+            setOf(CH, CZ),
+            mapOf(
+                CH to camOff(NodeCam.PERMISSION),
+                CL to NodeCam(NodeCam.OFF, reason = NodeCam.TOO_HOT, level = NodeCam.LEVEL_TOO_HOT, retryAt = 103_000, now = 0, receivedAt = camNow()),
+                CM to camOff(NodeCam.AUTO_OFF),
+            ),
+        )
+        shot("Cameras-States") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Config(qualifiers = "w400dp-h800dp-port-mdpi")
+    @Test fun camerasPhone() {
+        seedCams()
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(NodeCam.LEVEL_HOT), CM to camOff(NodeCam.PERMISSION)))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        shot("Cameras-Phone") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Test fun camerasNothingOn() {
+        seedCams()
+        cams(emptySet(), emptyMap())
+        shot("Cameras-Nothing-On") { CamerasScreen({}, {}, live = false) }
+    }
+
+    @Test fun camerasEmpty() {
+        seedCams()
+        listOf(CH, CL, CM).forEach { app.store.removeNode(it) }
+        shot("Cameras-Empty") { CamerasScreen({}, {}, live = false) }
+    }
 
     // ---- watch together ----
     private fun video(fid: String, title: String) = SyncMessages.VideoEntry(fid, title, "$fid.mp4", 400_000_000L, 90 * 60_000L)

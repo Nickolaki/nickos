@@ -34,6 +34,8 @@ import java.net.Socket
  * inside "status" (a constant, so it does not change the status dedupe key). An old Node with
  * no "caps" field, or an old Master that never sends the new commands, both keep working: the
  * Node's command "when" has no else branch, and NodeStatus.from treats a missing "caps" as none.
+ *
+ * Tablet cameras add cmd "camStart"/"camStop", the reply "camState" and "cam1" in "caps" (see cam/CamMessages.kt).
  */
 object Wire {
     const val SERVICE_TYPE = "_nickos._tcp."

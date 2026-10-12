@@ -59,6 +59,12 @@ class NodeDevice(private val ctx: Context) {
         return (if (level < 0) 0 else level * 100 / scale) to charging
     }
 
+    /** Battery temperature in tenths of a degree C, or -1 when the tablet does not say. */
+    fun batteryTemperatureTenths(): Int =
+        ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+
+    fun hasCameraPermission() = ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
     val screenOn get() = power.isInteractive
 
     fun screenOff() {
@@ -238,6 +244,12 @@ class NodeDevice(private val ctx: Context) {
             LocalVideos.permissions().forEach {
                 dpm.setPermissionGrantState(admin, ctx.packageName, it, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
             }
+            // Tablet cameras. Android 12+ can refuse this (sensor permissions opted out at setup, some
+            // makers' builds), so the answer is never assumed: hasCameraPermission() is what counts.
+            if (!hasCameraPermission() && !dpm.setPermissionGrantState(
+                    admin, ctx.packageName, android.Manifest.permission.CAMERA, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
+                )
+            ) Log.w(TAG, "device policy did not grant the camera permission")
             dpm.setStatusBarDisabled(admin, true)
         } catch (e: Exception) { Log.w(TAG, "lockdown", e) }
     }

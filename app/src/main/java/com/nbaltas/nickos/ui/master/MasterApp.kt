@@ -151,7 +151,7 @@ fun MasterApp() {
                 onSettings = { screen = MScreen.Settings(it) },
             )
             is MScreen.Settings -> SettingsScreen(s.section, onSection = { screen = MScreen.Settings(it) }, onBack = { screen = MScreen.Home }, onAdd = { screen = MScreen.AddTablet })
-            MScreen.Cameras -> CamerasScreen(onBack = { screen = MScreen.Home })
+            MScreen.Cameras -> CamerasScreen(onBack = { screen = MScreen.Home }, onSettings = { screen = MScreen.Settings(it) })
             MScreen.Together -> TogetherScreen(onBack = { screen = MScreen.Home }, onSettings = { screen = MScreen.Settings(it) })
             MScreen.Drawer -> {
                 val ctx = LocalContext.current
