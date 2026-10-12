@@ -11,7 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -536,7 +536,7 @@ class DesignScreensTest {
             app.store.upsertNode(app.store.nodes.value.first { it.id == "aaaaaaaaaaaa" }.copy(jfUserId = "u1", jfUserName = "Hailey"))
             androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
                 setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {}) } } }
-                onNode(hasText("Jellyfin", substring = true) and hasClickAction()).performClick()
+                onNodeWithTag("jellyfin-library").performClick()
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
                 if (open != null) {

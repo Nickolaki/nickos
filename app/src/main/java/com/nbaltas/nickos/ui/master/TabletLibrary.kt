@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
@@ -103,7 +104,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Muted("$count on ${v.node.name}", 15)
                 if (jfAccount != null) {
-                    NickButton("Jellyfin library", { legacy = true }, style = BtnStyle.GHOST, leading = Lucide.Server)
+                    NickButton("Jellyfin library", { legacy = true }, Modifier.testTag("jellyfin-library"), style = BtnStyle.GHOST, leading = Lucide.Server)
                 }
             }
         }
