@@ -49,5 +49,21 @@ class StoreHotspotTest {
         assertNull(LinkedNode.from(org.json.JSONObject(o.toString())).wifiSaved)
     }
 
-    private fun node() = LinkedNode("0123456789ab", "N", 0, "initial", "tok")
+    @Test
+    fun `a new network name clears every saved flag but a new passphrase does not`() {
+        store.upsertNode(LinkedNode("0123456789ab", "N1", 0, "initial", "t1", wifiSaved = true))
+        store.upsertNode(LinkedNode("0123456789cd", "N2", 0, "initial", "t2", wifiSaved = true))
+        store.setHotspot(Hotspot("A", "p1", true))
+        store.setHotspot(Hotspot("A", "p1b", true))
+        // The first save (no network before) may clear; what matters is that a same-name re-save leaves a flag alone.
+        store.updateNode("0123456789ab") { it.copy(wifiSaved = true) }
+        store.updateNode("0123456789cd") { it.copy(wifiSaved = true) }
+        store.setHotspot(Hotspot("A", "p2", true))
+        assertEquals(listOf<Boolean?>(true, true), store.nodes.value.map { it.wifiSaved })
+        store.setHotspot(Hotspot("B", "p2", true))
+        assertEquals(listOf<Boolean?>(null, null), store.nodes.value.map { it.wifiSaved })
+        assertEquals(listOf<Boolean?>(null, null), Store(ApplicationProvider.getApplicationContext()).nodes.value.map { it.wifiSaved })
+    }
+
+    private fun node() =LinkedNode("0123456789ab", "N", 0, "initial", "tok")
 }

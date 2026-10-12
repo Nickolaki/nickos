@@ -120,7 +120,8 @@ object CarNetPolicy {
         if (i.tetheringOn) return pause(Why.TETHERING_ON)
 
         val live = i.live
-        if (legacy && ours != null && ours.passphrase != null) {
+        // Never adopt (or push to the Nodes) a group without a real WPA2 passphrase (8 to 63 characters): remove it.
+        if (legacy && ours != null && ours.passphrase != null && ours.passphrase.length in 8..63) {
             return Action.Nothing(CarNetState.On(ours.name, ours.ownerIp, ours.passphrase))
         }
         // A group left over from a crash is normal: adopt it. It must be ours, we must own it, and (when the system
@@ -236,7 +237,9 @@ class CarNet(
                 val g = withTimeoutOrNull(config.callTimeoutMs) { try { port.groupInfo() } catch (e: Exception) { null } }
                 // A query that failed or timed out (null) is not proof there is no group: remove best-effort then.
                 // Only a group that is positively someone else's is left alone.
-                if (g == null || g.name == ssid) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
+                // Legacy (24..28): the system named the group, so ours is the one we own, not the one named [ssid].
+                val legacy = sdk in 24..28
+                if (g == null || (if (legacy) g.isOwner else g.name == ssid)) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
                 try { port.close() } catch (_: Exception) {}
             }
         }

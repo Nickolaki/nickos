@@ -88,6 +88,11 @@ class NoDashesTest {
         File(moduleDir, "ui/master/Settings.kt"),
         File(moduleDir, "ui/setup/Setup.kt"),
         File("../SETUP.md"),
+        // Android 7 Master.
+        File(moduleDir, "node/NodeSupport.kt"),
+        File(testDir, "node/NodeSupportTest.kt"),
+        File("src/main/res/xml/network_security_config.xml"),
+        File("src/main/res/mipmap-anydpi/ic_launcher.xml"),
     )
 
     @Test
