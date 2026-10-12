@@ -22,6 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.nbaltas.nickos.App
+import com.nbaltas.nickos.data.Store
+import com.nbaltas.nickos.node.KioskPolicy
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.node.NodeService
 import com.nbaltas.nickos.node.parentName
@@ -32,7 +34,7 @@ import com.nbaltas.nickos.ui.theme.SetupHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private enum class NodeScreen { HOME, PIN, MENU, DRAWER, PAIR }
+private enum class NodeScreen { HOME, PIN, MENU, DRAWER, PAIR, KIOSK }
 
 /** Everything the Node activity shows. Kiosk/lock-task itself is handled by MainActivity. */
 @Composable
@@ -55,10 +57,20 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     }
     // Leaving lock task makes Android start Home again in a new task, so this screen is rebuilt
     // right after the PIN: reopen the parent menu while parent mode is on.
-    var screen by remember { mutableStateOf(if (rt.parentMode) NodeScreen.MENU else NodeScreen.HOME) }
+    // A tablet that is not Device Owner and not yet the home screen opens the Kid lock setup first.
+    var screen by remember {
+        mutableStateOf(
+            when {
+                rt.parentMode -> NodeScreen.MENU
+                KioskPolicy.setupNeeded(rt.device.kioskState()) -> NodeScreen.KIOSK
+                else -> NodeScreen.HOME
+            },
+        )
+    }
     val scope = rememberCoroutineScope()
+    val kioskStatus = remember(screen) { KioskPolicy.status(rt.device.kioskState()) }
 
-    BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU) screen = NodeScreen.HOME }
+    BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU && screen != NodeScreen.KIOSK) screen = NodeScreen.HOME }
 
     // Re-checked when the allowlist changes: Jellyfin may be installed after NickOS started.
     val jfPkg = remember(allowed) { rt.device.jellyfinPackage() }
@@ -76,6 +88,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (screen) {
+            NodeScreen.KIOSK -> KioskSetup(onStart = { screen = NodeScreen.HOME; onKidMode() })
             NodeScreen.DRAWER -> AppDrawer(onBack = { screen = NodeScreen.MENU }, onOpen = { rt.device.launch(it) })
             NodeScreen.PAIR -> {
                 val code by rt.pairingCode.collectAsState()
@@ -110,7 +123,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
         if (screen == NodeScreen.PIN) PinPad(pin, onOk = { screen = NodeScreen.MENU; onParentMode() }, onCancel = { screen = NodeScreen.HOME })
         if (screen == NodeScreen.MENU) ParentMenu(
-            lockdownOn = rt.device.isDeviceOwner,
+            kiosk = kioskStatus,
+            pinIsDefault = pin == Store.DEFAULT_PIN,
+            onFinishKiosk = { screen = NodeScreen.KIOSK },
             onKidMode = { screen = NodeScreen.HOME; onKidMode() },
             onAllApps = { screen = NodeScreen.DRAWER },
             onSettings = { ctx.startActivity(androidSettingsIntent()) },
@@ -120,11 +135,17 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onAllowVideos = { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) },
             onReset = {
                 scope.launch {
+                    // Read before releasing: Device Owner and the home role are gone after.
+                    val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
                     rt.sayGoodbye()
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
                     store.resetAll()
+                    // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
+                    if (handBackHome) try {
+                        ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_HOME_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: Exception) {}
                 }
             },
             onAllowCamera = if (cameraOk) null else ({ askCamera.launch(android.Manifest.permission.CAMERA) }),

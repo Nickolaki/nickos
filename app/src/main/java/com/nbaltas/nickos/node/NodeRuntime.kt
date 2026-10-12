@@ -178,6 +178,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     @Volatile var parentUntil = 0L
     val parentMode get() = System.currentTimeMillis() < parentUntil
 
+    /** Wrong-PIN lockout for the grown-up PIN pad. Memory only: see [PinGate]. */
+    val pinGate = PinGate()
+
+    /** The app a parent opened from the Master: the launcher-mode watchdog leaves it alone until Home. */
+    @Volatile var openedByParent: String? = null
+
     private val _pairingCode = MutableStateFlow<String?>(null)
     val pairingCode: StateFlow<String?> = _pairingCode
 
@@ -223,6 +229,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         jobs += scope.launch { acceptLoop(ss) }
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
+        jobs += scope.launch { kioskLoop() }
         together.start()
         applyLockdown()
     }
@@ -377,10 +384,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "open" -> {
                 val pkg = m.getString("pkg")
                 if (store.lockedApp.value != null && store.lockedApp.value != pkg) store.setLockedApp(null)
+                openedByParent = pkg
                 applyLockdown(extra = pkg)
                 device.launch(pkg)
             }
             "home" -> {
+                openedByParent = null
                 store.setLockedApp(null)
                 applyLockdown()
                 device.goHome()
@@ -393,6 +402,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             }
             "lockApp" -> {
                 val pkg = m.optString("pkg").ifEmpty { null }
+                openedByParent = null
                 store.setLockedApp(pkg)
                 applyLockdown()
                 if (pkg != null) device.launch(pkg) else device.goHome()
@@ -465,6 +475,32 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             if (key != last || now - lastSent > 10_000) {
                 broadcast(s); last = key; lastSent = now
             }
+        }
+    }
+
+    /**
+     * Launcher mode watchdog: a tablet that is not Device Owner has no lock task, so a kid who opens Settings is
+     * sent back to NickOS. Device Owner tablets skip it entirely (nothing is read). Tag NickOS.Kiosk.
+     */
+    private suspend fun kioskLoop() {
+        val watch = KioskWatch(
+            inputs = {
+                val owner = device.isDeviceOwner
+                KioskWatch.Inputs(
+                    deviceOwner = owner,
+                    parentMode = parentMode,
+                    homeVisible = homeVisible,
+                    fg = if (owner) null else device.foregroundPackage(false),
+                    allowed = store.allowed.value + listOfNotNull(store.lockedApp.value, openedByParent, device.jellyfinPackage()),
+                    self = ctx.packageName,
+                )
+            },
+            goHome = { device.goHome() },
+            log = { Log.w("NickOS.Kiosk", it) },
+        )
+        while (scope.isActive) {
+            delay(1000)
+            try { watch.tick(System.currentTimeMillis()) } catch (e: Exception) { Log.w("NickOS.Kiosk", "tick", e) }
         }
     }
 

@@ -16,6 +16,13 @@ Both tablets must be on the same WiFi (home or the car router). No internet is n
 3. Scan the code. Android downloads NickOS from the update server and switches the kid lock on.
 4. NickOS opens straight at "Name this tablet". Then pair it with its 6-digit code as usual.
 
+The QR WiFi works for WPA2 networks. For a WPA3-only network, pick the WiFi on the tablet itself.
+The Master prints a short code under the QR. It matches the NickOS on the update server, or, when the
+server is unreachable, the NickOS on the parent tablet. If the tablet refuses the code, the update
+server is serving a different build than the code says.
+
+When setup ends, NickOS is already the home screen, so the Home button comes back to it.
+
 The APK comes from `https://nickflix-config.nbaltas.org/nickos/nickos-latest.apk` (public on
 purpose: it holds no secrets). This only works on a tablet with no accounts yet, which is
 Android's rule for kid lock, same as the adb route below.
@@ -55,6 +62,19 @@ adb shell pm grant com.nbaltas.nickos android.permission.POST_NOTIFICATIONS
 # Lets the Master see the tablet's front camera
 adb shell pm grant com.nbaltas.nickos android.permission.CAMERA
 ```
+
+### Kid lock without a reset (launcher mode)
+
+If the tablet cannot be factory reset or has accounts you want to keep, NickOS still works as a
+softer kid lock. Open NickOS on the tablet and it shows **Make this the kids' tablet** with four
+steps: make NickOS the home screen, let it show over other apps, let it see which app is open, and
+let it turn the screen off at bedtime. Each opens an Android settings page; switch NickOS on, then
+press Back. **Start kid mode** unlocks once the home screen step is done. A watchdog sends the kid
+back to NickOS when another app comes up that is not on the allowed list. This is weaker than Device
+Owner: a kid who knows Android can still find a way out. After a restart, open NickOS once.
+The grown-up menu shows **Finish kid lock** while steps are missing.
+
+On a PC, the same steps can be skipped for a Device Owner tablet with the adb line below.
 
 ### Getting out
 
