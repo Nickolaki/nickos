@@ -255,6 +255,100 @@ class TransferControllerTest {
         assertEquals("f2", port.cmds(L, "cancel").single().getString("fid"))
     }
 
+    private fun deleted(id: String, fid: String, ok: Boolean, err: String? = null) =
+        t.onMessage(id, SyncMessages.encodeDeleted(fid, ok, err, if (ok) 1 else 0, 1_000L))
+
+    @Test
+    fun `delete sends the command and shows Deleting until the answer`() {
+        has(H, star)
+        t.delete("f1", H)
+        assertEquals("f1", port.cmds(H, "delete").single().getString("fid"))
+        assertTrue(t.deleting(H, "f1"))
+        t.delete("f1", H) // a second tap while waiting sends nothing more
+        assertEquals(1, port.cmds(H, "delete").size)
+    }
+
+    @Test
+    fun `delete sends nothing to an offline tablet or one without del1`() {
+        has(H, star)
+        port.online -= H
+        t.delete("f1", H)
+        port.add("old", "Zed's Tablet", canDelete = false)
+        t.delete("f1", "old")
+        assertTrue(port.sent.isEmpty())
+        assertTrue(!t.deleting(H, "f1") && !t.deleting("old", "f1"))
+    }
+
+    @Test
+    fun `a good answer says Deleted, clears the wait and drops the movie from the grid at once`() {
+        has(H, star, comet)
+        t.delete("f1", H)
+        deleted(H, "f1", true)
+        assertEquals(listOf("Deleted Star Harbour from Hailey"), port.said)
+        assertTrue(!t.deleting(H, "f1"))
+        assertEquals(listOf("f2"), sync.videos.value[H]!!.list.map { it.fid })
+    }
+
+    @Test
+    fun `an answer that arrives before send returns still clears the wait`() {
+        has(H, star)
+        port.onSend = { id, _ -> deleted(id, "f1", true) }
+        t.delete("f1", H)
+        assertTrue(!t.deleting(H, "f1"))
+        assertEquals(listOf("Deleted Star Harbour from Hailey"), port.said)
+    }
+
+    @Test
+    fun `the open movie is gone from the pick panel once the delete succeeds`() {
+        has(H, star, comet)
+        val open = { com.nbaltas.nickos.ui.master.openItemFor(Library.ownedBy(sync.library(), H), "f1") }
+        assertEquals("f1", open()!!.fid)
+        t.delete("f1", H)
+        deleted(H, "f1", true)
+        assertNull(open())
+    }
+
+    @Test
+    fun `a refused delete says the movie was copied by hand and keeps it in the grid`() {
+        has(H, star)
+        t.delete("f1", H)
+        deleted(H, "f1", false, "notOwned")
+        assertEquals(
+            listOf("NickOS can't delete Star Harbour from here. It was copied onto the tablet by hand, so it has to be deleted there."),
+            port.said,
+        )
+        assertEquals(listOf("f1"), sync.videos.value[H]!!.list.map { it.fid })
+    }
+
+    @Test
+    fun `no answer in ten seconds says so`() {
+        has(H, star)
+        t.delete("f1", H)
+        t.tick(now + 9_999)
+        assertTrue(port.said.isEmpty())
+        t.tick(now + 10_001)
+        assertEquals(listOf("Hailey didn't answer. Try again."), port.said)
+        assertTrue(!t.deleting(H, "f1"))
+    }
+
+    @Test
+    fun `each tablet is given this master's address on its own link`() {
+        self(star)
+        port.lanFor[H] = "192.168.49.1"            // Hailey is on the car network, Leo on the home WiFi
+        t.sendNow("f1", setOf(H, L))
+        assertEquals("http://192.168.49.1:47471/v/f1?k=selfkey", SyncMessages.decodeFetchCmd(port.cmds(H, "fetch").single())!!.url)
+        assertEquals("http://192.168.1.2:47471/v/f1?k=selfkey", SyncMessages.decodeFetchCmd(port.cmds(L, "fetch").single())!!.url)
+    }
+
+    @Test
+    fun `a tablet with no usable address is skipped while the others still get the movie`() {
+        self(star)
+        port.noUrlFor += H
+        t.sendNow("f1", setOf(H, L))
+        assertTrue(port.cmds(H, "fetch").isEmpty())
+        assertEquals(1, port.cmds(L, "fetch").size)
+    }
+
     @Test
     fun `a movie that left the library cannot be sent`() {
         t.sendNow("gone", setOf(L))

@@ -25,11 +25,14 @@ data class LinkedNode(
     /** Jellyfin user whose library the Watch tab shows for this tablet. */
     val jfUserId: String? = null,
     val jfUserName: String? = null,
+    /** The Node's last report of whether it has the car hotspot saved; null until it reports. */
+    val wifiSaved: Boolean? = null,
 ) {
     fun toJson() = JSONObject().apply {
         put("id", id); put("name", name); put("color", color); put("avatar", avatar); put("token", token)
         put("host", host); put("port", port); put("lastSeen", lastSeen); put("lastBattery", lastBattery)
         put("jfUserId", jfUserId); put("jfUserName", jfUserName)
+        put("wifiSaved", wifiSaved ?: JSONObject.NULL)
     }
 
     companion object {
@@ -39,9 +42,16 @@ data class LinkedNode(
             host = o.optStr("host"), port = o.optInt("port"), lastSeen = o.optLong("lastSeen"),
             lastBattery = if (o.isNull("lastBattery") || !o.has("lastBattery")) null else o.optInt("lastBattery"),
             jfUserId = o.optStr("jfUserId"), jfUserName = o.optStr("jfUserName"),
+            wifiSaved = if (!o.has("wifiSaved") || o.isNull("wifiSaved")) null else o.optBoolean("wifiSaved"),
         )
     }
 }
+
+/**
+ * The car network the Master hands to every Node. The password sits in this app's private prefs, like the PIN.
+ * [direct] is true for the Wi-Fi Direct group the Master hosts itself, false for a hotspot the parent typed in.
+ */
+data class Hotspot(val ssid: String, val pass: String, val direct: Boolean = false)
 
 /** A camera feed on the Master. [rotation] is 0/90/180/270 (portrait baby cams). */
 data class Camera(val id: String, val name: String, val url: String, val rotation: Int = 0) {
@@ -130,6 +140,47 @@ class Store(context: Context) {
         val list = _nodes.value.filterNot { it.id == id }
         writeList("nodes", list) { it.toJson() }; _nodes.value = list
     }
+
+    private val _hotspot = MutableStateFlow(readHotspot())
+    /** Set in Settings, Tablets, Car hotspot; null until the parent saves one. */
+    val hotspot: StateFlow<Hotspot?> = _hotspot
+    @Synchronized
+    fun setHotspot(h: Hotspot?) {
+        val keep = h?.takeIf { it.ssid.isNotEmpty() }
+        p.edit().apply {
+            if (keep == null) remove("hotspot")
+            else putString("hotspot", JSONObject().put("ssid", keep.ssid).put("pass", keep.pass).put("direct", keep.direct).toString())
+        }.apply()
+        _hotspot.value = keep
+    }
+
+    /**
+     * Records the Master's own car network as the hotspot, unless the parent has typed a hotspot in. One
+     * check-and-set under the same lock as [setHotspot], so a group that finishes coming up just as the parent
+     * switches to a typed hotspot can never overwrite what they typed. True when it is recorded.
+     */
+    @Synchronized
+    fun adoptDirectHotspot(h: Hotspot): Boolean {
+        val cur = _hotspot.value
+        if (cur != null && !cur.direct) return false
+        if (cur == h.copy(direct = true)) return true
+        setHotspot(h.copy(direct = true))
+        return true
+    }
+
+    private fun readHotspot(): Hotspot? = try {
+        p.getString("hotspot", null)?.let { JSONObject(it) }
+            ?.let { Hotspot(it.getString("ssid"), it.optString("pass"), it.optBoolean("direct", false)) }?.takeIf { it.ssid.isNotEmpty() }
+    } catch (e: Exception) { null }
+
+    /**
+     * The passphrase of the network this Master hosts: 16 characters of a-z and 0-9, made once and kept. It survives
+     * [resetAll] on purpose: a reset Master that made a new one would leave every Node holding a network that no
+     * longer exists. Never logged.
+     */
+    @Synchronized
+    fun carNetPass(): String = p.getString(KEY_CARNET, null)?.takeIf { it.length == CARNET_PASS_LEN }
+        ?: newCarNetPass(rnd).also { p.edit().putString(KEY_CARNET, it).apply() }
 
     private val _jellyfin = MutableStateFlow(readJellyfin())
     val jellyfin: StateFlow<JellyfinAccount?> = _jellyfin
@@ -241,10 +292,12 @@ class Store(context: Context) {
     val resume: StateFlow<List<ResumeCard>> = _resume
     fun setResume(v: List<ResumeCard>) { writeList("resume", v) { it.toJson() }; _resume.value = v }
 
+    @Synchronized
     fun resetAll() {
-        p.edit().clear().putString("deviceId", deviceId).apply()
+        val carnet = p.getString(KEY_CARNET, null)
+        p.edit().clear().putString("deviceId", deviceId).apply { if (carnet != null) putString(KEY_CARNET, carnet) }.apply()
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
-        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _jellyfin.value = null; _quickApps.value = emptyList()
+        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
         _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()
@@ -270,7 +323,11 @@ class Store(context: Context) {
 
     companion object {
         const val DEFAULT_PIN = "0000"
+        private const val KEY_CARNET = "carnet"
+        const val CARNET_PASS_LEN = 16
+        private const val CARNET_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
         private val rnd = SecureRandom()
+        fun newCarNetPass(r: SecureRandom = rnd): String = String(CharArray(CARNET_PASS_LEN) { CARNET_ALPHABET[r.nextInt(CARNET_ALPHABET.length)] })
         fun randomHex(bytes: Int) = ByteArray(bytes).also { rnd.nextBytes(it) }.joinToString("") { "%02x".format(it) }
     }
 }

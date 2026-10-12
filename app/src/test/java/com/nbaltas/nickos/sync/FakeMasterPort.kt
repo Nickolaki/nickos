@@ -17,17 +17,21 @@ class FakeMasterPort : MasterPort {
     var local = SyncMessages.VideosMsg(true, emptyList())
 
     /** Adds an online tablet. [capable] false is a tablet on a NickOS from before Watch together. */
-    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}") {
+    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}", canDelete: Boolean = capable) {
         linked = linked + LinkedNode(id, name, 0, "initial", "token", host = host)
         online += id
         val o = JSONObject().put("volume", 50)
-        if (capable) o.put("caps", JSONArray(listOf("sync1")))
+        if (capable) o.put("caps", JSONArray(if (canDelete) listOf("sync1", "del1") else listOf("sync1")))
         statuses[id] = NodeStatus.from(o)
     }
+
+    /** Runs inside [send], after the message is recorded: lets a test deliver a reply before send returns. */
+    var onSend: ((String, JSONObject) -> Unit)? = null
 
     override fun send(id: String, o: JSONObject): Boolean {
         if (id !in online) return false
         sent += id to o
+        onSend?.invoke(id, o)
         return true
     }
 
@@ -39,7 +43,10 @@ class FakeMasterPort : MasterPort {
     /** This Master's WiFi address. Null: not on WiFi. */
     var lan: String? = "192.168.1.2"
     override fun lanAddress() = lan
-    override fun localUrl(fid: String) = lan?.let { "http://$it:47471/v/$fid?k=selfkey" }
+    /** Per tablet override of this Master's address on that tablet's link (home WiFi vs the car network). */
+    val lanFor = HashMap<String, String>()
+    val noUrlFor = HashSet<String>()
+    override fun localUrl(fid: String, nodeId: String) = (if (nodeId in noUrlFor) null else lanFor[nodeId] ?: lan)?.let { "http://$it:47471/v/$fid?k=selfkey" }
 
     /** Commands named [c] sent to [id], oldest first. */
     fun cmds(id: String, c: String): List<JSONObject> = sent.filter { it.first == id && it.second.optString("c") == c }.map { it.second }

@@ -26,6 +26,8 @@ object SyncMessages {
         cmd("fetch").put("fid", fid).put("url", url).put("size", size).put("title", title).put("name", name)
     fun cmdCancel(fid: String): JSONObject = cmd("cancel").put("fid", fid)
     fun cmdJobs(): JSONObject = cmd("jobs")
+    /** Delete every copy of movie [fid] from the tablet. Answered by one `deleted`. */
+    fun cmdDelete(fid: String): JSONObject = cmd("delete").put("fid", fid)
 
     private fun cmd(name: String): JSONObject = JSONObject().put("t", "cmd").put("c", name)
 
@@ -51,9 +53,10 @@ object SyncMessages {
     } catch (e: Exception) { null }
 
     data class VideoEntry(val fid: String, val title: String, val name: String, val size: Long, val durMs: Long, val thumb: String? = null)
-    data class VideosMsg(val perm: Boolean, val list: List<VideoEntry>)
+    /** [free] is the tablet's free storage in bytes, or -1 when an older Node did not say. */
+    data class VideosMsg(val perm: Boolean, val list: List<VideoEntry>, val free: Long = -1)
 
-    fun encodeVideos(perm: Boolean, list: List<VideoEntry>): JSONObject {
+    fun encodeVideos(perm: Boolean, list: List<VideoEntry>, free: Long = -1): JSONObject {
         val arr = JSONArray()
         for (v in list) {
             val e = JSONObject().put("fid", v.fid).put("title", v.title).put("name", v.name)
@@ -61,7 +64,9 @@ object SyncMessages {
             if (v.thumb != null) e.put("thumb", v.thumb)
             arr.put(e)
         }
-        return JSONObject().put("t", "videos").put("perm", perm).put("list", arr)
+        val o = JSONObject().put("t", "videos").put("perm", perm).put("list", arr)
+        if (free >= 0) o.put("free", free)
+        return o
     }
 
     fun decodeVideos(o: JSONObject): VideosMsg? = try {
@@ -74,7 +79,20 @@ object SyncMessages {
                 list.add(VideoEntry(e.getString("fid"), e.getString("title"), e.getString("name"), e.getLong("size"), e.getLong("durMs"), e.optStr("thumb")))
             } catch (_: Exception) { /* drop this entry, keep the rest */ }
         }
-        VideosMsg(perm, list)
+        VideosMsg(perm, list, o.optLong("free", -1))
+    } catch (e: Exception) { null }
+
+    /** The answer to a `delete`: [err] is "notOwned", "missing" or "io" when [ok] is false. */
+    data class DeletedMsg(val fid: String, val ok: Boolean, val err: String?, val removed: Int, val free: Long)
+
+    fun encodeDeleted(fid: String, ok: Boolean, err: String?, removed: Int, free: Long): JSONObject {
+        val o = JSONObject().put("t", "deleted").put("fid", fid).put("ok", ok).put("removed", removed).put("free", free)
+        if (err != null) o.put("err", err)
+        return o
+    }
+
+    fun decodeDeleted(o: JSONObject): DeletedMsg? = try {
+        DeletedMsg(o.getString("fid"), o.getBoolean("ok"), o.optStr("err"), o.optInt("removed"), o.optLong("free", -1))
     } catch (e: Exception) { null }
 
     data class SyncStateMsg(val fid: String, val state: String, val pos: Long, val at: Long, val dur: Long, val rate: Float, val err: String?)

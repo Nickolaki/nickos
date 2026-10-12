@@ -52,6 +52,7 @@ class NoDashesTest {
         File(testDir, "sync/DownloadPolicyTest.kt"),
         File(testDir, "sync/HttpRangeTest.kt"),
         File(testDir, "sync/NoDashesTest.kt"),
+        File(testDir, "sync/LocalVideosDeleteTest.kt"),
         // Tablet cameras.
         File(moduleDir, "cam/CamProfile.kt"),
         File(moduleDir, "cam/ThermalPolicy.kt"),

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +57,7 @@ import com.nbaltas.nickos.ui.theme.Segmented
 import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
+import kotlinx.coroutines.delay
 
 /**
  * The NickOS library scoped to one tablet ([nodeId]): the same grid and pick panel as
@@ -85,16 +88,23 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     val library = remember(videosMap) { sync.library() }
     val mine = remember(library) { Library.ownedBy(library, nodeId) }
     var segment by remember { mutableStateOf(0) }
-    var openItem by remember { mutableStateOf<LibraryItem?>(null) }
+    var openFid by remember { mutableStateOf<String?>(null) }
+    // The open movie is looked up in the current library every time, so one that was just deleted
+    // closes the panel instead of leaving Play and Delete on screen.
+    val openItem = openItemFor(mine, openFid)
+    LaunchedEffect(openFid, openItem == null) { if (openFid != null && openItem == null) openFid = null }
 
-    openItem?.let { item ->
-        TabletPickPanel(item, nodeId, thumbs[item.fid], sync, transfer, onBack = { openItem = null })
+    if (openItem != null) {
+        TabletPickPanel(openItem, nodeId, thumbs[openItem.fid], sync, transfer, canDelete = v.status?.supportsDelete == true, onBack = { openFid = null })
         return
     }
+    if (openFid != null) return // closing: the effect above clears it on the next frame
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
         val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
+        EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1))
+        Spacer(Modifier.height(10.dp))
         FlowRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.Start),
@@ -128,7 +138,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
             ) {
                 items(visible, key = { it.fid }) { item ->
                     Column(
-                        Modifier.clickable { openItem = item },
+                        Modifier.clickable { openFid = item.fid },
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         MovieThumb(thumbs[item.fid], item.title, Modifier.height(148.dp).fillMaxWidth())
@@ -141,16 +151,25 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     }
 }
 
+/** The movie [fid] as this tablet's library has it now, or null when none is open or it is gone. */
+internal fun openItemFor(mine: List<LibraryItem>, fid: String?): LibraryItem? = fid?.let { f -> mine.firstOrNull { it.fid == f } }
+
 @Composable
-private fun TabletPickPanel(
+internal fun TabletPickPanel(
     item: LibraryItem,
     nodeId: String,
     thumb: android.graphics.Bitmap?,
     sync: com.nbaltas.nickos.master.SyncController,
     transfer: com.nbaltas.nickos.master.TransferController,
+    canDelete: Boolean,
     onBack: () -> Unit,
 ) {
     val jobsMap by transfer.jobs.collectAsState()
+    val deletingNow by transfer.deletingNow.collectAsState()
+    // Two taps: the first arms the button, which goes back to idle after 4 s or when another movie opens.
+    var confirmDelete by remember(item.fid) { mutableStateOf(false) }
+    LaunchedEffect(confirmDelete) { if (confirmDelete) { delay(4000); confirmDelete = false } }
+    val pendingDelete = "$nodeId:${item.fid}" in deletingNow
     val has = nodeId in item.owners
     val job = transfer.jobFor(nodeId, item.fid)
     val jobState = job?.let { JobState.of(it.state) }
@@ -160,8 +179,8 @@ private fun TabletPickPanel(
         NickButton("Movies", onBack, style = BtnStyle.GHOST)
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            MovieThumb(thumb, item.title, Modifier.height(225.dp)
-                .then(Modifier), showTitle = false)
+            // A fixed 16:9 size: without a width the picture stretched across the row and pushed the title off screen.
+            MovieThumb(thumb, item.title, Modifier.height(225.dp).width(400.dp), showTitle = false)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item.episode?.let { EyebrowText(TogetherText.episodeLine(it)) }
                 Title(item.title, 40, lineHeight = 1.05f)
@@ -170,7 +189,19 @@ private fun TabletPickPanel(
         }
         Spacer(Modifier.height(24.dp))
         when {
-            has -> NickButton("Play", { sync.start(item.fid, item.title, item.durMs, setOf(nodeId)) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play)
+            has -> Column {
+                NickButton("Play", { sync.start(item.fid, item.title, item.durMs, setOf(nodeId)) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play)
+                Spacer(Modifier.height(12.dp))
+                if (canDelete) {
+                    NickButton(
+                        if (pendingDelete) "Deleting..." else if (confirmDelete) "Tap again to delete" else "Delete from this tablet",
+                        { if (confirmDelete) { confirmDelete = false; transfer.delete(item.fid, nodeId) } else confirmDelete = true },
+                        style = BtnStyle.DANGER, enabled = !pendingDelete,
+                    )
+                } else {
+                    Muted("Update this tablet to delete movies from here.", 15)
+                }
+            }
             job != null && jobState == JobState.FAILED -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(TogetherText.jobError(job.err, job.size), style = body(15.sp, 500, 1.3f), color = C.danger)
                 NickButton("Try again", { transfer.retry(item.fid, nodeId) }, style = BtnStyle.SECONDARY)
@@ -178,6 +209,7 @@ private fun TabletPickPanel(
             job != null && jobState != JobState.DONE && jobState != JobState.CANCELLED -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ProgressBar(TogetherText.percent(job.done, job.size) / 100f)
                 Muted(TogetherText.jobProgress(job), 15)
+                NickButton("Stop copying", { transfer.cancel(item.fid, nodeId) }, style = BtnStyle.SECONDARY)
             }
             else -> {
                 val blocked = transfer.sendBlocked(item.fid)

@@ -74,6 +74,34 @@ class TransferController(
     /** Stop a copy on tablet [id] and remove what it has so far. */
     fun cancel(fid: String, id: String) { port.send(id, SyncMessages.cmdCancel(fid)) }
 
+    /** A `delete` sent and not yet answered. */
+    private class Deleting(val title: String, val at: Long)
+    private val pendingDelete = HashMap<String, Deleting>()
+    private val _deleting = MutableStateFlow<Set<String>>(emptySet())
+    /** "tablet:fid" for every delete waiting on its answer, for the button's "Deleting..." state. */
+    val deletingNow: StateFlow<Set<String>> = _deleting
+
+    /** True while a delete of [fid] on tablet [id] is waiting for its answer. */
+    fun deleting(id: String, fid: String): Boolean = "$id:$fid" in _deleting.value
+
+    /**
+     * Delete movie [fid] from tablet [id]. Nothing is sent to a tablet that is offline or on a
+     * NickOS from before deleting; the screens do not offer the button then. The answer arrives
+     * as a toast and the grid updates at once; no answer in [DELETE_WAIT_MS] says so.
+     */
+    fun delete(fid: String, id: String) {
+        if (!(port.isOnline(id) && port.status(id)?.supportsDelete == true)) return
+        val title = sync.library().firstOrNull { it.fid == fid }?.title ?: "That movie"
+        val key = "$id:$fid"
+        // Both records are made BEFORE sending: a reply can arrive on the link's thread before send() returns.
+        synchronized(lock) { if (key in pendingDelete) return; pendingDelete[key] = Deleting(title, clock()) }
+        _deleting.update { it + key }
+        if (!port.send(id, SyncMessages.cmdDelete(fid))) {
+            synchronized(lock) { pendingDelete -= key }
+            _deleting.update { it - key }
+        }
+    }
+
     /** The blocking half of [send]. */
     internal fun sendNow(fid: String, targets: Set<String>) {
         val item = sync.library().firstOrNull { it.fid == fid } ?: return port.say("That movie isn't on any tablet any more")
@@ -134,11 +162,23 @@ class TransferController(
             resent.keys.removeAll { it.startsWith("$id:") }
         }
         _jobs.update { it - id }
+        val gone = synchronized(lock) { pendingDelete.keys.filter { it.startsWith("$id:") }.also { k -> pendingDelete.keys.removeAll(k.toSet()) } }
+        if (gone.isNotEmpty()) _deleting.update { it - gone.toSet() }
     }
 
-    /** `serving` and `jobs` from tablet [id]. Runs on that link's reader thread. */
+    private fun onDeleted(id: String, msg: SyncMessages.DeletedMsg) {
+        val key = "$id:${msg.fid}"
+        val ask = synchronized(lock) { pendingDelete.remove(key) }
+        _deleting.update { it - key }
+        // The grid first: the Node's own fresh `videos` comes after it has rescanned.
+        if (msg.ok) sync.drop(id, msg.fid)
+        if (ask != null) port.say(TogetherText.deleteResult(if (msg.ok) null else msg.err ?: "io", ask.title, sync.kid(id)))
+    }
+
+    /** `serving`, `jobs` and `deleted` from tablet [id]. Runs on that link's reader thread. */
     fun onMessage(id: String, m: JSONObject) {
         when (m.optString("t")) {
+            "deleted" -> SyncMessages.decodeDeleted(m)?.let { onDeleted(id, it) }
             "serving" -> SyncMessages.decodeServing(m)?.let { onServing(id, it) }
             "jobs" -> SyncMessages.decodeJobs(m, MAX_JOBS)?.let { onJobs(id, it.list) }
         }
@@ -194,8 +234,10 @@ class TransferController(
      */
     private fun dispatch(item: LibraryItem, to: Set<String>, quiet: Boolean): Boolean {
         if (Library.SELF in item.owners) {
-            val url = port.localUrl(item.fid) ?: return false.also { if (!quiet) port.say(NO_WIFI) }
-            to.forEach { fetch(it, item, url) }
+            // One url per tablet: each reaches this one over its own link, and the addresses differ across networks.
+            val urls = to.associateWith { port.localUrl(item.fid, it) }
+            urls.forEach { (id, url) -> if (url != null) fetch(id, item, url) }
+            if (urls.values.none { it != null }) return false.also { if (!quiet) port.say(NO_WIFI) }
             return true
         }
         val src = source(item, to) ?: return false.also { if (!quiet) port.say(NO_SOURCE) }
@@ -221,6 +263,13 @@ class TransferController(
             for ((src, pending) in asks) pending.values.removeAll { a -> (now - a.at > SERVE_WAIT_MS).also { if (it) late += src to a } }
             hello to late
         }
+        val timedOut = synchronized(lock) {
+            pendingDelete.filterValues { now - it.at > DELETE_WAIT_MS }.keys.toList().also { k -> pendingDelete.keys.removeAll(k.toSet()) }
+        }
+        if (timedOut.isNotEmpty()) {
+            _deleting.update { it - timedOut.toSet() }
+            timedOut.forEach { port.say(TogetherText.deleteTimeout(sync.kid(it.substringBefore(':')))) }
+        }
         hello.forEach { port.send(it, SyncMessages.cmdJobs()) }
         late.forEach { (src, a) -> port.say("${sync.kid(src)} didn't answer. Try sending ${a.item.title} again.") }
     }
@@ -229,6 +278,7 @@ class TransferController(
         private const val TAG = "NickOS.Transfer"
         const val TICK_MS = 500L
         const val SERVE_WAIT_MS = 5000L
+        const val DELETE_WAIT_MS = 10_000L
         const val RESEND_MS = 15_000L
         private const val MAX_JOBS = 50
         const val NO_WIFI = "This tablet isn't on WiFi"

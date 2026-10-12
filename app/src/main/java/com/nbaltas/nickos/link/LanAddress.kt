@@ -39,17 +39,36 @@ object LanAddress {
     fun choose(found: List<Pair<String, String>>, wifi: String?): String? {
         val ok = found.filter { isSiteLocal(it.second) }
         ok.firstOrNull { it.second == wifi }?.let { return it.second }
+        // An ordinary WiFi or hotspot interface beats a Wi-Fi Direct one: with the home WiFi up, the home LAN is the
+        // single address callers want; the Direct group is reached through [all].
         ok.firstOrNull { (name, _) -> WIFI_NAMES.any { name.startsWith(it) } }?.let { return it.second }
+        ok.firstOrNull { (name, _) -> isDirect(name) }?.let { return it.second }
         return ok.firstOrNull()?.second
     }
 
+    /** Wi-Fi Direct group interfaces: `p2p-wlan0-0` on most devices, `p2p0` on others. */
+    fun isDirect(interfaceName: String): Boolean = interfaceName.startsWith("p2p")
+
+    /** Every site-local address, as (interface name, address), without repeats. The Master sweeps all of them. */
+    fun all(found: List<Pair<String, String>>): List<Pair<String, String>> =
+        found.filter { isSiteLocal(it.second) }.distinctBy { it.second }
+
+    /** All of this tablet's site-local addresses: the home WiFi and a Wi-Fi Direct group it hosts can be up together. */
+    fun all(ctx: Context): List<Pair<String, String>> = all(interfaces())
+
+    /** The local end of a Node's socket when it is a real site-local address, else [fallback]. */
+    fun localFor(socketLocal: String?, fallback: String?): String? =
+        socketLocal?.takeIf { isSiteLocal(it) } ?: fallback
+
+    private fun interfaces(): List<Pair<String, String>> = try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { nic -> nic.inetAddresses.toList().filterIsInstance<Inet4Address>().mapNotNull { a -> a.hostAddress?.let { nic.name to it } } }
+    } catch (e: Exception) { emptyList() }
+
     /** This tablet's address on the WiFi, or null when it is not on one. */
     fun own(ctx: Context): String? {
-        val found = try {
-            NetworkInterface.getNetworkInterfaces().toList()
-                .filter { it.isUp && !it.isLoopback }
-                .flatMap { nic -> nic.inetAddresses.toList().filterIsInstance<Inet4Address>().mapNotNull { a -> a.hostAddress?.let { nic.name to it } } }
-        } catch (e: Exception) { emptyList() }
+        val found = interfaces()
         val wifi = try {
             @Suppress("DEPRECATION")
             (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).connectionInfo?.ipAddress?.takeIf { it != 0 }

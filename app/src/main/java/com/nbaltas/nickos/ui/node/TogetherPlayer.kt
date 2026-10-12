@@ -4,7 +4,9 @@ import android.app.Activity
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,6 +38,7 @@ import com.nbaltas.nickos.node.PlayerUi
 import com.nbaltas.nickos.sync.SyncState
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NodePalette
+import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 import kotlinx.coroutines.delay
@@ -95,13 +98,20 @@ fun TogetherScreen(ui: PlayerUi, player: Player?, parent: String, onHold: () -> 
 
         if (message != null) {
             Box(Modifier.fillMaxWidth().padding(top = 28.dp), contentAlignment = Alignment.TopCenter) {
-                Box(
-                    Modifier.widthIn(max = 640.dp)
-                        .shadow(24.dp, RoundedCornerShape(32.dp))
-                        .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg)
-                        .padding(horizontal = 26.dp, vertical = 22.dp),
-                ) {
-                    Text(message, style = disp(28.sp), color = C.onAccent, textAlign = TextAlign.Center)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(
+                        Modifier.widthIn(max = 640.dp)
+                            .shadow(24.dp, RoundedCornerShape(32.dp))
+                            .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg)
+                            .padding(horizontal = 26.dp, vertical = 22.dp),
+                    ) {
+                        Text(message, style = disp(28.sp), color = C.onAccent, textAlign = TextAlign.Center)
+                    }
+                    // So the kid knows what is coming back while the picture is still black.
+                    if (!tapMessage && ui.title.isNotBlank() && (ui.state == SyncState.PAUSED || ui.state == SyncState.LOCKED)) {
+                        Text(ui.title, style = body(22.sp, 600), color = NodePalette.soft, textAlign = TextAlign.Center,
+                            modifier = Modifier.widthIn(max = 640.dp))
+                    }
                 }
             }
         }
