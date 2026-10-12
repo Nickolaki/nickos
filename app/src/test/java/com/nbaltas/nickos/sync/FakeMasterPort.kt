@@ -25,9 +25,13 @@ class FakeMasterPort : MasterPort {
         statuses[id] = NodeStatus.from(o)
     }
 
+    /** Runs inside [send], after the message is recorded: lets a test deliver a reply before send returns. */
+    var onSend: ((String, JSONObject) -> Unit)? = null
+
     override fun send(id: String, o: JSONObject): Boolean {
         if (id !in online) return false
         sent += id to o
+        onSend?.invoke(id, o)
         return true
     }
 

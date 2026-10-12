@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -86,12 +87,17 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     val library = remember(videosMap) { sync.library() }
     val mine = remember(library) { Library.ownedBy(library, nodeId) }
     var segment by remember { mutableStateOf(0) }
-    var openItem by remember { mutableStateOf<LibraryItem?>(null) }
+    var openFid by remember { mutableStateOf<String?>(null) }
+    // The open movie is looked up in the current library every time, so one that was just deleted
+    // closes the panel instead of leaving Play and Delete on screen.
+    val openItem = openItemFor(mine, openFid)
+    LaunchedEffect(openFid, openItem == null) { if (openFid != null && openItem == null) openFid = null }
 
-    openItem?.let { item ->
-        TabletPickPanel(item, nodeId, thumbs[item.fid], sync, transfer, canDelete = v.status?.supportsDelete == true, onBack = { openItem = null })
+    if (openItem != null) {
+        TabletPickPanel(openItem, nodeId, thumbs[openItem.fid], sync, transfer, canDelete = v.status?.supportsDelete == true, onBack = { openFid = null })
         return
     }
+    if (openFid != null) return // closing: the effect above clears it on the next frame
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
@@ -131,7 +137,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
             ) {
                 items(visible, key = { it.fid }) { item ->
                     Column(
-                        Modifier.clickable { openItem = item },
+                        Modifier.clickable { openFid = item.fid },
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         MovieThumb(thumbs[item.fid], item.title, Modifier.height(148.dp).fillMaxWidth())
@@ -143,6 +149,9 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         }
     }
 }
+
+/** The movie [fid] as this tablet's library has it now, or null when none is open or it is gone. */
+internal fun openItemFor(mine: List<LibraryItem>, fid: String?): LibraryItem? = fid?.let { f -> mine.firstOrNull { it.fid == f } }
 
 @Composable
 internal fun TabletPickPanel(
@@ -169,8 +178,8 @@ internal fun TabletPickPanel(
         NickButton("Movies", onBack, style = BtnStyle.GHOST)
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            MovieThumb(thumb, item.title, Modifier.height(225.dp)
-                .then(Modifier), showTitle = false)
+            // A fixed 16:9 size: without a width the picture stretched across the row and pushed the title off screen.
+            MovieThumb(thumb, item.title, Modifier.height(225.dp).width(400.dp), showTitle = false)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item.episode?.let { EyebrowText(TogetherText.episodeLine(it)) }
                 Title(item.title, 40, lineHeight = 1.05f)

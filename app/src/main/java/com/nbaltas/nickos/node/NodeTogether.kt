@@ -6,7 +6,9 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.sync.SyncMessages
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -71,8 +73,12 @@ class NodeTogether(
     private fun videosMessage(): JSONObject = videos.reply().let { SyncMessages.encodeVideos(it.perm, it.list, it.free) }
 
     /** Stops the synced player if it is on [fid], then removes every copy of it. */
-    private fun deleteMovie(fid: String): JSONObject {
-        if (player.currentFid() == fid) player.stop()
+    private suspend fun deleteMovie(fid: String): JSONObject {
+        // The stop and the "ignore a queued load of this movie" run on the main thread in order with
+        // the player's other updates; the file is only removed once they have.
+        val stopped = CompletableDeferred<Unit>()
+        player.forget(fid) { stopped.complete(Unit) }
+        withTimeoutOrNull(3000) { stopped.await() }
         val o = videos.delete(fid)
         return SyncMessages.encodeDeleted(fid, o.ok, o.err, o.removed, videos.freeBytes())
     }

@@ -93,9 +93,13 @@ class TransferController(
         if (!(port.isOnline(id) && port.status(id)?.supportsDelete == true)) return
         val title = sync.library().firstOrNull { it.fid == fid }?.title ?: "That movie"
         val key = "$id:$fid"
+        // Both records are made BEFORE sending: a reply can arrive on the link's thread before send() returns.
         synchronized(lock) { if (key in pendingDelete) return; pendingDelete[key] = Deleting(title, clock()) }
-        if (port.send(id, SyncMessages.cmdDelete(fid))) _deleting.update { it + key }
-        else synchronized(lock) { pendingDelete -= key }
+        _deleting.update { it + key }
+        if (!port.send(id, SyncMessages.cmdDelete(fid))) {
+            synchronized(lock) { pendingDelete -= key }
+            _deleting.update { it - key }
+        }
     }
 
     /** The blocking half of [send]. */

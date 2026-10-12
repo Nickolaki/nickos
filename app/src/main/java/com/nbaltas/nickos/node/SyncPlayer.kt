@@ -88,6 +88,7 @@ class SyncPlayer(
 
     /** `sync`: load [SyncMessages.SyncCmdMsg.fid] if it is not loaded yet, then follow the anchor. */
     fun onSync(msg: SyncMessages.SyncCmdMsg) {
+        val at = forgetGate.now()
         // Looked up here, off the main thread: a miss rescans the library.
         val video = videos.find(msg.fid, rescan = false) ?: videos.find(msg.fid)
         // Bring the player to the front for a new movie or a resume, not for the minute re-anchor.
@@ -95,7 +96,23 @@ class SyncPlayer(
             device.wake()
             if (!homeVisible()) device.goHome()
         } catch (e: Exception) { Log.w(TAG, "front", e) }
-        main.post { apply(msg, video) }
+        // A delete that ran after the lookup makes this load a no-op: the file it found is gone.
+        main.post { if (!forgetGate.stale(msg.fid, at)) apply(msg, video) }
+    }
+
+    private val forgetGate = ForgetGate()
+
+    /**
+     * The movie [fid] is about to be deleted. On the main thread, in order with every queued
+     * `sync`: stop if it is the loaded one, and make any load of it that was already looked up a
+     * no-op. [done] runs on the main thread once that is so; only then is the file removed.
+     */
+    fun forget(fid: String, done: () -> Unit) {
+        main.post {
+            forgetGate.forget(fid)
+            if (this.fid == fid) doStop()
+            done()
+        }
     }
 
     /** The movie loaded right now, or null when nothing is. */

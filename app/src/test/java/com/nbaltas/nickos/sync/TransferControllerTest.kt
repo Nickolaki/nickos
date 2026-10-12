@@ -290,6 +290,25 @@ class TransferControllerTest {
     }
 
     @Test
+    fun `an answer that arrives before send returns still clears the wait`() {
+        has(H, star)
+        port.onSend = { id, _ -> deleted(id, "f1", true) }
+        t.delete("f1", H)
+        assertTrue(!t.deleting(H, "f1"))
+        assertEquals(listOf("Deleted Star Harbour from Hailey"), port.said)
+    }
+
+    @Test
+    fun `the open movie is gone from the pick panel once the delete succeeds`() {
+        has(H, star, comet)
+        val open = { com.nbaltas.nickos.ui.master.openItemFor(Library.ownedBy(sync.library(), H), "f1") }
+        assertEquals("f1", open()!!.fid)
+        t.delete("f1", H)
+        deleted(H, "f1", true)
+        assertNull(open())
+    }
+
+    @Test
     fun `a refused delete says the movie was copied by hand and keeps it in the grid`() {
         has(H, star)
         t.delete("f1", H)
