@@ -22,12 +22,17 @@ import org.junit.After
 import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.JellyfinAccount
+import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
+import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.master.CarNetState
+import com.nbaltas.nickos.master.NodeNet
+import com.nbaltas.nickos.master.Why
 import com.nbaltas.nickos.master.CamController
 import com.nbaltas.nickos.master.ClockInfo
 import com.nbaltas.nickos.master.DeviceLibrary
@@ -61,6 +66,7 @@ import com.nbaltas.nickos.ui.node.NodeHome
 import com.nbaltas.nickos.ui.node.PinPad
 import com.nbaltas.nickos.ui.node.TogetherScreen as NodeTogetherScreen
 import com.nbaltas.nickos.ui.setup.AddTabletScreen
+import com.nbaltas.nickos.ui.setup.MasterNetScreen
 import com.nbaltas.nickos.ui.setup.NodeNameScreen
 import com.nbaltas.nickos.ui.setup.RoleScreen
 import com.nbaltas.nickos.ui.setup.Welcome
@@ -100,6 +106,8 @@ class DesignScreensTest {
 
         /** Fraction of pixels allowed to differ from the saved picture. */
         const val CHANGE_THRESHOLD = 0.0005f
+
+        const val CAR_SSID = "DIRECT-NK-NickOS-a1b2"
     }
 
     private fun shot(name: String, content: @Composable () -> Unit) {
@@ -141,8 +149,11 @@ class DesignScreensTest {
         s.setName("Dad's Tablet")
         s.upsertNode(LinkedNode("aaaaaaaaaaaa", "Hailey's Tablet", 0, "initial", "t", lastSeen = FIXED_NOW))
         s.upsertNode(LinkedNode("bbbbbbbbbbbb", "Leo's Tablet", 3, "initial", "t", lastSeen = FIXED_NOW))
-        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23))
+        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = true))
+        // The car network is up, as it is on a Master that has run for a while. Fixed here so no screen depends on a clock.
+        s.setHotspot(Hotspot(CAR_SSID, "carnet-pass-1", direct = true))
         val m = app.master
+        set(m.carNet, "_state", CarNetState.On(CAR_SSID, "192.168.49.1"))
         set(m, "_online", setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"))
         set(m, "_status", mapOf(
             "aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin"),
@@ -418,4 +429,48 @@ class DesignScreensTest {
     @Test fun nodePin() { nodeSeed(); shot("Node-PIN") { kidHome(); PinPad("1234", {}, {}) } }
     @Test fun nodeLocked() { nodeSeed(); shot("Node-Locked") { LockedScreen(app.store, "Dad's Tablet") } }
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
+
+    // ---- car network (F2B revised) ----
+    private fun carState(s: CarNetState) = set(app.master.carNet, "_state", s)
+    private fun wifiReports(vararg r: Pair<String, NetMessages.WifiStatus>) =
+        set(app.master, "_net", r.associate { (id, st) -> id to NodeNet(true, st) })
+
+    @Test fun settingsTabletsCarNetOn() {
+        // Hailey has the network, Leo has not, Mia (offline) has it from her last report.
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = false, deviceOwner = true, doze = true))
+        shot("Settings-Tablets-CarNet-On") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun settingsTabletsCarNetOff() {
+        carState(CarNetState.Off(Why.NO_PERMISSION))
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, approve = true, deviceOwner = false, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true))
+        shot("Settings-Tablets-CarNet-Off") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun settingsTabletsCarNetManual() {
+        app.store.setHotspot(Hotspot("Dad's phone", "hotspot-pass-1", direct = false))
+        carState(CarNetState.Off(Why.MANUAL))
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = false))
+        shot("Settings-Tablets-CarNet-Manual") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun masterHomeCarNetOff() {
+        carState(CarNetState.Off(Why.WIFI_OFF))
+        shot("Master-Home-CarNet-Off") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    }
+
+    @Test fun controlOfflineNoDetails() {
+        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = false))
+        shot("Control-Offline-NoDetails") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
+    }
+
+    @Test fun controlOfflineCarNetOff() {
+        carState(CarNetState.Off(Why.NO_LOCATION))
+        shot("Control-Offline-CarNet-Off") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
+    }
+
+    @Test fun setupMasterCarNet() = shot("Setup-Master-CarNet") { MasterNetScreen({}, {}) }
 }
