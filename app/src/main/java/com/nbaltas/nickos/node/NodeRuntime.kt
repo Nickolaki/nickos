@@ -455,6 +455,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("lockedApp", store.lockedApp.value).put("lockedBy", store.lockedBy.value)
             .put("bedtimeAt", store.bedtimeAt.value)
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
+            .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)

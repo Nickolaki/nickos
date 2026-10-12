@@ -229,13 +229,25 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     val avatar by store.avatar.collectAsState()
     // The battery exemption dialog has to come before NodeService starts lockdown: a system dialog under lock task is suppressed.
     val ctx = LocalContext.current
-    val battery = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { onContinue() }
-    val proceed = {
+    // Asked one after another, each only if still missing: battery, then brightness, then screen off. Android 12+ grants
+    // none of them silently, and under kiosk lockdown a system page is suppressed, so they all have to come now.
+    var asked by rememberSaveable { mutableIntStateOf(0) }
+    lateinit var proceed: () -> Unit
+    val asks = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { proceed() }
+    proceed = {
+        val device = App.get(ctx).node.device
         val exempt = try { (ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName) } catch (e: Exception) { true }
-        if (exempt) onContinue()
-        else try {
-            battery.launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:${ctx.packageName}")))
-        } catch (e: Exception) { onContinue() }
+        val intent = when {
+            asked < 1 && !exempt -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:${ctx.packageName}"))
+            asked < 2 && !device.brightnessOk -> device.writeSettingsIntent()
+            asked < 3 && !device.screenOffOk -> device.deviceAdminIntent()
+            else -> null
+        }
+        if (intent == null) onContinue()
+        else {
+            asked = when { intent.action == Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -> 1; intent.action == Settings.ACTION_MANAGE_WRITE_SETTINGS -> 2; else -> 3 }
+            try { asks.launch(intent) } catch (e: Exception) { proceed() }
+        }
     }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Node · Step 2 of 3", onBack)

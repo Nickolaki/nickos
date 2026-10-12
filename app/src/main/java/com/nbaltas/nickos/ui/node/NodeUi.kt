@@ -438,12 +438,17 @@ fun ParentMenu(
     onAllowCamera: (() -> Unit)? = null,
     videosAllowed: Boolean = true,
     onAllowVideos: () -> Unit = {},
+    /** Non-null while brightness cannot be changed from the parent tablet yet. */
+    onAllowBrightness: (() -> Unit)? = null,
+    /** Non-null while the parent tablet cannot turn this screen off yet. */
+    onAllowScreenOff: (() -> Unit)? = null,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color(0xC7080918)).tap {}, contentAlignment = Alignment.Center) {
+        // Scrolls: on a 960x600 tablet the rows are taller than the screen, and the ones past the bottom
+        // (Pair another parent tablet, Reset) could not be reached at all.
         Column(
-            // Scrolls: on a 600 dp tablet the menu is taller than the screen once every row is showing.
             Modifier.padding(vertical = 12.dp).width(560.dp).clip(RoundedCornerShape(40.dp)).background(NodePalette.pinCard)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 40.dp, vertical = 36.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -466,6 +471,8 @@ fun ParentMenu(
             MenuButton("Android settings", onClick = onSettings)
             if (onAllowCamera != null) MenuButton("Allow camera", onClick = onAllowCamera)
             if (!videosAllowed) MenuButton("Allow videos", onClick = onAllowVideos)
+            if (onAllowBrightness != null) MenuButton("Allow brightness control", onClick = onAllowBrightness)
+            if (onAllowScreenOff != null) MenuButton("Allow screen off", onClick = onAllowScreenOff)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {

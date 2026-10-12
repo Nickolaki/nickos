@@ -653,16 +653,16 @@ class DesignScreensTest {
         return "${c.screenWidthDp}x${c.screenHeightDp}"
     }
 
-    private fun nodeCode() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
+    private fun nodeCodeAt() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
-    @Test fun nodeCode960() = nodeCode()
+    @Test fun nodeCode960() = nodeCodeAt()
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
-    @Test fun nodeCode1024() = nodeCode()
+    @Test fun nodeCode1024() = nodeCodeAt()
     @Config(qualifiers = "w1100dp-h680dp-land-mdpi")
-    @Test fun nodeCode1100() = nodeCode()
+    @Test fun nodeCode1100() = nodeCodeAt()
     @Config(qualifiers = "w600dp-h960dp-port-mdpi")
-    @Test fun nodeCodePortrait() = nodeCode()
+    @Test fun nodeCodePortrait() = nodeCodeAt()
 
     private fun masterCode() = shot("Master-AddCode-${sizeTag()}") { AddTabletScreen({}, "Master · Add tablet") {} }
 
@@ -703,7 +703,7 @@ class DesignScreensTest {
             ::camerasSingle, ::camerasGrid, ::camerasSpotlight, ::camerasStates, ::camerasNothingOn, ::camerasEmpty,
             ::togetherLibrary, ::togetherShows, ::togetherPick, ::togetherLibraryEmpty, ::togetherRemote,
             ::masterTabletLibrary, ::masterTabletPickDelete,
-            ::nodeHome, ::nodePin, ::nodeLocked, ::nodeBedtime, ::nodeTogether, ::nodeCode,
+            ::nodeHome, ::nodePin, ::nodeLocked, ::nodeBedtime, ::nodeTogether, ::nodeCodeAt,
         )
         try {
             screens.forEach { render -> seed(); render() }
@@ -725,6 +725,34 @@ class DesignScreensTest {
     @Test fun nodeCode960BigFont() = nodeCodeBigFont(1.5f)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun nodeCode1024BigFont() = nodeCodeBigFont(1.5f)
+
+    // ---- controls and relink fix: the Device tab and the Node's Grown-up menu at both real tablet sizes ----
+    private fun deviceTab() = shot("Control-Device-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDevice960() = deviceTab()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDevice1024() = deviceTab()
+
+    /** A Node that has not been given the brightness / screen off permission: the Master greys the controls and says why. */
+    private fun deviceTabNoPerms() {
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin").copy(brightnessOk = false, screenOffOk = false)))
+        shot("Control-Device-NoPerms-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceNoPerms960() = deviceTabNoPerms()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceNoPerms1024() = deviceTabNoPerms()
+
+    private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
+        com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {})
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeParentMenu960() = nodeMenu()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeParentMenu1024() = nodeMenu()
 
     // ---- Tapo camera on the car network ----
     private fun tapo(id: String, name: String, host: String) =

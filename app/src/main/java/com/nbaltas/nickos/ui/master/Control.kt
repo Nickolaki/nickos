@@ -92,6 +92,7 @@ import com.nbaltas.nickos.ui.theme.EyebrowText
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
+import com.nbaltas.nickos.node.ControlAccess
 import com.nbaltas.nickos.ui.theme.NickSlider
 import com.nbaltas.nickos.ui.theme.NickSwitch
 import com.nbaltas.nickos.ui.theme.ProgressBar
@@ -302,11 +303,15 @@ private fun SkipButton(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
 private fun DeviceSliders(v: NodeView) {
     val m = App.get(LocalContext.current).master
     SliderCard(Lucide.Volume2, "Volume", v.status?.volume ?: 0) { m.setVolume(v.node.id, it) }
-    SliderCard(Lucide.Sun, "Brightness", v.status?.brightness ?: 0) { m.setBrightness(v.node.id, it) }
+    SliderCard(Lucide.Sun, "Brightness", v.status?.brightness ?: 0, unavailable = brightnessReason(v)) { m.setBrightness(v.node.id, it) }
 }
 
+/** Why Brightness cannot work on this tablet yet, or null when it can. */
+private fun brightnessReason(v: NodeView): String? =
+    if (v.status?.brightnessOk == false) ControlAccess.brightnessReason(v.node.name) else null
+
 @Composable
-private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolean = false, modifier: Modifier = Modifier, onCommit: (Int) -> Unit) {
+private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolean = false, modifier: Modifier = Modifier, unavailable: String? = null, onCommit: (Int) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val shown = dragging ?: (value / 100f)
     Column(
@@ -317,11 +322,14 @@ private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolea
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp))
             Text(label, style = body(if (big) 20.sp else 19.sp, if (big) 800 else 700), color = C.text, modifier = Modifier.weight(1f))
-            if (!big) Text("${(shown * 100).roundToInt()}%", style = disp(34.sp), color = C.text)
+            if (!big && unavailable == null) Text("${(shown * 100).roundToInt()}%", style = disp(34.sp), color = C.text)
         }
-        if (big) Text("${(shown * 100).roundToInt()}%", style = disp(56.sp, 800, 1f), color = C.text)
-        Box(Modifier.padding(vertical = 12.dp)) {
-            NickSlider(shown, onChange = { dragging = it }, onCommit = { dragging = null; onCommit((it * 100).roundToInt()) })
+        if (unavailable != null) Muted(unavailable, if (big) 17 else 16)
+        else {
+            if (big) Text("${(shown * 100).roundToInt()}%", style = disp(56.sp, 800, 1f), color = C.text)
+            Box(Modifier.padding(vertical = 12.dp)) {
+                NickSlider(shown, onChange = { dragging = it }, onCommit = { dragging = null; onCommit((it * 100).roundToInt()) })
+            }
         }
     }
 }
@@ -523,11 +531,13 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                 DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true) {
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.surface2).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         val on = st?.screenOn != false
-                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f)) { m.screen(v.node.id, false) }
+                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), enabled = st?.screenOffOk != false) { m.screen(v.node.id, false) }
                         SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f)) { m.screen(v.node.id, true) }
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // One short line under Lock, so Lock is never pushed out of the card.
+                    if (st?.screenOffOk == false) Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
                 }
             },
             { mod ->
@@ -568,17 +578,28 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                 }
             },
             { mod -> SliderCard(Lucide.Volume2, "Volume", st?.volume ?: 0, big = true, modifier = mod) { m.setVolume(v.node.id, it) } },
-            { mod -> SliderCard(Lucide.Sun, "Brightness", st?.brightness ?: 0, big = true, modifier = mod) { m.setBrightness(v.node.id, it) } },
+            { mod -> SliderCard(Lucide.Sun, "Brightness", st?.brightness ?: 0, big = true, modifier = mod, unavailable = brightnessReason(v)) { m.setBrightness(v.node.id, it) } },
             { mod ->
                 DeviceCard(mod, Lucide.Settings, "Tablet", trailing = {
                     if (st != null && !st.owner) Chip(height = 30.dp, bg = C.dangerLine) { Text("Kid lock off", style = body(13.sp, 700), color = C.danger) }
                 }) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
-                        StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
-                        StartButton(Lucide.Unlink, if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", danger = true) {
+                    val unlink: @Composable (Dp) -> Unit = { h ->
+                        StartButton(Lucide.Unlink, if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", danger = true, height = h) {
                             if (confirmUnlink) { m.unlink(v.node.id); onUnlinked() } else confirmUnlink = true
                         }
+                    }
+                    // The cards are about 217dp tall on a 1024x768 or 960x600 tablet: three full buttons did not fit and
+                    // Unlink was cut off. Short cards put Restart and Rename side by side.
+                    if (tabletCompact(cardH)) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StartButton(Lucide.RefreshCw, "Restart", Modifier.weight(1f), height = 48.dp) { m.restartJellyfin(v.node.id) }
+                            StartButton(Lucide.Pencil, "Rename", Modifier.weight(1f), height = 48.dp) { renaming = true }
+                        }
+                        unlink(48.dp)
+                    } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
+                        StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
+                        unlink(60.dp)
                     }
                 }
             },
@@ -601,7 +622,7 @@ private fun DeviceCard(
     modifier: Modifier, icon: ImageVector, title: String, rotateIcon: Boolean = false,
     trailing: @Composable () -> Unit = {}, content: @Composable () -> Unit,
 ) {
-    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp).then(if (rotateIcon) Modifier.rotate90() else Modifier))
             Text(title, style = body(20.sp, 800), color = C.text, modifier = Modifier.weight(1f))
@@ -612,9 +633,10 @@ private fun DeviceCard(
 }
 
 @Composable
-private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
-        modifier.height(68.dp).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent).clickable(onClick = onClick),
+        modifier.height(68.dp).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
+            .alpha(if (enabled) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
         val col = if (on) C.onAccent else C.muted
@@ -624,19 +646,23 @@ private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modi
 }
 
 @Composable
-private fun StartButton(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
+private fun StartButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, danger: Boolean = false, height: Dp = 60.dp, onClick: () -> Unit) {
     val shape = RoundedCornerShape(18.dp)
     Row(
-        Modifier.fillMaxWidth().height(60.dp).clip(shape)
+        modifier.fillMaxWidth().height(height).clip(shape)
             .then(if (danger) Modifier.border(2.dp, C.dangerLine, shape) else Modifier.background(C.surface2))
-            .clickable(onClick = onClick).padding(horizontal = 28.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .clickable(onClick = onClick).padding(horizontal = if (height < 56.dp) 8.dp else 28.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (height < 56.dp) Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally) else Arrangement.spacedBy(12.dp),
     ) {
         val col = if (danger) C.danger else C.text
-        Icon(icon, null, tint = col, modifier = Modifier.size(20.dp))
-        Text(label, style = body(19.sp, 700), color = col, maxLines = 1)
+        Icon(icon, null, tint = col, modifier = Modifier.size(if (height < 56.dp) 18.dp else 20.dp))
+        Text(label, style = body(if (height < 56.dp) 16.sp else 19.sp, 700), color = col, maxLines = 1)
     }
 }
+
+/** True when a Device tab card is too short for three full-size buttons (every landscape tablet we support). */
+internal fun tabletCompact(cardHeight: Dp) = cardHeight < 300.dp
 
 /** Name editor used by the Device tab and Settings. [onDone] gets null on cancel. */
 @Composable
