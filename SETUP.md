@@ -81,6 +81,18 @@ The Master's Cameras screen shows the kids' tablets' front cameras next to any R
 A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
 
 Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
+## Movies without a server (Watch together)
+
+NickOS now has its own movie library, so a Jellyfin server is optional. It works with ordinary video files (MP4, MKV) in the **Movies** or **Download** folder of any tablet, the parent's tablet included. Copy files there with the Files app, a USB cable, or a browser download. Jellyfin's own downloads can't be used: the Jellyfin app keeps them in a private folder other apps can't read.
+
+On the Master: tap the TV icon in the top bar. You see every movie and show on every tablet, and which tablets have each one.
+
+- **Send** a movie to a kid's tablet: open the movie, tap Send next to the tablet (or "Send to all"). The copy goes over your WiFi from whichever tablet has the file, usually the parent's. It carries on by itself if the WiFi drops or the tablet sleeps, and it checks the copy is complete at the end. Do this at home; then the movie is on the tablet for the car.
+- **Play** a movie on one tablet or several at once: tick the tablets, Play. Pause, skip, next episode, stop and volume act on all of them together, and each tablet also has its own volume slider. A tablet that comes online late joins at the right spot. Shows are grouped when the filename has an episode code like `S02E05`.
+
+Kid tablets with the kid lock get video access by themselves. Without the kid lock, open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap **Allow videos** once. Kid tablets on an older NickOS show "Update needed" until they are updated from Settings → About.
+
+Jellyfin still works: open a tablet, Watch tab, "Jellyfin (legacy)".
 
 ## Updates
 

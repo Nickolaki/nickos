@@ -86,7 +86,7 @@ import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 
 private val sections = listOf<Pair<String, ImageVector>>(
-    "Linked tablets" to Lucide.Tablet, "Jellyfin server" to Lucide.Server, "Parent PIN" to Lucide.KeyRound,
+    "Linked tablets" to Lucide.Tablet, "Jellyfin (legacy)" to Lucide.Server, "Parent PIN" to Lucide.KeyRound,
     "Theme" to Lucide.Contrast, "About" to Lucide.Info, "Cameras" to Lucide.Camera,
 )
 
@@ -209,7 +209,7 @@ private fun JellyfinSection() {
     val nodes by app.store.nodes.collectAsState()
     var picking by remember { mutableStateOf<LinkedNode?>(null) }
     var formKey by remember { mutableStateOf(0) }
-    SectionPage("Jellyfin server", {
+    SectionPage("Jellyfin (legacy)", {
         if (account != null) NickButton("Disconnect", { app.store.setJellyfin(null); formKey++ }, style = BtnStyle.DANGER)
     }) {
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {

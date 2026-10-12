@@ -75,6 +75,9 @@ class NoDashesTest {
         File(moduleDir, "ui/master/CamTile.kt"),
         File(moduleDir, "ui/master/Cameras.kt"),
         File(testDir, "cam/StoreCamPrefsTest.kt"),
+        File(moduleDir, "ui/master/Together.kt"),
+        File(moduleDir, "ui/master/TabletLibrary.kt"),
+        File(moduleDir, "ui/node/TogetherPlayer.kt"),
         File("../SETUP.md"),
     )
 

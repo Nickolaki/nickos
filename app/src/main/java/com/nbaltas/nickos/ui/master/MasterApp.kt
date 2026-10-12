@@ -52,6 +52,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.Tablet
+import com.composables.icons.lucide.Tv
 import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.LinkedNode
@@ -101,6 +102,7 @@ sealed interface MScreen {
     data object Drawer : MScreen
     data object Cameras : MScreen
     data object QrSetup : MScreen
+    data object Together : MScreen
 }
 
 /** Everything a node card / control header needs, gathered once. */
@@ -137,6 +139,7 @@ fun MasterApp() {
                 onDrawer = { screen = MScreen.Drawer },
                 onUpdate = { screen = MScreen.Settings(4) },
                 onCameras = { screen = MScreen.Cameras },
+                onTogether = { screen = MScreen.Together },
             )
             MScreen.AddTablet -> AddTabletScreen(back = { screen = MScreen.Home }, step = "Master · Add tablet", onQr = { screen = MScreen.QrSetup }) { screen = MScreen.Linked(it) }
             MScreen.QrSetup -> QrSetupScreen(onBack = { screen = MScreen.AddTablet })
@@ -149,6 +152,7 @@ fun MasterApp() {
             )
             is MScreen.Settings -> SettingsScreen(s.section, onSection = { screen = MScreen.Settings(it) }, onBack = { screen = MScreen.Home }, onAdd = { screen = MScreen.AddTablet })
             MScreen.Cameras -> CamerasScreen(onBack = { screen = MScreen.Home }, onSettings = { screen = MScreen.Settings(it) })
+            MScreen.Together -> TogetherScreen(onBack = { screen = MScreen.Home }, onSettings = { screen = MScreen.Settings(it) })
             MScreen.Drawer -> {
                 val ctx = LocalContext.current
                 val pinned by app.store.quickApps.collectAsState()
@@ -179,7 +183,7 @@ private fun Toast(text: String, modifier: Modifier) {
 // ---------------- Home ----------------
 
 @Composable
-internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
+internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit) {
     val app = App.get(LocalContext.current)
     val views = rememberNodeViews()
     val account by app.store.jellyfin.collectAsState()
@@ -188,7 +192,7 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
     val portrait = LocalConfiguration.current.let { it.screenHeightDp > it.screenWidthDp }
     val pad = if (portrait) 32.dp else 40.dp
     Column(Modifier.fillMaxSize()) {
-        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras)
+        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
             return@Column
@@ -218,9 +222,10 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
 }
 
 @Composable
-private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit) {
+private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit) {
     val ctx = LocalContext.current
     val app = App.get(ctx)
+    val session by app.master.sync.session.collectAsState()
     val now = rememberNow(1000)
     val name by app.store.name.collectAsState()
     val quick by app.store.quickApps.collectAsState()
@@ -263,6 +268,14 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
             Text("${name.ifBlank { "Parent's Tablet" }} · Master", style = body(16.sp, 700), color = C.text, maxLines = 1)
         }
         IconCircle(Lucide.Cctv, onCameras)
+        if (session != null) {
+            Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onTogether), height = 48.dp, bg = C.accent) {
+                Icon(Lucide.Tv, null, tint = C.onAccent, modifier = Modifier.size(20.dp))
+                Text("Watching together", style = body(16.sp, 700), color = C.onAccent)
+            }
+        } else {
+            IconCircle(Lucide.Tv, onTogether)
+        }
         IconCircle(Lucide.Settings, onSettings)
     }
 }
@@ -315,6 +328,9 @@ fun StatusLine(v: NodeView, size: Int, dot: Dp, text: String = statusText(v)) {
 
 @Composable
 private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modifier, onClick: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val session by app.master.sync.session.collectAsState()
+    val receiving = app.master.transfer.receiving(v.node.id)
     Column(
         modifier.clip(RoundedCornerShape(30.dp)).background(C.surface).clickable(onClick = onClick).padding(horizontal = 26.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -358,6 +374,28 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
                         Text(fmtTicks(pos), style = body(16.sp, 600).copy(fontFeatureSettings = "tnum"), color = C.muted)
                         Text("${(item.runTicks - pos).coerceAtLeast(0) / JfItem.TICKS_PER_MIN} min left", style = body(16.sp, 600), color = C.muted)
                     }
+                }
+            }
+            session != null && v.node.id in session!!.nodes -> Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                val together = session!!
+                val frac = if (together.durMs > 0) app.master.sync.expectedPos().toFloat() / together.durMs else 0f
+                com.nbaltas.nickos.ui.theme.Artwork(null, together.title, Modifier.size(124.dp, 186.dp), radius = 14.dp)
+                Column(Modifier.weight(1f).height(186.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EyebrowText("Watching together", C.accent)
+                    Title(together.title, 32, lineHeight = 1.05f, maxLines = 1)
+                    Spacer(Modifier.weight(1f))
+                    ProgressBar(frac)
+                }
+            }
+            receiving != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                val devStatus = v.status
+                val locked = devStatus?.lockedBy != null
+                AppTileIcon(if (locked) null else v.fgApp, Lucide.Download, 124.dp, 34.dp, v.node.color)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EyebrowText("Receiving")
+                    val pct = com.nbaltas.nickos.sync.TogetherText.percent(receiving.done, receiving.size)
+                    Title(receiving.title.ifEmpty { "a movie" }, 28, lineHeight = 1.05f, maxLines = 1)
+                    Muted("Receiving ${receiving.title} · $pct%", 18)
                 }
             }
             else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(22.dp)) {

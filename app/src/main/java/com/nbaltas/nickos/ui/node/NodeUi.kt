@@ -387,6 +387,8 @@ fun ParentMenu(
     onReset: () -> Unit,
     /** Non-null while the camera permission is missing: shows the "Allow camera" row. */
     onAllowCamera: (() -> Unit)? = null,
+    videosAllowed: Boolean = true,
+    onAllowVideos: () -> Unit = {},
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -405,6 +407,7 @@ fun ParentMenu(
             MenuButton("All apps", onClick = onAllApps)
             MenuButton("Android settings", onClick = onSettings)
             if (onAllowCamera != null) MenuButton("Allow camera", onClick = onAllowCamera)
+            if (!videosAllowed) MenuButton("Allow videos", onClick = onAllowVideos)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {

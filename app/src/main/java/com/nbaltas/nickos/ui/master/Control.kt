@@ -119,11 +119,15 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
         onDispose { app.master.fastPoll = false }
     }
 
+    val session by app.master.sync.session.collectAsState()
+    val inTogether = session?.nodes?.contains(nodeId) == true
+
     Column(Modifier.fillMaxSize()) {
         ControlHeader(v, tab, onTab, onBack)
         Box(Modifier.fillMaxSize()) {
             when {
-                tab == TAB_WATCH -> WatchTab(v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
+                tab == TAB_WATCH -> TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
+                tab == TAB_NOW && inTogether -> TabletRemote(nodeId)
                 !v.online -> OfflineBody(v, onBack)
                 tab == TAB_NOW -> if (v.playback?.item != null) NowPlaying(v) else NothingPlaying(v) { onTab(TAB_WATCH) }
                 tab == TAB_APPS -> AppsTab(v)
