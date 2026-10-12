@@ -191,10 +191,10 @@ class CarNet(
     /** The parent answered the permission prompt, or pressed try again: forget past failures and look now. */
     fun recheck() { recheckPending = true; poke() }
 
-    /** The one permission string to ask for on this Android version, or null when held or not applicable. */
-    fun permissionToRequest(): String? {
-        if (sdk < 29 || unsupportedSeen || !safe(true) { port.supported() } || safe(false) { port.hasPermission() }) return null
-        return if (sdk >= 33) NEARBY_WIFI_DEVICES else ACCESS_FINE_LOCATION
+    /** The permissions to ask for in one prompt on this Android version, empty when held or not applicable. */
+    fun permissionToRequest(): List<String> {
+        if (sdk < 29 || unsupportedSeen || !safe(true) { port.supported() } || safe(false) { port.hasPermission() }) return emptyList()
+        return permissionsFor(sdk)
     }
 
     /** Idempotent. A start right after a [stop] waits for that stop's group removal to finish first. */
@@ -225,7 +225,9 @@ class CarNet(
             withContext(NonCancellable) {
                 l.join()
                 val g = withTimeoutOrNull(config.callTimeoutMs) { try { port.groupInfo() } catch (e: Exception) { null } }
-                if (g != null && g.name == ssid) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
+                // A query that failed or timed out (null) is not proof there is no group: remove best-effort then.
+                // Only a group that is positively someone else's is left alone.
+                if (g == null || g.name == ssid) withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
                 try { port.close() } catch (_: Exception) {}
             }
         }
@@ -331,5 +333,13 @@ class CarNet(
         const val TAG = "NickOS.CarNet"
         const val NEARBY_WIFI_DEVICES = "android.permission.NEARBY_WIFI_DEVICES"
         const val ACCESS_FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
+        const val ACCESS_COARSE_LOCATION = "android.permission.ACCESS_COARSE_LOCATION"
+
+        /** What to ask for on [sdk]. Android 12 ignores a fine-location request unless coarse is asked in the same prompt. */
+        fun permissionsFor(sdk: Int): List<String> = when {
+            sdk >= 33 -> listOf(NEARBY_WIFI_DEVICES)
+            sdk >= 31 -> listOf(ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION)
+            else -> listOf(ACCESS_FINE_LOCATION)
+        }
     }
 }

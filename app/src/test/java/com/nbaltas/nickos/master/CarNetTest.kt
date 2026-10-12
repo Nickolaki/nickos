@@ -343,18 +343,38 @@ class CarNetTest {
         val n = net(p)
         n.start()
         waitFor("needs permission") { n.off() == Why.NO_PERMISSION }
-        assertEquals(CarNet.NEARBY_WIFI_DEVICES, n.permissionToRequest())
+        assertEquals(listOf(CarNet.NEARBY_WIFI_DEVICES), n.permissionToRequest())
         p.permission = true
         n.recheck()
         waitFor("on") { n.isOn() }
-        assertNull(n.permissionToRequest())
+        assertTrue(n.permissionToRequest().isEmpty())
     }
 
-    @Test fun `the permission to ask for follows the android version`() {
+    @Test fun `the permissions to ask for follow the android version`() {
         val p = FakeP2p(); p.permission = false
-        assertEquals(CarNet.NEARBY_WIFI_DEVICES, net(p, sdk = 33).permissionToRequest())
-        assertEquals(CarNet.ACCESS_FINE_LOCATION, net(p, sdk = 31).permissionToRequest())
-        assertNull(net(p, sdk = 28).permissionToRequest())
+        val fine = CarNet.ACCESS_FINE_LOCATION
+        val coarse = CarNet.ACCESS_COARSE_LOCATION
+        assertEquals(listOf(fine), net(p, sdk = 29).permissionToRequest())
+        assertEquals(listOf(fine), net(p, sdk = 30).permissionToRequest())
+        // Android 12 ignores a fine-only request, so coarse goes in the same prompt.
+        assertEquals(listOf(fine, coarse), net(p, sdk = 31).permissionToRequest())
+        assertEquals(listOf(fine, coarse), net(p, sdk = 32).permissionToRequest())
+        assertEquals(listOf(CarNet.NEARBY_WIFI_DEVICES), net(p, sdk = 33).permissionToRequest())
+        assertEquals(listOf(CarNet.NEARBY_WIFI_DEVICES), net(p, sdk = 34).permissionToRequest())
+        assertTrue(net(p, sdk = 28).permissionToRequest().isEmpty())
+        p.permission = true
+        assertTrue(net(p, sdk = 31).permissionToRequest().isEmpty())
+    }
+
+    @Test fun `stop removes the group even when the shutdown query times out`() {
+        val p = FakeP2p()
+        val n = net(p)
+        n.start()
+        waitFor("on") { n.isOn() }
+        p.groupInfoHangs = true                   // the query at shutdown never answers
+        n.stop()
+        waitFor("removed anyway") { p.group == null }
+        waitFor("closed") { "close" in p.events }
     }
 
     @Test fun `start twice is one loop`() {

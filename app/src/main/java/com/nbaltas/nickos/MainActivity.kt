@@ -82,10 +82,10 @@ class MainActivity : ComponentActivity() {
 
     /** The Wi-Fi Direct group needs one permission (nearby devices, or location on older Android). Asked once per start. */
     private fun askForCarNetPermission() {
-        val perm = app.master.carNet.permissionToRequest() ?: return
-        if (askedCarNet) return
+        val perms = app.master.carNet.permissionToRequest()
+        if (perms.isEmpty() || askedCarNet) return
         askedCarNet = true
-        try { requestPermissions(arrayOf(perm), REQ_CARNET) } catch (_: Exception) {}
+        try { requestPermissions(perms.toTypedArray(), REQ_CARNET) } catch (_: Exception) {}
     }
 
     @Deprecated("Deprecated in Java")

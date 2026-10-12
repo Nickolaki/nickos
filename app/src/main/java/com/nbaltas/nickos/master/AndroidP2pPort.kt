@@ -79,6 +79,8 @@ class AndroidP2pPort(ctx: Context) : P2pPort {
     override fun close() {
         receiver?.let { try { app.unregisterReceiver(it) } catch (_: Exception) {} }
         receiver = null
+        // Release the framework's client for this channel (API 27+): without it every stop and start leaks one.
+        try { channel?.close() } catch (_: Throwable) {}
         channel = null
     }
 
@@ -165,7 +167,8 @@ class AndroidP2pPort(ctx: Context) : P2pPort {
     override suspend fun removeGroup(): Boolean {
         val m = manager ?: return true
         val ch = channel() ?: return false
-        if (groupInfo() == null) return true
+        // No pre-check by groupInfo: a query that timed out would read as "no group" and leave the group hosted. A
+        // removal with nothing to remove just fails, which is harmless here.
         return withTimeoutOrNull(TIMEOUT_MS) {
             suspendCancellableCoroutine { k ->
                 val l = object : WifiP2pManager.ActionListener {
