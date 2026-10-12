@@ -11,6 +11,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.RoborazziOptions
@@ -418,4 +422,137 @@ class DesignScreensTest {
     @Test fun nodePin() { nodeSeed(); shot("Node-PIN") { kidHome(); PinPad("1234", {}, {}) } }
     @Test fun nodeLocked() { nodeSeed(); shot("Node-Locked") { LockedScreen(app.store, "Dad's Tablet") } }
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToast(300) } }
+
+    // ---- brief D: the six designed screens that had no picture (Control-Watch, Control-Movie, Control-Series,
+    //      Master-Jellyfin, Master-Linked, Node-Code). Appended; the designer's originals are kept in design/handoff. ----
+
+    @Test fun masterJellyfin() = shot("Master-Jellyfin") { com.nbaltas.nickos.ui.setup.JellyfinSetupScreen({}, {}) }
+
+    @Test fun masterLinked() {
+        val node = app.store.nodes.value.first { it.id == "aaaaaaaaaaaa" }
+        val result = MasterRuntime.PairResult(node, status(82, fg = null, fgLabel = null))
+        shot("Master-Linked") { com.nbaltas.nickos.ui.setup.LinkedScreen(result, {}, {}) }
+    }
+
+    /** NodeCodeScreen starts the node service and draws a random code, so this lays out its two parts with a fixed code. */
+    @Test fun nodeCode() {
+        app.store.setName("Hailey's Tablet"); app.store.setColor(0)
+        shot("Node-Code") {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                com.nbaltas.nickos.ui.theme.SetupHeader("Node · Step 3 of 3", {})
+                com.nbaltas.nickos.ui.setup.PairingCodeBody("Hailey's Tablet", 0, app.store.avatar.value, "482916")
+            }
+        }
+    }
+
+    // A tiny Jellyfin on 127.0.0.1 so the three Jellyfin screens render real rows. No image URLs are offered, so
+    // every poster is the app's own gradient artwork and nothing leaves the machine.
+    private fun jfJson(
+        id: String, name: String, type: String, run: Long = 0, pos: Long = 0, played: Boolean = false,
+        series: String? = null, seriesName: String? = null, season: Int? = null, index: Int? = null,
+        seasonId: String? = null, overview: String? = null, rating: String? = null, year: Int? = null,
+    ): String {
+        val o = org.json.JSONObject().put("Id", id).put("Name", name).put("Type", type)
+        if (run > 0) o.put("RunTimeTicks", run * JfItem.TICKS_PER_SEC)
+        o.put("UserData", org.json.JSONObject().put("PlaybackPositionTicks", pos * JfItem.TICKS_PER_SEC).put("Played", played))
+        series?.let { o.put("SeriesId", it) }; seriesName?.let { o.put("SeriesName", it) }
+        season?.let { o.put("ParentIndexNumber", it) }; index?.let { o.put("IndexNumber", it) }
+        seasonId?.let { o.put("SeasonId", it) }; overview?.let { o.put("Overview", it) }
+        rating?.let { o.put("OfficialRating", it) }; year?.let { o.put("ProductionYear", it) }
+        return o.toString()
+    }
+
+    private fun fakeJellyfin(): java.net.ServerSocket {
+        val min = 60L
+        val resume = listOf(
+            jfJson("e25", "The Lighthouse", "Episode", 24 * min + 10, 18 * min + 2, series = "sh", seriesName = "Star Harbour", season = 2, index = 5, seasonId = "s2"),
+            jfJson("cc", "Captain Comet", "Movie", 92 * min, 51 * min + 10, overview = "A small-town kid finds a comet in the backyard and has one night to send it home.", rating = "G"),
+            jfJson("mp3", "The Fog Bell", "Episode", 22 * min, 10 * min, series = "mp", seriesName = "Moss & Pebble", season = 1, index = 3, seasonId = "mps1"),
+            jfJson("sf", "The Snow Fox", "Movie", 80 * min, 18 * min),
+            jfJson("rp", "Robo Pals", "Episode", 22 * min, 3 * min, series = "rps", seriesName = "Robo Pals", season = 3, index = 1, seasonId = "rp3"),
+        )
+        val nextUp = listOf(
+            jfJson("lv4", "Night Market", "Episode", 24 * min, series = "lv", seriesName = "Lantern Valley", season = 1, index = 4, seasonId = "lv1"),
+            jfJson("dd1", "Bones!", "Episode", 24 * min, series = "dd", seriesName = "Dino Dig Crew", season = 2, index = 1, seasonId = "dd2"),
+            jfJson("oe9", "The Reef", "Episode", 24 * min, series = "oe", seriesName = "Ocean Explorers", season = 1, index = 9, seasonId = "oe1"),
+            jfJson("wk2", "Pancakes", "Episode", 24 * min, series = "wk", seriesName = "Wild Kitchen", season = 1, index = 2, seasonId = "wk1"),
+            jfJson("tt7", "Big Surprise", "Episode", 24 * min, series = "tt", seriesName = "Tiny Tugboat", season = 1, index = 7, seasonId = "tt1"),
+        )
+        val movies = listOf(
+            jfJson("cc", "Captain Comet", "Movie", 92 * min, 51 * min + 10, year = 2021),
+            jfJson("sf", "The Snow Fox", "Movie", 80 * min, 18 * min, year = 2019),
+            jfJson("mm", "Moon Mice", "Movie", 76 * min, year = 2022),
+        )
+        val shows = listOf(jfJson("sh", "Star Harbour", "Series", year = 2020), jfJson("mp", "Moss & Pebble", "Series", year = 2018))
+        val episodes = listOf(
+            jfJson("e21", "Welcome Aboard", "Episode", 23 * min, 23 * min, true, "sh", "Star Harbour", 2, 1, "s2"),
+            jfJson("e22", "Seagull Trouble", "Episode", 24 * min, 24 * min, true, "sh", "Star Harbour", 2, 2, "s2"),
+            jfJson("e23", "The Night Crossing", "Episode", 22 * min, 22 * min, true, "sh", "Star Harbour", 2, 3, "s2"),
+            jfJson("e24", "Treasure Buoy", "Episode", 24 * min, 24 * min, true, "sh", "Star Harbour", 2, 4, "s2"),
+            resume[0],
+            jfJson("e26", "Fog Horn", "Episode", 23 * min, 0, false, "sh", "Star Harbour", 2, 6, "s2"),
+        )
+        val series = jfJson("sh", "Star Harbour", "Series", rating = "G", overview = "A little tugboat crew keeps the harbour lights on for every ship that comes home.")
+        val seasons = listOf(jfJson("s1", "Season 1", "Season"), jfJson("s2", "Season 2", "Season"))
+        fun arr(l: List<String>) = "{\"Items\":[" + l.joinToString(",") + "]}"
+        val byId = (resume + nextUp + movies + episodes).associateBy { org.json.JSONObject(it).getString("Id") } + ("sh" to series)
+
+        val server = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        Thread {
+            while (!server.isClosed) {
+                val sock = try { server.accept() } catch (e: Exception) { break }
+                Thread {
+                    sock.use {
+                        val reader = it.getInputStream().bufferedReader()
+                        val target = reader.readLine()?.split(" ")?.getOrNull(1) ?: return@use
+                        while (reader.readLine()?.isNotEmpty() == true) { /* skip the headers */ }
+                        val path = target.substringBefore('?'); val q = target.substringAfter('?', "")
+                        val body = when {
+                            path == "/Users/u1/Items/Resume" -> arr(if ("ParentId=" in q) listOf(resume[0]) else resume)
+                            path == "/Shows/NextUp" -> arr(nextUp)
+                            path == "/Users/u1/Items" -> arr(if ("IncludeItemTypes=Series" in q) shows else movies)
+                            path.startsWith("/Users/u1/Items/") -> byId[path.substringAfterLast('/')]
+                            path.endsWith("/Seasons") -> arr(seasons)
+                            path.endsWith("/Episodes") -> arr(episodes)
+                            else -> null
+                        }
+                        val bytes = (body ?: "").toByteArray()
+                        val head = (if (body == null) "HTTP/1.1 404 Not Found" else "HTTP/1.1 200 OK") +
+                            "\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                        it.getOutputStream().apply { write(head.toByteArray()); write(bytes); flush() }
+                    }
+                }.start()
+            }
+        }.apply { isDaemon = true }.start()
+        return server
+    }
+
+    /** Runs the Control screen's Watch tab against [fakeJellyfin], opens the Jellyfin library, optionally taps [open], and saves the picture. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    private fun jellyfinShot(name: String, open: String?, waitFor: String) {
+        val server = fakeJellyfin()
+        try {
+            app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
+            app.store.upsertNode(app.store.nodes.value.first { it.id == "aaaaaaaaaaaa" }.copy(jfUserId = "u1", jfUserName = "Hailey"))
+            androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+                setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {}) } } }
+                onNode(hasText("Jellyfin", substring = true) and hasClickAction()).performClick()
+                fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
+                waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
+                if (open != null) {
+                    onAllNodes(hasText(open))[0].performClick()
+                    waitUntil(timeoutMillis = 20_000) { has(waitFor) }
+                }
+                waitForIdle()
+                onRoot().captureRoboImage(
+                    "../design/screens/$name.png",
+                    roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+                )
+            }
+        } finally { server.close() }
+    }
+
+    @Test fun controlWatch() = jellyfinShot("Control-Watch", null, "Continue Watching")
+    @Test fun controlMovie() = jellyfinShot("Control-Movie", "Captain Comet", "Play from start")
+    @Test fun controlSeries() = jellyfinShot("Control-Series", "Star Harbour", "Fog Horn")
 }
