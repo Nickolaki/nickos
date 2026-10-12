@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +59,7 @@ import com.nbaltas.nickos.ui.theme.body
  * The NickOS library scoped to one tablet ([nodeId]): the same grid and pick panel as
  * [TogetherScreen] but filtered to what that tablet has, with legacy Jellyfin behind a toggle.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
     val app = App.get(LocalContext.current)
@@ -89,12 +92,29 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it })
-        Spacer(Modifier.height(16.dp))
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
+        val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.Start),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it })
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Muted("$count on ${v.node.name}", 15)
+                if (jfAccount != null) {
+                    NickButton("Jellyfin library", { legacy = true }, style = BtnStyle.GHOST, leading = Lucide.Server)
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
         if (visible.isEmpty()) {
             Box(Modifier.weight(1f)) {
-                CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet.") {
+                CenterMessage(
+                    if (segment == 0) "No movies yet" else "No shows yet",
+                    if (segment == 0) "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet."
+                    else "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.",
+                ) {
                     NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
                 }
             }
@@ -116,10 +136,6 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
                     }
                 }
             }
-        }
-        if (jfAccount != null) {
-            Spacer(Modifier.height(12.dp))
-            NickButton("Jellyfin library", { legacy = true }, style = BtnStyle.GHOST, leading = Lucide.Server)
         }
     }
 }

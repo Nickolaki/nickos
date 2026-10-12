@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -403,9 +404,15 @@ internal fun TogetherRemote(onBack: () -> Unit) {
             Column(Modifier.padding(40.dp)) {
                 BackButton(onBack)
                 Spacer(Modifier.height(20.dp))
-                EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
-                Title(s.title, if (narrow) 40 else 64, lineHeight = 1.0f)
-                Muted("On $names", 22, Modifier.padding(top = 6.dp))
+                // The poster sits left of the title block, as on the tablet pick panel.
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    MovieThumb(thumbs[s.fid], s.title, Modifier.height(if (narrow) 160.dp else 225.dp).aspectRatio(16f / 9f), showTitle = false)
+                    Column(Modifier.weight(1f)) {
+                        EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
+                        Title(s.title, if (narrow) 40 else 64, lineHeight = 1.0f)
+                        Muted("On $names", 22, Modifier.padding(top = 6.dp))
+                    }
+                }
                 Spacer(Modifier.height(24.dp))
                 if (s.durMs > 0) {
                     NickSlider(

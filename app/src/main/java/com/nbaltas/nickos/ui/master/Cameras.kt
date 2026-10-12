@@ -221,7 +221,8 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 20.dp),
             ) {
                 BackButton(onBack)
-                Title("Cameras", 40, Modifier.weight(1f), maxLines = 1)
+                // Phone width: no room for a title (it truncated to "C..."), the tiles say what this is.
+                if (phone) Spacer(Modifier.weight(1f)) else Title("Cameras", 40, Modifier.weight(1f), maxLines = 1)
                 IconCircle(Lucide.Settings, { onSettings(2) }, size = if (phone) 48.dp else 60.dp)
                 if (roomy) Segmented(listOf("Auto" to null, "Grid" to null, "Spotlight" to null), override, { override = it })
                 // Phone width: "Add camera" leaves the title no room.

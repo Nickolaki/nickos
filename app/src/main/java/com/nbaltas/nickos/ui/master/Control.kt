@@ -3,6 +3,7 @@ package com.nbaltas.nickos.ui.master
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -477,7 +478,10 @@ private fun AppsTab(v: NodeView) {
                         }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
                         Row(
-                            Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 14.dp, end = 12.dp),
+                            // The whole row is the target, not just the switch: a reach from the driver's seat must not open the app by mistake.
+                            Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                                .toggleable(a.pkg in allowed, role = androidx.compose.ui.semantics.Role.Switch) { m.allow(v.node.id, a.pkg, it) }
+                                .padding(start = 14.dp, end = 12.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text("Home", style = body(14.sp, 600), color = C.muted)

@@ -185,9 +185,8 @@ private fun Placeholder(
         val text = when {
             tablet != null -> CamText.tile(display, tablet.name, minutes)
             rtspUp == false -> CamText.RTSP_ERROR
-            // The label at the bottom already names a strip tile.
-            compact -> ""
-            else -> source.name
+            // The chip along the bottom already names the camera; the icon alone reads as "no picture".
+            else -> ""
         }
         if (text.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
