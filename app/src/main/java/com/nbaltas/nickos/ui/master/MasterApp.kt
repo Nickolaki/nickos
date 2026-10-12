@@ -138,7 +138,7 @@ fun MasterApp() {
                 onAdd = { screen = MScreen.AddTablet },
                 onSettings = { screen = MScreen.Settings() },
                 onDrawer = { screen = MScreen.Drawer },
-                onUpdate = { screen = MScreen.Settings(4) },
+                onUpdate = { screen = MScreen.Settings(5) },
                 onCameras = { screen = MScreen.Cameras },
                 onTogether = { screen = MScreen.Together },
             )
@@ -295,7 +295,7 @@ private fun EmptyHome(onAdd: () -> Unit) {
             }
         }
         Title("No tablets linked yet", 48, Modifier.padding(top = 12.dp), lineHeight = 1.05f)
-        Muted("Set up the kid's tablet as a Node. It will show a 6-digit code — enter it here.", 21, Modifier.widthIn(max = 600.dp))
+        Muted("Set up the kid's tablet as a Node. It will show a 6-digit code. Enter it here.", 21, Modifier.widthIn(max = 600.dp))
         NickButton("Add tablet", onAdd, Modifier.padding(top = 8.dp), BtnStyle.PRIMARY, big = true, leading = Lucide.Plus)
     }
 }
@@ -355,7 +355,7 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Title("Can't reach this tablet", 28, lineHeight = 1.1f)
-                    Muted("Check it's switched on and on the same WiFi. Reset it? Tap to unlink.", 18)
+                    Muted("Check it's switched on and on the same WiFi. Reset it? Unlink it from the Device tab.", 18)
                 }
             }
             pb != null && item != null -> Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -465,9 +465,9 @@ fun fmtTicks(t: Long): String {
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
-/** "S2 · E5 — The Lighthouse" for episodes, year for movies. */
+/** "S2 · E5 · The Lighthouse" for episodes, year for movies. */
 fun episodeLine(i: JfItem): String = when {
-    i.isEpisode && i.season != null && i.index != null -> "S${i.season} · E${i.index} — ${i.name}"
+    i.isEpisode && i.season != null && i.index != null -> "S${i.season} · E${i.index} · ${i.name}"
     i.isEpisode -> i.name
     else -> listOfNotNull(i.year?.toString(), i.rating).joinToString(" · ").ifEmpty { "Movie" }
 }

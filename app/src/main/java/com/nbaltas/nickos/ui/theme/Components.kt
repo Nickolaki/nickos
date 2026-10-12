@@ -236,7 +236,7 @@ fun Battery(pct: Int?, charging: Boolean, textSize: Int, iconSize: Dp = 28.dp, d
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(batteryIcon(pct ?: 100, charging), null, tint = col, modifier = Modifier.size(iconSize))
-        Text(if (pct == null) "–" else "$pct%", style = disp(textSize.sp, 800, 1f), color = col, maxLines = 1, softWrap = false)
+        if (pct != null) Text("$pct%", style = disp(textSize.sp, 800, 1f), color = col, maxLines = 1, softWrap = false)
     }
 }
 

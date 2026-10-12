@@ -186,7 +186,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                 val label = TogetherText.chip(n.online, capable, n.node.id in scanning, true, Library.ownedBy(library, n.node.id).size, transfer.downloading(n.node.id))
                 Chip(Modifier.clickable {
                     when (label) {
-                        "Update needed" -> onSettings(4)
+                        "Update needed" -> onSettings(5)
                         "No video access" -> master.say("On ${n.node.name}, hold the avatar, enter the PIN, then tap Allow videos")
                         else -> {}
                     }
@@ -217,7 +217,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                 NickButton("All tablets", onBack, style = BtnStyle.GHOST, big = true)
             }
             onlineNodes.isNotEmpty() && capableOnline.isEmpty() -> CenterMessage("Update the kids' tablets", "Watch together needs the latest NickOS on each tablet. Update them from Settings, then come back.") {
-                NickButton("Open Settings", { onSettings(4) }, style = BtnStyle.PRIMARY, big = true)
+                NickButton("Open Settings", { onSettings(5) }, style = BtnStyle.PRIMARY, big = true)
             }
             else -> {
                 val visible = if (segment == 0) Library.movies(library) else null
@@ -228,7 +228,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                         segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
                             NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
                         }
-                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
+                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.") {
                             NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
                         }
                         segment == 0 -> LibraryGrid(visible!!, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
@@ -365,11 +365,11 @@ internal fun PickPanel(
         }
         Spacer(Modifier.height(20.dp))
         val k = selected.size
-        val playLabel = if (k == 1) "Play on ${sync.kid(selected.first())}'s tablet" else "Play on $k tablets"
+        val playLabel = if (k == 1) "Play on ${nodes.firstOrNull { it.node.id == selected.first() }?.node?.name ?: sync.kid(selected.first())}" else "Play on $k tablets"
         NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0)
         Spacer(Modifier.height(12.dp))
         val j = lacking.size
-        NickButton("Send to $j tablets", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = true, leading = Lucide.Send, enabled = j > 0 && sendBlocked == null)
+        if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = true, leading = Lucide.Send, enabled = sendBlocked == null)
     }
 }
 

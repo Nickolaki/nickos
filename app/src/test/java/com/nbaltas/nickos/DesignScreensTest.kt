@@ -198,10 +198,10 @@ class DesignScreensTest {
     @Test fun controlDevice() = shot("Control-Device") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
     @Test fun settingsTablets() = shot("Settings-Tablets") { SettingsScreen(0, {}, {}, {}) }
     @Test fun settingsJellyfin() = shot("Settings-Jellyfin") { SettingsScreen(1, {}, {}, {}) }
-    @Test fun settingsPin() = shot("Settings-PIN") { SettingsScreen(2, {}, {}, {}) }
-    @Test fun settingsTheme() = shot("Settings-Theme") { SettingsScreen(3, {}, {}, {}) }
-    @Test fun settingsAbout() = shot("Settings-About") { SettingsScreen(4, {}, {}, {}) }
-    @Test fun settingsCameras() = shot("Settings-Cameras") { SettingsScreen(5, {}, {}, {}) }
+    @Test fun settingsPin() = shot("Settings-PIN") { SettingsScreen(3, {}, {}, {}) }
+    @Test fun settingsTheme() = shot("Settings-Theme") { SettingsScreen(4, {}, {}, {}) }
+    @Test fun settingsAbout() = shot("Settings-About") { SettingsScreen(5, {}, {}, {}) }
+    @Test fun settingsCameras() = shot("Settings-Cameras") { SettingsScreen(2, {}, {}, {}) }
 
     // ---- cameras (section 11 of the tablet-cameras brief) ----
     private val CH = "aaaaaaaaaaaa"

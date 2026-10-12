@@ -78,6 +78,14 @@ class NoDashesTest {
         File(moduleDir, "ui/master/Together.kt"),
         File(moduleDir, "ui/master/TabletLibrary.kt"),
         File(moduleDir, "ui/node/TogetherPlayer.kt"),
+        // UI copy (brief A).
+        File(moduleDir, "ui/master/MasterApp.kt"),
+        File(moduleDir, "ui/master/Control.kt"),
+        File(moduleDir, "ui/master/Watch.kt"),
+        File(moduleDir, "ui/theme/Components.kt"),
+        File(moduleDir, "ui/node/NodeUi.kt"),
+        File(moduleDir, "ui/master/Settings.kt"),
+        File(moduleDir, "ui/setup/Setup.kt"),
         File("../SETUP.md"),
     )
 

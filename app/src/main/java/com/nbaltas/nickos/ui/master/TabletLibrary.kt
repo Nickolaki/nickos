@@ -119,7 +119,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         }
         if (jfAccount != null) {
             Spacer(Modifier.height(12.dp))
-            NickButton("Jellyfin (legacy)", { legacy = true }, style = BtnStyle.GHOST, leading = Lucide.Server)
+            NickButton("Jellyfin library", { legacy = true }, style = BtnStyle.GHOST, leading = Lucide.Server)
         }
     }
 }

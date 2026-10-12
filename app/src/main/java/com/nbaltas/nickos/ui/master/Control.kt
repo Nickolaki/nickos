@@ -218,7 +218,7 @@ private fun NowPlaying(v: NodeView) {
                         Artwork(jf?.landscape(n, 300), "", Modifier.size(128.dp, 72.dp), radius = 12.dp, showTitle = false)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             EyebrowText("Up next")
-                            Text("E${n.index ?: ""} — ${n.name}", style = body(18.sp, 700), color = C.text, maxLines = 2)
+                            Text("E${n.index ?: ""} · ${n.name}", style = body(18.sp, 700), color = C.text, maxLines = 2)
                         }
                     }
                 }
@@ -531,7 +531,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                                 Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(if (sel) C.accent else C.surface2)
                                     .clickable { chosen = min; m.bedtime(v.node.id, min) },
                                 contentAlignment = Alignment.Center,
-                            ) { Text("${min}m", style = body(18.sp, 600), color = if (sel) C.onAccent else C.text) }
+                            ) { Text("$min min", style = body(18.sp, 600), color = if (sel) C.onAccent else C.text) }
                         }
                     }
                     if (at > 0) {
