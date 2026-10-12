@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +55,7 @@ import com.nbaltas.nickos.ui.theme.Segmented
 import com.nbaltas.nickos.ui.theme.Solid
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
+import kotlinx.coroutines.delay
 
 /**
  * The NickOS library scoped to one tablet ([nodeId]): the same grid and pick panel as
@@ -87,13 +89,15 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     var openItem by remember { mutableStateOf<LibraryItem?>(null) }
 
     openItem?.let { item ->
-        TabletPickPanel(item, nodeId, thumbs[item.fid], sync, transfer, onBack = { openItem = null })
+        TabletPickPanel(item, nodeId, thumbs[item.fid], sync, transfer, canDelete = v.status?.supportsDelete == true, onBack = { openItem = null })
         return
     }
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
         val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
+        EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1))
+        Spacer(Modifier.height(10.dp))
         FlowRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.Start),
@@ -141,15 +145,21 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
 }
 
 @Composable
-private fun TabletPickPanel(
+internal fun TabletPickPanel(
     item: LibraryItem,
     nodeId: String,
     thumb: android.graphics.Bitmap?,
     sync: com.nbaltas.nickos.master.SyncController,
     transfer: com.nbaltas.nickos.master.TransferController,
+    canDelete: Boolean,
     onBack: () -> Unit,
 ) {
     val jobsMap by transfer.jobs.collectAsState()
+    val deletingNow by transfer.deletingNow.collectAsState()
+    // Two taps: the first arms the button, which goes back to idle after 4 s or when another movie opens.
+    var confirmDelete by remember(item.fid) { mutableStateOf(false) }
+    LaunchedEffect(confirmDelete) { if (confirmDelete) { delay(4000); confirmDelete = false } }
+    val pendingDelete = "$nodeId:${item.fid}" in deletingNow
     val has = nodeId in item.owners
     val job = transfer.jobFor(nodeId, item.fid)
     val jobState = job?.let { JobState.of(it.state) }
@@ -169,7 +179,19 @@ private fun TabletPickPanel(
         }
         Spacer(Modifier.height(24.dp))
         when {
-            has -> NickButton("Play", { sync.start(item.fid, item.title, item.durMs, setOf(nodeId)) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play)
+            has -> Column {
+                NickButton("Play", { sync.start(item.fid, item.title, item.durMs, setOf(nodeId)) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play)
+                Spacer(Modifier.height(12.dp))
+                if (canDelete) {
+                    NickButton(
+                        if (pendingDelete) "Deleting..." else if (confirmDelete) "Tap again to delete" else "Delete from this tablet",
+                        { if (confirmDelete) { confirmDelete = false; transfer.delete(item.fid, nodeId) } else confirmDelete = true },
+                        style = BtnStyle.DANGER, enabled = !pendingDelete,
+                    )
+                } else {
+                    Muted("Update this tablet to delete movies from here.", 15)
+                }
+            }
             job != null && jobState == JobState.FAILED -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(TogetherText.jobError(job.err, job.size), style = body(15.sp, 500, 1.3f), color = C.danger)
                 NickButton("Try again", { transfer.retry(item.fid, nodeId) }, style = BtnStyle.SECONDARY)
@@ -177,6 +199,7 @@ private fun TabletPickPanel(
             job != null && jobState != JobState.DONE && jobState != JobState.CANCELLED -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ProgressBar(TogetherText.percent(job.done, job.size) / 100f)
                 Muted(TogetherText.jobProgress(job), 15)
+                NickButton("Stop copying", { transfer.cancel(item.fid, nodeId) }, style = BtnStyle.SECONDARY)
             }
             else -> {
                 val blocked = transfer.sendBlocked(item.fid)

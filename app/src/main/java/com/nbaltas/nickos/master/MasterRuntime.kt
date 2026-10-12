@@ -62,6 +62,8 @@ data class NodeStatus(
 ) {
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
+    /** "del1": the Node deletes a movie when the Master asks. */
+    val supportsDelete: Boolean get() = "del1" in caps
     /** Tablet cameras need the Node's "cam1" capability. */
     val supportsCam: Boolean get() = "cam1" in caps
 
@@ -284,7 +286,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
-                "serving", "jobs" -> transfer.onMessage(n.id, m)
+                "serving", "jobs", "deleted" -> transfer.onMessage(n.id, m)
                 "camState" -> cam.onMessage(n.id, m, c.socket.inetAddress?.hostAddress)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }

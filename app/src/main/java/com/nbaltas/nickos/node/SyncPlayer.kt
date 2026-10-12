@@ -98,6 +98,9 @@ class SyncPlayer(
         main.post { apply(msg, video) }
     }
 
+    /** The movie loaded right now, or null when nothing is. */
+    fun currentFid(): String? = fid
+
     /** `syncPause`: stop where the group is and wait for the next `sync`. */
     fun onPause() = main.post {
         if (fid == null || err != null || ended) return@post
