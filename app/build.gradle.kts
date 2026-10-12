@@ -20,10 +20,10 @@ android {
 
     defaultConfig {
         applicationId = "com.nbaltas.nickos"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 6
+        versionName = "0.6"
 
         // Public NickOS update track on nickflix-config (see its nickos.js). Overridable for a
         // friend's own server via local.properties.
@@ -38,6 +38,14 @@ android {
             storePassword = localProperties.getProperty("release.storePassword", "")
             keyAlias = localProperties.getProperty("release.keyAlias", "")
             keyPassword = localProperties.getProperty("release.keyPassword", "")
+            // Android 7.0's installer screen refuses an APK with only a v2 signature ("There was a
+            // problem parsing the package"), and AGP drops v1 by default once minSdk is 24. Keep both.
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
@@ -52,6 +60,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time (the Watch tab) does not exist below API 26: desugaring supplies it on the Android 7 Master.
+        isCoreLibraryDesugaringEnabled = true
+    }
+
+    // NewApi is the gate that lists every call above minSdk (24). Nothing else is checked: the project never ran lint.
+    lint {
+        checkOnly += setOf("NewApi")
+        abortOnError = true
     }
 
     kotlinOptions {
@@ -84,6 +100,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("io.coil-kt:coil-compose:2.6.0")

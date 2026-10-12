@@ -100,8 +100,56 @@ class CarNetTest {
         assertEquals(CarNetPolicy.Action.RemoveThenCreate, CarNetPolicy.next(inputs(live = ours.copy(isOwner = false))))
 
     @Test fun `old android and no wifi direct are unsupported not retried`() {
-        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)), CarNetPolicy.next(inputs(sdk = 28)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)), CarNetPolicy.next(inputs(sdk = 28, supported = false)))
         assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)), CarNetPolicy.next(inputs(supported = false)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)), CarNetPolicy.next(inputs(sdk = 23)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)), CarNetPolicy.next(inputs(sdk = 24, supported = false)))
+    }
+
+    // ---- legacy mode (Android 7 to 9): the system picks the name and passphrase ----
+
+    private val sysGroup = Group("DIRECT-ab-Android_1234", "legacypass1", "192.168.49.1", true)
+
+    @Test fun `android 7 creates a group with no permission and no location`() {
+        assertEquals(CarNetPolicy.Action.Create, CarNetPolicy.next(inputs(sdk = 24, live = null)))
+        assertEquals(CarNetPolicy.Action.Create, CarNetPolicy.next(inputs(sdk = 24, permission = false, location = false, live = null)))
+    }
+
+    @Test fun `android 7 adopts the live group and learns its name and passphrase`() =
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.On("DIRECT-ab-Android_1234", "192.168.49.1", "legacypass1")),
+            CarNetPolicy.next(inputs(sdk = 24, live = sysGroup)))
+
+    @Test fun `android 7 replaces a group with no passphrase or one it only joined`() {
+        assertEquals(CarNetPolicy.Action.RemoveThenCreate, CarNetPolicy.next(inputs(sdk = 24, live = sysGroup.copy(passphrase = null))))
+        assertEquals(CarNetPolicy.Action.RemoveThenCreate, CarNetPolicy.next(inputs(sdk = 24, live = sysGroup.copy(isOwner = false))))
+    }
+
+    @Test fun `android 7 never adopts a group with an empty or short passphrase`() {
+        for (weak in listOf("", "pw", "1234567")) {
+            assertEquals(CarNetPolicy.Action.RemoveThenCreate, CarNetPolicy.next(inputs(sdk = 24, live = sysGroup.copy(passphrase = weak))))
+        }
+    }
+
+    @Test fun `stopping on android 7 removes the group the system named`() {
+        val p = FakeP2p()
+        p.group = Group("DIRECT-ab-Android_1234", "legacypass1", "192.168.49.1", true)
+        val n = net(p, sdk = 24)
+        n.start()
+        waitFor("on") { n.isOn() }
+        n.stop()
+        waitFor("removed") { p.group == null }
+    }
+
+    @Test fun `android 9 behaves as android 7 and 10 does not`() {
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.On("DIRECT-ab-Android_1234", "192.168.49.1", "legacypass1")),
+            CarNetPolicy.next(inputs(sdk = 28, live = sysGroup)))
+        assertEquals(CarNetPolicy.Action.Create, CarNetPolicy.next(inputs(sdk = 28, permission = false, location = false)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.NO_PERMISSION)), CarNetPolicy.next(inputs(sdk = 29, permission = false)))
+    }
+
+    @Test fun `android 7 never loops remove and create on a stable system group`() {
+        // The wanted name never matches the system's: comparing it would rebuild the group every minute.
+        repeat(3) { assertTrue(CarNetPolicy.next(inputs(sdk = 24, live = sysGroup)) is CarNetPolicy.Action.Nothing) }
     }
 
     @Test fun `location only matters on android 10 to 12`() {
@@ -327,6 +375,29 @@ class CarNetTest {
         waitFor("it keeps trying past the hung query") { p.creates.get() >= 1 }
         p.groupInfoHangs = false
         waitFor("on") { n.isOn() }
+    }
+
+    @Test fun `android 7 stores the credentials the system chose and follows a rotation`() {
+        val p = FakeP2p()
+        p.permission = false; p.location = false
+        val calls = CopyOnWriteArrayList<Pair<String, String>>()
+        p.create = { s, pw -> calls += s to pw; p.group = Group("DIRECT-ab-Android_1234", "sysPass1", "192.168.49.1", true); Outcome.OK }
+        val ups = CopyOnWriteArrayList<Hotspot>()
+        val n = net(p, sdk = 24, onUp = { ups += it })
+        n.start()
+        waitFor("first up") { ups.size == 1 }
+        assertEquals(1, calls.size)
+        assertEquals(Hotspot("DIRECT-ab-Android_1234", "sysPass1", direct = true), ups[0])
+        assertTrue(ups[0] != want)
+        assertEquals(CarNetState.On("DIRECT-ab-Android_1234", "192.168.49.1", "sysPass1"), n.state.value)
+        // The system hands back a different network (a Samsung reboot, say): the Store must learn it.
+        p.group = Group("DIRECT-cd-Android_9999", "sysPass2", "192.168.49.1", true)
+        n.poke()
+        waitFor("second up") { ups.size == 2 }
+        assertEquals(Hotspot("DIRECT-cd-Android_9999", "sysPass2", direct = true), ups[1])
+        assertEquals(CarNetState.On("DIRECT-cd-Android_9999", "192.168.49.1", "sysPass2"), n.state.value)
+        assertEquals(1, p.creates.get())
+        assertTrue(n.permissionToRequest().isEmpty())
     }
 
     @Test fun `a create that never answers counts as a failed try`() {

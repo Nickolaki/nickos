@@ -22,12 +22,17 @@ import org.junit.After
 import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.JellyfinAccount
+import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedMaster
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.data.ResumeCard
 import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.jellyfin.JfItem
 import com.nbaltas.nickos.jellyfin.JfSession
+import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.master.CarNetState
+import com.nbaltas.nickos.master.NodeNet
+import com.nbaltas.nickos.master.Why
 import com.nbaltas.nickos.master.CamController
 import com.nbaltas.nickos.master.ClockInfo
 import com.nbaltas.nickos.master.DeviceLibrary
@@ -63,7 +68,9 @@ import com.nbaltas.nickos.ui.node.NodeHome
 import com.nbaltas.nickos.ui.node.PinPad
 import com.nbaltas.nickos.ui.node.TogetherScreen as NodeTogetherScreen
 import com.nbaltas.nickos.ui.setup.AddTabletScreen
+import com.nbaltas.nickos.ui.setup.MasterNetScreen
 import com.nbaltas.nickos.ui.setup.NodeNameScreen
+import com.nbaltas.nickos.ui.setup.PairingCodeBody
 import com.nbaltas.nickos.ui.setup.RoleScreen
 import com.nbaltas.nickos.ui.setup.Welcome
 import com.nbaltas.nickos.ui.theme.C
@@ -102,12 +109,17 @@ class DesignScreensTest {
 
         /** Fraction of pixels allowed to differ from the saved picture. */
         const val CHANGE_THRESHOLD = 0.0005f
+
+        const val CAR_SSID = "DIRECT-NK-NickOS-a1b2"
     }
+
+    /** Set only by the landscape sweep below: renders go to design/screens/sweep/<name><suffix>.png. */
+    private var sweepSuffix = ""
 
     private fun shot(name: String, content: @Composable () -> Unit) {
         try {
             captureRoboImage(
-                "../design/screens/$name.png",
+                if (sweepSuffix.isEmpty()) "../design/screens/$name.png" else "../design/screens/sweep/$name$sweepSuffix.png",
                 roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
             ) {
                 NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
@@ -138,13 +150,18 @@ class DesignScreensTest {
         TimeZone.setDefault(TimeZone.getTimeZone("Australia/Sydney"))
         Locale.setDefault(Locale.ENGLISH)
         screenNow = { FIXED_NOW }
+        // The update check runs on app start and its answer is global: pin it so About never depends on test order.
+        set(com.nbaltas.nickos.update.Updater, "_state", com.nbaltas.nickos.update.UpdateState.Idle)
         val s = app.store
         s.resetAll()
         s.setName("Dad's Tablet")
         s.upsertNode(LinkedNode("aaaaaaaaaaaa", "Hailey's Tablet", 0, "initial", "t", lastSeen = FIXED_NOW))
         s.upsertNode(LinkedNode("bbbbbbbbbbbb", "Leo's Tablet", 3, "initial", "t", lastSeen = FIXED_NOW))
-        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23))
+        s.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = true))
+        // The car network is up, as it is on a Master that has run for a while. Fixed here so no screen depends on a clock.
+        s.setHotspot(Hotspot(CAR_SSID, "carnet-pass-1", direct = true))
         val m = app.master
+        set(m.carNet, "_state", CarNetState.On(CAR_SSID, "192.168.49.1"))
         set(m, "_online", setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"))
         set(m, "_status", mapOf(
             "aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin"),
@@ -421,6 +438,50 @@ class DesignScreensTest {
     @Test fun nodeLocked() { nodeSeed(); shot("Node-Locked") { LockedScreen(app.store, "Dad's Tablet") } }
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
 
+    // ---- car network (F2B revised) ----
+    private fun carState(s: CarNetState) = set(app.master.carNet, "_state", s)
+    private fun wifiReports(vararg r: Pair<String, NetMessages.WifiStatus>) =
+        set(app.master, "_net", r.associate { (id, st) -> id to NodeNet(true, st) })
+
+    @Test fun settingsTabletsCarNetOn() {
+        // Hailey has the network, Leo has not, Mia (offline) has it from her last report.
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = false, deviceOwner = true, doze = true))
+        shot("Settings-Tablets-CarNet-On") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun settingsTabletsCarNetOff() {
+        carState(CarNetState.Off(Why.NO_PERMISSION))
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, approve = true, deviceOwner = false, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true))
+        shot("Settings-Tablets-CarNet-Off") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun settingsTabletsCarNetManual() {
+        app.store.setHotspot(Hotspot("Dad's phone", "hotspot-pass-1", direct = false))
+        carState(CarNetState.Off(Why.MANUAL))
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = false))
+        shot("Settings-Tablets-CarNet-Manual") { SettingsScreen(0, {}, {}, {}) }
+    }
+
+    @Test fun masterHomeCarNetOff() {
+        carState(CarNetState.Off(Why.WIFI_OFF))
+        shot("Master-Home-CarNet-Off") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    }
+
+    @Test fun controlOfflineNoDetails() {
+        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = false))
+        shot("Control-Offline-NoDetails") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
+    }
+
+    @Test fun controlOfflineCarNetOff() {
+        carState(CarNetState.Off(Why.NO_LOCATION))
+        shot("Control-Offline-CarNet-Off") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
+    }
+
+    @Test fun setupMasterCarNet() = shot("Setup-Master-CarNet") { MasterNetScreen({}, {}) }
+
     // ---- delete a movie from a tablet (Master) ----
     private val deleteNode = "aaaaaaaaaaaa"
 
@@ -448,4 +509,84 @@ class DesignScreensTest {
             TabletPickPanel(item, deleteNode, null, m.sync, m.transfer, canDelete = true, onBack = {})
         }
     }
+
+    // ---- pairing at real tablet sizes (a 6-digit code must never be cut to 3) ----
+    private fun sizeTag(): String {
+        val c = app.resources.configuration
+        return "${c.screenWidthDp}x${c.screenHeightDp}"
+    }
+
+    private fun nodeCode() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeCode960() = nodeCode()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeCode1024() = nodeCode()
+    @Config(qualifiers = "w1100dp-h680dp-land-mdpi")
+    @Test fun nodeCode1100() = nodeCode()
+    @Config(qualifiers = "w600dp-h960dp-port-mdpi")
+    @Test fun nodeCodePortrait() = nodeCode()
+
+    private fun masterCode() = shot("Master-AddCode-${sizeTag()}") { AddTabletScreen({}, "Master · Add tablet") {} }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterAddCode960() = masterCode()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun masterAddCode1024() = masterCode()
+    @Config(qualifiers = "w1100dp-h680dp-land-mdpi")
+    @Test fun masterAddCode1100() = masterCode()
+    @Config(qualifiers = "w600dp-h960dp-port-mdpi")
+    @Test fun masterAddCodePortrait() = masterCode()
+
+    private fun qrSetup() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.robolectric.Shadows.shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).signatures = arrayOf(android.content.pm.Signature("0102030405"))
+        qrShot()
+    }
+    private fun qrShot() = shot("Master-QrSetup-${sizeTag()}") { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) }
+
+    @Config(sdk = [27], qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterQrSetup960() = qrSetup()
+    @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun masterQrSetup1024() = qrSetup()
+
+    // ---- landscape sweep: every tablet screen at the two real landscape sizes ----
+    // Developer tool, off by default (it would write ~80 pictures). Turn it on by creating the file .pipeline/sweep,
+    // run ./gradlew :app:recordRoborazziDebug --tests "*landscapeSweep*", then LOOK at design/screens/sweep.
+    private fun sweepOn() = java.io.File("../.pipeline/sweep").exists()
+
+    private fun sweepAt(qualifiers: String) {
+        org.junit.Assume.assumeTrue(sweepOn())
+        org.robolectric.RuntimeEnvironment.setQualifiers(qualifiers)
+        sweepSuffix = "-" + sizeTag()
+        val screens: List<() -> Unit> = listOf(
+            ::setupWelcome, ::setupRole, ::nodeName, ::masterAddCode, ::masterHome, ::masterHomeEmpty,
+            ::controlNowPlaying, ::controlNothingPlaying, ::controlOffline, ::controlApps, ::controlDevice, ::controlWatchLibrary,
+            ::settingsTablets, ::settingsJellyfin, ::settingsCameras, ::settingsPin, ::settingsTheme, ::settingsAbout,
+            ::camerasSingle, ::camerasGrid, ::camerasSpotlight, ::camerasStates, ::camerasNothingOn, ::camerasEmpty,
+            ::togetherLibrary, ::togetherShows, ::togetherPick, ::togetherLibraryEmpty, ::togetherRemote,
+            ::masterTabletLibrary, ::masterTabletPickDelete,
+            ::nodeHome, ::nodePin, ::nodeLocked, ::nodeBedtime, ::nodeTogether, ::nodeCode,
+        )
+        try {
+            screens.forEach { render -> seed(); render() }
+        } finally { sweepSuffix = "" }
+    }
+
+    @Test fun landscapeSweep960() = sweepAt("w960dp-h600dp-land-mdpi")
+    @Test fun landscapeSweep1024() = sweepAt("w1024dp-h768dp-land-mdpi")
+
+    // ---- big system font: the code must still be 6 digits on one line ----
+    private fun nodeCodeBigFont(scale: Float) { nodeSeed(); shot("Node-Code-${sizeTag()}-font${(scale * 100).toInt()}") {
+        val d = androidx.compose.ui.platform.LocalDensity.current
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
+            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916")
+        }
+    } }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeCode960BigFont() = nodeCodeBigFont(1.5f)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodeCode1024BigFont() = nodeCodeBigFont(1.5f)
 }
+

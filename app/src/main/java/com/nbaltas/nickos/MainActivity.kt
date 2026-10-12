@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
                     when (role) {
                         Role.NONE -> SetupFlow()
                         Role.MASTER -> MasterApp()
-                        Role.NODE -> NodeApp(
+                        Role.NODE -> if (!com.nbaltas.nickos.node.NodeSupport.ok()) androidx.compose.material3.Text(com.nbaltas.nickos.node.NodeSupport.REFUSAL_COPY, color = C.text) else NodeApp(
                             onKidMode = { app.node.parentUntil = 0; enterKidMode() },
                             onParentMode = {
                                 app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
@@ -63,7 +63,9 @@ class MainActivity : ComponentActivity() {
                                 try { stopLockTask() } catch (_: Exception) {}
                                 // A screen-off (lockNow) leaves the keyguard pending behind lock task;
                                 // it would pop up as soon as the parent leaves kid mode.
-                                getSystemService(KeyguardManager::class.java).requestDismissKeyguard(this@MainActivity, null)
+                                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                    getSystemService(KeyguardManager::class.java).requestDismissKeyguard(this@MainActivity, null)
+                                }
                             },
                         )
                     }
@@ -75,7 +77,10 @@ class MainActivity : ComponentActivity() {
     private fun onRoleChanged(role: Role) {
         when (role) {
             Role.MASTER -> { app.master.start(); MasterService.start(this); askForCarNetPermission(); showSystemBars(true) }
-            Role.NODE -> { NodeService.start(this); enterKidMode() }
+            Role.NODE -> {
+                if (!com.nbaltas.nickos.node.NodeSupport.ok()) { android.util.Log.w("NickOS", "this Android is too old to be a Node"); return }
+                NodeService.start(this); enterKidMode()
+            }
             Role.NONE -> { MasterService.stop(this); showSystemBars(true) }
         }
     }
@@ -98,7 +103,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (app.store.role.value == Role.NODE) {
+        if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = true
             app.node.device.lastLaunched = null
             app.node.pushStatus()
@@ -108,7 +113,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (app.store.role.value == Role.NODE) {
+        if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = false
             app.node.pushStatus()
         }
@@ -119,7 +124,7 @@ class MainActivity : ComponentActivity() {
      * "locked to" app if the parent set one. Paused while the parent PIN window is open.
      */
     private fun enterKidMode() {
-        if (app.store.role.value != Role.NODE || app.node.parentMode) return
+        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.parentMode) return
         showSystemBars(false)
         app.node.applyLockdown()
         val am = getSystemService(ActivityManager::class.java)

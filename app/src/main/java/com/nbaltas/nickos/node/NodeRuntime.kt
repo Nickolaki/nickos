@@ -156,6 +156,9 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessions = CopyOnWriteArrayList<Pair<String, Conn>>()
     private var server: ServerSocket? = null
+
+    /** True once the link server is up. Stays false on a tablet below Android 8 (see [NodeSupport]). */
+    val listening: Boolean get() = server != null
     private val advertiser = Advertiser(scope, NsdGate(ctx, store))
     private var jobs = mutableListOf<Job>()
 
@@ -202,6 +205,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     @Synchronized
     fun start() {
+        if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); return }
         if (server != null) return
         val ss = try {
             ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(Wire.PORT)) }
