@@ -21,7 +21,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-data class UpdateInfo(val versionCode: Int, val versionName: String, val notes: String?, val apkUrl: String, val sha256: String?) {
+data class UpdateInfo(val versionCode: Int, val versionName: String, val notes: String?, val apkUrl: String, val sha256: String?, val signature: String? = null) {
     val newer get() = versionCode > BuildConfig.VERSION_CODE
 }
 
@@ -56,7 +56,7 @@ object Updater {
                 JSONObject(r.body!!.string())
             }
             val url = o.optStr("apkUrl")
-            val info = if (url == null) null else UpdateInfo(o.optInt("versionCode"), o.optString("versionName"), o.optStr("notes"), url, o.optStr("sha256"))
+            val info = if (url == null) null else UpdateInfo(o.optInt("versionCode"), o.optString("versionName"), o.optStr("notes"), url, o.optStr("sha256"), o.optStr("signature"))
             _state.value = if (info != null && info.newer) UpdateState.Available(info) else UpdateState.UpToDate
             info
         } catch (e: Exception) {

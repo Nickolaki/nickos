@@ -23,6 +23,24 @@ object Provisioning {
     const val EXTRA_ROLE = "nickos.role"
     private const val PREFS = "nickos-provisioning"
 
+    // Payload keys as literals, not DevicePolicyManager.EXTRA_*: several of those constants post-date API 24.
+    // ProvisioningTest pins every value.
+    const val K_ADMIN = "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME"
+    const val K_DOWNLOAD = "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION"
+    const val K_CHECKSUM = "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM"
+    const val K_KEEP_SYSTEM_APPS = "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED"
+    const val K_SKIP_ENCRYPTION = "android.app.extra.PROVISIONING_SKIP_ENCRYPTION"
+    const val K_SKIP_EDUCATION = "android.app.extra.PROVISIONING_SKIP_EDUCATION_SCREENS"
+    const val K_EXTRAS = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"
+    const val K_WIFI_SSID = "android.app.extra.PROVISIONING_WIFI_SSID"
+    const val K_WIFI_PASSWORD = "android.app.extra.PROVISIONING_WIFI_PASSWORD"
+    const val K_WIFI_SECURITY = "android.app.extra.PROVISIONING_WIFI_SECURITY_TYPE"
+
+    private val CHECKSUM_FORMAT = Regex("^[A-Za-z0-9_-]{43}$")
+
+    /** True for a base64url SHA-256 without padding: the only shape Android accepts as a checksum. */
+    fun validChecksum(s: String?) = s != null && CHECKSUM_FORMAT.matches(s)
+
     /** base64url SHA-256 of this APK's signing certificate. Master and Node share the key. */
     fun signatureChecksum(ctx: Context): String {
         val pm = ctx.packageManager
@@ -36,20 +54,25 @@ object Provisioning {
         return Base64.encodeToString(d, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
-    fun qrPayload(ctx: Context, wifiSsid: String?, wifiPassword: String?): String {
+    /**
+     * The QR contents. [signature] is the release certificate checksum the update server publishes (the APK
+     * the new tablet will really download). Anything that is not a valid checksum falls back to this tablet's own.
+     */
+    fun qrPayload(ctx: Context, wifiSsid: String?, wifiPassword: String?, signature: String? = null): String {
         val o = JSONObject()
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, "${ctx.packageName}/${AdminReceiver::class.java.name}")
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION, "${BuildConfig.UPDATE_BASE}/nickos/nickos-latest.apk")
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM, signatureChecksum(ctx))
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED, true)
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_ENCRYPTION, true)
-            .put(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE, JSONObject().put(EXTRA_ROLE, "node"))
+            .put(K_ADMIN, "${ctx.packageName}/${AdminReceiver::class.java.name}")
+            .put(K_DOWNLOAD, "${BuildConfig.UPDATE_BASE}/nickos/nickos-latest.apk")
+            .put(K_CHECKSUM, if (validChecksum(signature)) signature else signatureChecksum(ctx))
+            .put(K_KEEP_SYSTEM_APPS, true)
+            .put(K_SKIP_ENCRYPTION, true)
+            .put(K_SKIP_EDUCATION, true)
+            .put(K_EXTRAS, JSONObject().put(EXTRA_ROLE, "node"))
         if (!wifiSsid.isNullOrBlank()) {
-            o.put(DevicePolicyManager.EXTRA_PROVISIONING_WIFI_SSID, wifiSsid)
+            o.put(K_WIFI_SSID, wifiSsid)
             if (!wifiPassword.isNullOrEmpty()) {
-                o.put(DevicePolicyManager.EXTRA_PROVISIONING_WIFI_PASSWORD, wifiPassword)
-                o.put(DevicePolicyManager.EXTRA_PROVISIONING_WIFI_SECURITY_TYPE, "WPA")
-            } else o.put(DevicePolicyManager.EXTRA_PROVISIONING_WIFI_SECURITY_TYPE, "NONE")
+                o.put(K_WIFI_PASSWORD, wifiPassword)
+                o.put(K_WIFI_SECURITY, "WPA")
+            } else o.put(K_WIFI_SECURITY, "NONE")
         }
         return o.toString()
     }
@@ -73,12 +96,16 @@ class ProvisioningModeActivity : Activity() {
     }
 }
 
-/** Last step of QR setup: nothing to enforce up front, NickOS's own setup takes over after. */
+/**
+ * Last step of QR setup. It already runs as Device Owner, so NickOS becomes the home screen here: the
+ * wizard's final "Done" then lands on NickOS's name screen instead of the stock launcher.
+ */
 class PolicyComplianceActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
         Provisioning.remember(this, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        NodeDevice.makeHome(this)
         setResult(RESULT_OK)
         finish()
     }

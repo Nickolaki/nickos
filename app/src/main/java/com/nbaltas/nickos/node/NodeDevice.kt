@@ -30,6 +30,7 @@ class AdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(ctx: Context, intent: Intent) {
         @Suppress("DEPRECATION")
         Provisioning.remember(ctx, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        NodeDevice.makeHome(ctx)
         ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
@@ -242,6 +243,34 @@ class NodeDevice(private val ctx: Context) {
 
     fun canOverlay() = Settings.canDrawOverlays(ctx)
 
+    // ---- launcher mode (a tablet that is not Device Owner) ----
+    /** Whether NickOS is the home screen. The resolver's own package (`android`) means no default is set. */
+    fun isHome(): Boolean {
+        val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return ctx.packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName == ctx.packageName
+    }
+
+    /** Asks for the home role: the system dialog on Android 10+, else the Home app settings page. */
+    fun homeRequestIntent(): Intent {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val rm = ctx.getSystemService(android.app.role.RoleManager::class.java)
+            if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
+                return rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
+            }
+        }
+        return Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    fun overlayIntent() = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
+
+    fun usageIntent() = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+
+    fun adminIntent() = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+        .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+        .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Lets NickOS turn the screen off at bedtime.")
+
+    fun kioskState() = KioskState(isDeviceOwner, isHome(), canOverlay(), hasUsageAccess(), isAdmin)
+
     // ---- lockdown ----
     /**
      * Kiosk mode, the same Android feature Fully Kiosk Plus uses. Only works as Device Owner.
@@ -253,10 +282,7 @@ class NodeDevice(private val ctx: Context) {
         try {
             dpm.setLockTaskPackages(admin, (listOf(ctx.packageName) + packages).distinct().toTypedArray())
             if (Build.VERSION.SDK_INT >= 28) dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
-            val home = IntentFilter(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME); addCategory(Intent.CATEGORY_DEFAULT)
-            }
-            dpm.addPersistentPreferredActivity(admin, home, ComponentName(ctx, MainActivity::class.java))
+            dpm.addPersistentPreferredActivity(admin, homeFilter(), ComponentName(ctx, MainActivity::class.java))
             dpm.setKeyguardDisabled(admin, true)
             if (Build.VERSION.SDK_INT >= 33) dpm.setPermissionGrantState(
                 admin, ctx.packageName, android.Manifest.permission.POST_NOTIFICATIONS, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
@@ -286,7 +312,11 @@ class NodeDevice(private val ctx: Context) {
     }
 
     fun releaseLockdown() {
-        if (!isDeviceOwner) return
+        if (!isDeviceOwner) {
+            // Launcher mode: a plain device admin would block uninstalling NickOS after a reset.
+            if (isAdmin) try { dpm.removeActiveAdmin(admin) } catch (e: Exception) { Log.w(TAG, "remove admin", e) }
+            return
+        }
         try {
             dpm.setStatusBarDisabled(admin, false)
             dpm.setKeyguardDisabled(admin, false)
@@ -304,6 +334,23 @@ class NodeDevice(private val ctx: Context) {
 
     companion object {
         private const val TAG = "NickOS.Device"
+
+        /** The HOME + DEFAULT filter the persistent preferred activity is registered for. */
+        fun homeFilter() = IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME); addCategory(Intent.CATEGORY_DEFAULT)
+        }
+
+        /**
+         * Device Owner only: make NickOS the persistent home screen. Never throws, because a crash during the
+         * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set.
+         */
+        fun makeHome(ctx: Context): Boolean = try {
+            val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
+            if (dpm.isDeviceOwnerApp(ctx.packageName)) {
+                dpm.addPersistentPreferredActivity(ComponentName(ctx, AdminReceiver::class.java), homeFilter(), ComponentName(ctx, MainActivity::class.java))
+                true
+            } else false
+        } catch (e: Throwable) { Log.w(TAG, "make home", e); false }
         val JELLYFIN_PACKAGES = listOf("org.jellyfin.mobile", "org.jellyfin.androidtv")
     }
 }

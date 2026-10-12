@@ -16,6 +16,13 @@ Both tablets must be on the same WiFi (home or the car router). No internet is n
 3. Scan the code. Android downloads NickOS from the update server and switches the kid lock on.
 4. NickOS opens straight at "Name this tablet". Then pair it with its 6-digit code as usual.
 
+The QR WiFi works for WPA2 networks. For a WPA3-only network, pick the WiFi on the tablet itself.
+The Master prints a short code under the QR. It matches the NickOS on the update server, or, when the
+server is unreachable, the NickOS on the parent tablet. If the tablet refuses the code, the update
+server is serving a different build than the code says.
+
+When setup ends, NickOS is already the home screen, so the Home button comes back to it.
+
 The APK comes from `https://nickflix-config.nbaltas.org/nickos/nickos-latest.apk` (public on
 purpose: it holds no secrets). This only works on a tablet with no accounts yet, which is
 Android's rule for kid lock, same as the adb route below.
@@ -56,6 +63,19 @@ adb shell pm grant com.nbaltas.nickos android.permission.POST_NOTIFICATIONS
 adb shell pm grant com.nbaltas.nickos android.permission.CAMERA
 ```
 
+### Kid lock without a reset (launcher mode)
+
+If the tablet cannot be factory reset or has accounts you want to keep, NickOS still works as a
+softer kid lock. Open NickOS on the tablet and it shows **Make this the kids' tablet** with four
+steps: make NickOS the home screen, let it show over other apps, let it see which app is open, and
+let it turn the screen off at bedtime. Each opens an Android settings page; switch NickOS on, then
+press Back. **Start kid mode** unlocks once the home screen step is done. A watchdog sends the kid
+back to NickOS when another app comes up that is not on the allowed list. This is weaker than Device
+Owner: a kid who knows Android can still find a way out. After a restart, open NickOS once.
+The grown-up menu shows **Finish kid lock** while steps are missing.
+
+On a PC, the same steps can be skipped for a Device Owner tablet with the adb line below.
+
 ### Getting out
 
 On the kid tablet, hold the avatar (top left) for 3 seconds, then enter the parent PIN (default
@@ -81,6 +101,17 @@ The Master's Cameras screen shows the kids' tablets' front cameras next to any R
 A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
 
 Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
+
+## Tapo camera in the car
+
+A Tapo C206 shows up on the Cameras screen like any other camera. You set it up once.
+
+1. In the Tapo app, open the camera's settings, Advanced Settings, Camera Account, and make a camera account (a name and a password). This is not your TP-Link login. Avoid a colon in the password.
+2. Join the camera to the same WiFi as the parent tablet. The C206 only uses 2.4 GHz WiFi, so the car network must be 2.4 GHz. Whether the camera will join a network that has no internet is not confirmed yet; try it at home first.
+3. On the parent tablet open Cameras, tap Add camera. NickOS looks for cameras on the network and lists them as "Camera at" and the address. Pick yours, type the camera account name and password, choose Standard or High picture, and Save.
+
+If a tile says it can't reach the camera, check the camera has power and WiFi. NickOS looks for it again by itself and follows it if it picked up a new address. If it says the password was not accepted, fix the camera account in the Tapo app or edit the camera and retype it. There is no pan or tilt control. The screen stays on while the camera is showing.
+
 ## Movies without a server (Watch together)
 
 NickOS now has its own movie library, so a Jellyfin server is optional. It works with ordinary video files (MP4, MKV) in the **Movies** or **Download** folder of any tablet, the parent's tablet included. Copy files there with the Files app, a USB cable, or a browser download. Jellyfin's own downloads can't be used: the Jellyfin app keeps them in a private folder other apps can't read.
