@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /** What one tablet (or this one, under [Library.SELF]) has. [perm] false: it may not read its videos. */
-data class DeviceLibrary(val perm: Boolean, val list: List<SyncMessages.VideoEntry>)
+data class DeviceLibrary(val perm: Boolean, val list: List<SyncMessages.VideoEntry>, val free: Long = -1)
 
 /** A tablet's last `syncState`. [at] is on the tablet's clock, [receivedAt] on the Master's. */
 data class NodeSyncState(
@@ -142,8 +142,13 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         }
         if (fresh.isNotEmpty()) _thumbs.update { fresh + it }
         // The base64 is not kept: a few megabytes per tablet, and the bitmaps are what the screens draw.
-        _videos.update { it + (id to DeviceLibrary(msg.perm, msg.list.map { v -> v.copy(thumb = null) })) }
+        _videos.update { it + (id to DeviceLibrary(msg.perm, msg.list.map { v -> v.copy(thumb = null) }, msg.free)) }
         _scanning.update { it - id }
+    }
+
+    /** A delete on tablet [id] worked: take [fid] out of its list now, before its own fresh `videos` arrives. */
+    fun drop(id: String, fid: String) {
+        _videos.update { m -> m[id]?.let { d -> m + (id to d.copy(list = d.list.filterNot { it.fid == fid })) } ?: m }
     }
 
     private fun askVideos(id: String, now: Long) {

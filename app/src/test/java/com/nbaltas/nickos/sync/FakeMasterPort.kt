@@ -17,17 +17,21 @@ class FakeMasterPort : MasterPort {
     var local = SyncMessages.VideosMsg(true, emptyList())
 
     /** Adds an online tablet. [capable] false is a tablet on a NickOS from before Watch together. */
-    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}") {
+    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}", canDelete: Boolean = capable) {
         linked = linked + LinkedNode(id, name, 0, "initial", "token", host = host)
         online += id
         val o = JSONObject().put("volume", 50)
-        if (capable) o.put("caps", JSONArray(listOf("sync1")))
+        if (capable) o.put("caps", JSONArray(if (canDelete) listOf("sync1", "del1") else listOf("sync1")))
         statuses[id] = NodeStatus.from(o)
     }
+
+    /** Runs inside [send], after the message is recorded: lets a test deliver a reply before send returns. */
+    var onSend: ((String, JSONObject) -> Unit)? = null
 
     override fun send(id: String, o: JSONObject): Boolean {
         if (id !in online) return false
         sent += id to o
+        onSend?.invoke(id, o)
         return true
     }
 

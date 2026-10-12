@@ -53,6 +53,8 @@ import com.nbaltas.nickos.ui.master.TAB_DEVICE
 import com.nbaltas.nickos.ui.master.TAB_NOW
 import com.nbaltas.nickos.ui.master.TAB_WATCH
 import com.nbaltas.nickos.ui.master.TogetherScreen
+import com.nbaltas.nickos.ui.master.TabletLibrary
+import com.nbaltas.nickos.ui.master.TabletPickPanel
 import com.nbaltas.nickos.ui.master.rememberNodeViews
 import com.nbaltas.nickos.ui.node.BedtimeToastAtBottom
 import com.nbaltas.nickos.ui.node.HomeApp
@@ -418,4 +420,32 @@ class DesignScreensTest {
     @Test fun nodePin() { nodeSeed(); shot("Node-PIN") { kidHome(); PinPad("1234", {}, {}) } }
     @Test fun nodeLocked() { nodeSeed(); shot("Node-Locked") { LockedScreen(app.store, "Dad's Tablet") } }
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
+
+    // ---- delete a movie from a tablet (Master) ----
+    private val deleteNode = "aaaaaaaaaaaa"
+
+    private fun seedDeletable() {
+        val m = app.master
+        set(m, "_status", mapOf(deleteNode to status(82, fg = null, fgLabel = null, caps = listOf("sync1", "del1"))))
+        set(m.sync, "_videos", mapOf(
+            deleteNode to DeviceLibrary(true, listOf(video("sh", "Star Harbour"), video("cc", "Captain Comet"), video("mp", "Moss and Pebble")), 9_770_000_000L),
+        ))
+    }
+
+    @Test fun masterTabletLibrary() {
+        seedDeletable()
+        shot("Master-Tablet-Library") {
+            val v = rememberNodeViews().first { it.node.id == deleteNode }
+            TabletLibrary(deleteNode, v, onPlayed = {}, onSettings = {})
+        }
+    }
+
+    @Test fun masterTabletPickDelete() {
+        seedDeletable()
+        val m = app.master
+        val item = Library.merge(m.sync.videos.value.mapValues { it.value.list }).first { it.fid == "cc" }
+        shot("Master-Tablet-Pick-Delete") {
+            TabletPickPanel(item, deleteNode, null, m.sync, m.transfer, canDelete = true, onBack = {})
+        }
+    }
 }

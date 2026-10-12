@@ -133,4 +133,36 @@ class SyncMessagesTest {
         assertEquals(80, status.battery)
         assertEquals("0.3", status.version)
     }
+
+    @Test
+    fun `deleted round-trips and a delete command carries the fid`() {
+        assertEquals("delete", SyncMessages.cmdDelete("f1").getString("c"))
+        assertEquals("f1", SyncMessages.cmdDelete("f1").getString("fid"))
+        val ok = SyncMessages.decodeDeleted(SyncMessages.encodeDeleted("f1", true, null, 2, 9_000L))!!
+        assertEquals(SyncMessages.DeletedMsg("f1", true, null, 2, 9_000L), ok)
+        val bad = SyncMessages.decodeDeleted(SyncMessages.encodeDeleted("f1", false, "notOwned", 0, -1))!!
+        assertEquals("notOwned", bad.err)
+        assertFalse(bad.ok)
+    }
+
+    @Test
+    fun `a malformed deleted decodes to null`() {
+        assertNull(SyncMessages.decodeDeleted(JSONObject().put("t", "deleted").put("ok", true)))
+        assertNull(SyncMessages.decodeDeleted(JSONObject().put("t", "deleted").put("fid", "f1")))
+    }
+
+    @Test
+    fun `videos carries free space when sent and defaults to minus one when an old Node omits it`() {
+        val e = SyncMessages.VideoEntry("f1", "A", "a.mp4", 10, 20)
+        assertEquals(5_000L, SyncMessages.decodeVideos(SyncMessages.encodeVideos(true, listOf(e), 5_000L))!!.free)
+        val old = SyncMessages.encodeVideos(true, listOf(e))
+        assertFalse(old.has("free"))
+        assertEquals(-1L, SyncMessages.decodeVideos(old)!!.free)
+    }
+
+    @Test
+    fun `del1 in caps means the Node can delete`() {
+        assertTrue(NodeStatus.from(JSONObject().put("caps", org.json.JSONArray(listOf("sync1", "del1")))).supportsDelete)
+        assertFalse(NodeStatus.from(JSONObject().put("caps", org.json.JSONArray(listOf("sync1")))).supportsDelete)
+    }
 }
