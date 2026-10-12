@@ -104,6 +104,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     // QR code for zero-adb kid tablet setup.
+    implementation("com.google.zxing:core:3.5.3")
     // Lucide: the icon set the design handoff was drawn with.
     implementation("com.composables:icons-lucide:1.1.0")
 

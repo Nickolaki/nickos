@@ -7,6 +7,19 @@ NickOS is one app with two roles. Install the same APK on every tablet.
 
 Both tablets must be on the same WiFi (home or the car router). No internet is needed.
 
+## Easiest: QR setup (new or factory-reset kid tablet, no computer)
+
+1. On the parent tablet: **Add tablet → "Brand-new or reset tablet? Set it up with a QR code"**.
+   Optionally type your WiFi into that screen so the kid tablet joins it by itself.
+2. On the kid tablet's very first "Welcome" screen, tap the same empty spot **6 times**.
+   A QR scanner opens (older Android may ask for WiFi first).
+3. Scan the code. Android downloads NickOS from the update server and switches the kid lock on.
+4. NickOS opens straight at "Name this tablet". Then pair it with its 6-digit code as usual.
+
+The APK comes from `https://nickflix-config.nbaltas.org/nickos/nickos-latest.apk` (public on
+purpose: it holds no secrets). This only works on a tablet with no accounts yet, which is
+Android's rule for kid lock, same as the adb route below.
+
 ## 1. Kid tablet (Node), the adb way
 
 1. Install NickOS, open it, pick **Node**, name the tablet, then leave the 6-digit code on screen.

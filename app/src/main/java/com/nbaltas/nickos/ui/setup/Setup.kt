@@ -332,9 +332,9 @@ fun PairingCodeBody(name: String, color: Int, avatar: String, code: String?) {
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
             val style = disp(codeMax.sp, 800, 1f).copy(letterSpacing = 0.06.em, fontFeatureSettings = "tnum")
-            val fullWidth = remember(grouped, density) { measurer.measure(grouped, style, softWrap = false, maxLines = 1).size.width }
+            val fullWidth = measurer.measure(grouped, style, softWrap = false, maxLines = 1).size.width
             val availPx = with(density) { availWidth.toPx() }
-            val sp = if (fullWidth <= availPx || fullWidth == 0) codeMax else (codeMax * availPx / fullWidth).toInt().coerceAtLeast(40)
+            val sp = if (fullWidth <= availPx * 0.96f || fullWidth == 0) codeMax else (codeMax * availPx * 0.96f / fullWidth).toInt().coerceAtLeast(40)
             Text(
                 grouped,
                 style = style.copy(fontSize = sp.sp, lineHeight = sp.sp),
@@ -371,7 +371,7 @@ private fun wifiAddress(): String? = try {
 
 /** Enter a Node's 6-digit code. Used in setup, from the home "Add tablet" card and Settings. */
 @Composable
-fun AddTabletScreen(back: () -> Unit, step: String, onLinked: (MasterRuntime.PairResult) -> Unit) {
+fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, onLinked: (MasterRuntime.PairResult) -> Unit) {
     val app = App.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var digits by rememberSaveable { mutableStateOf("") }
@@ -403,6 +403,10 @@ fun AddTabletScreen(back: () -> Unit, step: String, onLinked: (MasterRuntime.Pai
                 Column(m, verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Title("Add tablet", 56)
                     Muted("Enter the 6-digit code showing on the kid's tablet. Both tablets need to be on the same WiFi.", 22, Modifier.widthIn(max = 460.dp))
+                    if (onQr != null) Text(
+                        "Brand-new or reset tablet? Set it up with a QR code",
+                        style = body(19.sp, 700), color = C.accent, modifier = Modifier.clickable(onClick = onQr),
+                    )
                     if (typing) Column {
                         FieldLabel("Kid's tablet address (shown under its code)")
                         NickField(address, { address = it.trim() }, Modifier.widthIn(max = 460.dp), keyboard = androidx.compose.ui.text.input.KeyboardType.Uri, placeholder = "192.168.1.23")

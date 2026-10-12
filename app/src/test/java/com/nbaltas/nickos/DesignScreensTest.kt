@@ -142,6 +142,8 @@ class DesignScreensTest {
         TimeZone.setDefault(TimeZone.getTimeZone("Australia/Sydney"))
         Locale.setDefault(Locale.ENGLISH)
         screenNow = { FIXED_NOW }
+        // The update check runs on app start and its answer is global: pin it so About never depends on test order.
+        set(com.nbaltas.nickos.update.Updater, "_state", com.nbaltas.nickos.update.UpdateState.Idle)
         val s = app.store
         s.resetAll()
         s.setName("Dad's Tablet")
@@ -480,6 +482,18 @@ class DesignScreensTest {
     @Test fun masterAddCode1100() = masterCode()
     @Config(qualifiers = "w600dp-h960dp-port-mdpi")
     @Test fun masterAddCodePortrait() = masterCode()
+
+    private fun qrSetup() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.robolectric.Shadows.shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).signatures = arrayOf(android.content.pm.Signature("0102030405"))
+        qrShot()
+    }
+    private fun qrShot() = shot("Master-QrSetup-${sizeTag()}") { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) }
+
+    @Config(sdk = [27], qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterQrSetup960() = qrSetup()
+    @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun masterQrSetup1024() = qrSetup()
 
     // ---- landscape sweep: every tablet screen at the two real landscape sizes ----
     // Developer tool, off by default (it would write ~80 pictures). Turn it on by creating the file .pipeline/sweep,
