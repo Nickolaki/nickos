@@ -1,7 +1,11 @@
 package com.nbaltas.nickos.ui.master
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.SystemClock
 import android.view.TextureView
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -27,12 +31,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,9 +53,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -66,6 +75,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -92,13 +102,23 @@ import com.nbaltas.nickos.App
 import com.nbaltas.nickos.cam.CamLayout
 import com.nbaltas.nickos.cam.CamPlan
 import com.nbaltas.nickos.cam.CamPrefs
+import com.nbaltas.nickos.cam.Adopt
+import com.nbaltas.nickos.cam.AdoptPolicy
 import com.nbaltas.nickos.cam.CamText
+import com.nbaltas.nickos.cam.RtspNews
+import com.nbaltas.nickos.cam.RtspNewsFor
 import com.nbaltas.nickos.cam.NodeCam
 import com.nbaltas.nickos.cam.TileDisplay
 import com.nbaltas.nickos.data.Camera
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.data.Store
+import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.master.CamController
+import com.nbaltas.nickos.master.CamFinder
+import com.nbaltas.nickos.master.Described
+import com.nbaltas.nickos.master.RtspDescribe
+import com.nbaltas.nickos.master.CarNetState
+import com.nbaltas.nickos.master.RtspKnock
 import com.nbaltas.nickos.ui.node.kidName
 import com.nbaltas.nickos.ui.theme.Avatar
 import com.nbaltas.nickos.ui.theme.BackButton
@@ -115,7 +135,9 @@ import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.dashed
 import com.nbaltas.nickos.ui.theme.tap
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlin.math.roundToInt
@@ -151,7 +173,18 @@ private class Roster {
  * spotlight, as if its tile had been tapped.
  */
 @Composable
-fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Boolean = true, startSpotlight: String? = null) {
+fun CamerasScreen(
+    onBack: () -> Unit,
+    onSettings: (Int) -> Unit = {},
+    live: Boolean = true,
+    startSpotlight: String? = null,
+    /** Screenshot tests only: camera id to what its tile says, used while [live] is false. */
+    rtspPreset: Map<String, RtspNews> = emptyMap(),
+    /** Screenshot tests only: open the camera editor on this camera. */
+    startEditor: Camera? = null,
+    /** Screenshot tests only: the cameras the editor's search "found", used while [live] is false. */
+    foundPreset: List<String> = emptyList(),
+) {
     val app = App.get(LocalContext.current)
     val store = app.store
     val rt = app.master
@@ -173,7 +206,14 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
     var override by rememberSaveable { mutableIntStateOf(0) }
     var spotlight by remember { mutableStateOf(startSpotlight) }
     var full by remember { mutableStateOf<String?>(null) }
-    var editing by remember { mutableStateOf<Camera?>(null) }
+    var editing by remember { mutableStateOf(startEditor) }
+    val scope = rememberCoroutineScope()
+    // A Tapo camera that cannot be reached twice in a row sets off one search for its new address.
+    val misses = remember { mutableStateMapOf<String, Int>() }
+    val scanned = remember { HashSet<String>() }
+    // What the screen itself says about a camera (Looking, Moved); it wins over what the player last reported.
+    val says = remember { mutableStateMapOf<String, RtspNews>() }
+    var finder by remember { mutableStateOf<Job?>(null) }
     val now by produceState(SystemClock.elapsedRealtime(), live) {
         while (live) { delay(500); value = SystemClock.elapsedRealtime() }
     }
@@ -185,6 +225,52 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
         onStopOrDispose { ctl.setViewing(false) }
     }
     BackHandler(enabled = full != null) { full = null }
+
+    // The editor runs its own search; two never run at once.
+    fun openEditor(c: Camera) { finder?.cancel(); editing = c }
+
+    fun scanFor(c: Camera) {
+        scanned += c.id
+        says[c.id] = RtspNews.LOOKING
+        finder = scope.launch {
+            try {
+                val found = CamFinder({ ownAddresses(app) }, RtspKnock()).find()
+                val now = store.cameras.value
+                val cur = now.firstOrNull { it.id == c.id } ?: return@launch
+                // Other cameras' hosts, from their fields and from older stream addresses.
+                val taken = AdoptPolicy.takenHosts(now.filter { it.id != c.id })
+                val path = if (cur.hd) "stream1" else "stream2"
+                val verdict = AdoptPolicy.settle(found, cur.host.orEmpty(), taken) { h ->
+                    RtspDescribe().check(h, cur.user, cur.pass, path) == Described.OK
+                }
+                when (val d = verdict) {
+                    // Exactly one camera answered where none of ours lives AND it accepted this camera's account
+                    // on this camera's path: it is this one. The new address rebuilds the stream address,
+                    // which restarts the player.
+                    is Adopt.Move -> { misses[c.id] = 0; scanned -= c.id; says.remove(c.id); store.saveCamera(cur.copy(host = d.host)) }
+                    // Found something, but it did not prove it is this camera: the parent confirms in the editor.
+                    is Adopt.Unverified, Adopt.Ambiguous -> says[c.id] = RtspNews.MOVED
+                    else -> says.remove(c.id)
+                }
+            } finally {
+                if (says[c.id] == RtspNews.LOOKING) says.remove(c.id)
+            }
+        }
+    }
+
+    fun onRtspNews(c: Camera, n: RtspNews) {
+        if (!live || !c.isTapo) return
+        when (n) {
+            RtspNews.LIVE -> { misses[c.id] = 0; scanned -= c.id; if (says[c.id] != null) says.remove(c.id) }
+            // A wrong password never counts: another address would not fix it.
+            RtspNews.UNREACHABLE -> {
+                val k = (misses[c.id] ?: 0) + 1
+                misses[c.id] = k
+                if (k >= 2 && c.id !in scanned && finder?.isActive != true) scanFor(c)
+            }
+            else -> {}
+        }
+    }
 
     val tablets = nodes.map { n ->
         key(n.id) {
@@ -214,6 +300,17 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
     }
     roster.order.removeAll { it !in visibleIds && it in roster.done }
 
+    // A baby monitor that goes dark after 30 seconds is not one: keep the screen on while something is on the stage.
+    if (live) {
+        val ctx = LocalContext.current
+        val hasStage = roster.order.isNotEmpty()
+        DisposableEffect(hasStage) {
+            val window = ctx.activity()?.window
+            if (hasStage) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -226,14 +323,12 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
                 IconCircle(Lucide.Settings, { onSettings(2) }, size = if (phone) 48.dp else 60.dp)
                 if (roomy) Segmented(listOf("Auto" to null, "Grid" to null, "Spotlight" to null), override, { override = it })
                 // Phone width: "Add camera" leaves the title no room.
-                NickButton(if (phone) "Add" else "Add camera", { editing = Camera(Store.randomHex(6), "", "rtsp://") }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
+                NickButton(if (phone) "Add" else "Add camera", { openEditor(Camera(Store.randomHex(6), "")) }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
             }
 
             if (nodes.isEmpty() && cams.isEmpty()) {
                 CenterMessage(
-                    Lucide.Cctv, "No cameras yet",
-                    "Add a camera's stream address (for a Tapo cam: rtsp://user:password@camera-ip:554/stream2), then watch it here. " +
-                        "Linked kid tablets show up above as soon as they are updated; tap one to turn its front camera on.",
+                    Lucide.Cctv, "No cameras yet", NO_CAMERAS_TEXT,
                 )
                 return@Column
             }
@@ -316,7 +411,9 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
                                     // full screen view (simpler, and the small extra cost is theirs to keep).
                                     is RtspSource -> CamTile(
                                         src, TileDisplay.LIVE, null, src.camera.rotation, prefs, live = live && full != id, compact = compact, leaving = leaving,
-                                        onTap = onTap, onMaximize = { full = id }, onEdit = { editing = src.camera },
+                                        onTap = onTap, onMaximize = { full = id }, onEdit = { openEditor(src.camera) },
+                                        preset = says[src.camera.id] ?: rtspPreset[src.camera.id],
+                                        onNews = { n -> onRtspNews(src.camera, n) },
                                     )
                                 }
                             }
@@ -328,7 +425,14 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
 
         full?.let { id ->
             when (val src = roster.sources[id]) {
-                is RtspSource -> FullScreen(src.name, false, { full = null }) { CameraView(src.camera, Modifier.fillMaxSize(), muted = false) }
+                is RtspSource -> FullScreen(src.name, false, { full = null }) {
+                    // Full screen holds the only player for this camera, so it runs the same recovery as the tile.
+                    CameraView(
+                        src.camera, Modifier.fillMaxSize(), muted = false,
+                        onNews = { n -> onRtspNews(src.camera, n) },
+                        say = says[src.camera.id] ?: rtspPreset[src.camera.id],
+                    )
+                }
                 is TabletSource -> {
                     val t = byNode[src.node.id]
                     val frame by ctl.frames(src.node.id).collectAsState()
@@ -345,8 +449,28 @@ fun CamerasScreen(onBack: () -> Unit, onSettings: (Int) -> Unit = {}, live: Bool
                 null -> LaunchedEffect(id) { full = null }
             }
         }
-        editing?.let { c -> CameraEditor(c, isNew = cams.none { it.id == c.id }) { editing = null } }
+        editing?.let { c ->
+            CameraEditor(
+                c, isNew = cams.none { it.id == c.id }, live = live, foundPreset = foundPreset,
+                onSaved = { misses.remove(c.id); scanned -= c.id; says.remove(c.id) },
+            ) { editing = null }
+        }
     }
+}
+
+/** The empty Cameras screen's line under "No cameras yet". */
+const val NO_CAMERAS_TEXT = "Tap Add camera to find a Tapo camera on the car network. " +
+    "Linked kid tablets show up above as soon as they are updated; tap one to turn its front camera on."
+
+/** Every site-local address of this tablet: the home WiFi and the Wi-Fi Direct group it hosts can be up together. */
+private fun ownAddresses(app: App): List<String> =
+    (LanAddress.all(app).map { it.second } + listOfNotNull((app.master.carNet.state.value as? CarNetState.On)?.ownIp)).distinct()
+
+/** The Activity behind a Context, which may be wrapped (a theme wrapper, for one). */
+private fun Context.activity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) { if (c is Activity) return c; c = c.baseContext }
+    return null
 }
 
 /** The dashed box, a title and a line, centred in what is left of the screen. */
@@ -472,32 +596,132 @@ internal fun SmallIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, on
     }
 }
 
+const val EDITOR_LOOKING = "Looking for cameras on the car network..."
+const val EDITOR_FOUND_AT = "Camera at "
+const val EDITOR_NOT_FOUND = "No camera found. Check it is switched on and joined to the car network, then look again. " +
+    "If it never appears while this tablet is on your home WiFi, turn that WiFi off on this tablet and look again: the camera only sees 2.4 GHz."
+const val EDITOR_NO_NETWORK = "This tablet is not on any network. Turn the car network on in Settings, Tablets."
+const val EDITOR_COLON = "A colon can't be used in the password here. Change the Camera Account password in the Tapo app."
+const val EDITOR_ACCOUNT_HINT = "This is the Camera Account from the Tapo app (Camera Settings, Advanced Settings, Camera Account), not your TP-Link login."
+const val EDITOR_PICTURE_HINT = "Standard is smoother on this tablet and uses less of the camera."
+const val EDITOR_URL_HINT = "RTSP (go2rtc, another brand) or an HLS/HTTP video link. Use a camera's low-res sub-stream for smoother tiles."
+
+/**
+ * Add or edit a camera. A Tapo camera is picked from the ones found on the car network and needs only its
+ * Camera Account; the old stream address form is behind a button, and is what every camera saved before
+ * Tapo support opens in. The stream address built from the Tapo fields is never shown here.
+ * [live] false is for screenshot tests: no search, [foundPreset] stands in for what it would find.
+ */
 @Composable
-private fun CameraEditor(c: Camera, isNew: Boolean, onDone: () -> Unit) {
-    val store = App.get(LocalContext.current).store
+private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: List<String>, onSaved: () -> Unit, onDone: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val store = app.store
+    val phone = LocalConfiguration.current.screenWidthDp < 600
     var name by remember { mutableStateOf(c.name) }
-    var url by remember { mutableStateOf(c.url) }
     var rotation by remember { mutableIntStateOf(c.rotation) }
+    var useUrl by remember { mutableStateOf(c.host == null && c.url.isNotEmpty()) }
+    var url by remember { mutableStateOf(c.url) }
+    var host by remember { mutableStateOf(c.host ?: if (live) "" else foundPreset.singleOrNull().orEmpty()) }
+    var typing by remember { mutableStateOf(false) }
+    var typed by remember { mutableStateOf("") }
+    var user by remember { mutableStateOf(c.user) }
+    var pass by remember { mutableStateOf(c.pass) }
+    var hd by remember { mutableStateOf(c.hd) }
+    val found = remember { mutableStateListOf<String>().apply { if (!live) addAll(foundPreset) } }
+    var scanning by remember { mutableStateOf(false) }
+    var noNetwork by remember { mutableStateOf(false) }
+    var scanKey by remember { mutableIntStateOf(0) }
+
+    // The search starts when the editor opens and stops when it closes (the effect is cancelled with it).
+    LaunchedEffect(scanKey, useUrl) {
+        if (!live || useUrl) return@LaunchedEffect
+        found.clear()
+        noNetwork = false
+        if (ownAddresses(app).isEmpty()) { noNetwork = true; return@LaunchedEffect }
+        scanning = true
+        try {
+            CamFinder({ ownAddresses(app) }, RtspKnock()).find { h -> found += h; if (host.isEmpty()) host = h }
+        } finally { scanning = false }
+    }
+
+    val chosen = if (typing) typed.trim() else host
+    val colon = pass.contains(':')
+    val tapoOk = LanAddress.octets(chosen) != null && user.isNotBlank() && pass.isNotBlank() && !colon
+    val canSave = name.isNotBlank() && (if (useUrl) url.length > 8 else tapoOk)
+
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onDone), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}
-                .verticalScroll(rememberScrollState()).padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
-        ) {
-            Title(if (isNew) "Add camera" else "Edit camera", 36)
-            Column { FieldLabel("Name"); NickField(name, { name = it.take(30) }, placeholder = "e.g. Hailey's cam") }
-            Column { FieldLabel("Stream address"); NickField(url, { url = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri) }
-            Muted("RTSP (Tapo, go2rtc) or an HLS/HTTP video link. Use a camera's low-res sub-stream for smoother tiles.", 16)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, leading = Lucide.RotateCwSquare)
-                Spacer(Modifier.weight(1f))
-                if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, style = BtnStyle.DANGER, leading = Lucide.Trash2)
+        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}) {
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = 32.dp, end = 32.dp, top = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Title(if (isNew) "Add camera" else "Edit camera", 36)
+                Column { FieldLabel("Name"); NickField(name, { name = it.take(30) }, placeholder = "e.g. Baby cam") }
+
+                if (useUrl) {
+                    Column { FieldLabel("Stream address"); NickField(url, { url = it.trim() }, keyboard = KeyboardType.Uri) }
+                    Muted(EDITOR_URL_HINT, 16)
+                } else {
+                    val chips = found.toList() + listOfNotNull(host.takeIf { !typing && it.isNotEmpty() && it !in found })
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FieldLabel("Camera")
+                        if (chips.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            chips.forEach { h ->
+                                val sel = !typing && h == host
+                                Chip(Modifier.clip(RoundedCornerShape(22.dp)).tap { typing = false; host = h }, bg = if (sel) C.accent else C.surface2) {
+                                    Icon(Lucide.Cctv, null, tint = if (sel) C.onAccent else C.muted, modifier = Modifier.size(22.dp))
+                                    Text(EDITOR_FOUND_AT + h, style = body(17.sp, 700), color = if (sel) C.onAccent else C.text, maxLines = 1)
+                                }
+                            }
+                        }
+                        when {
+                            noNetwork -> Muted(EDITOR_NO_NETWORK, 16)
+                            scanning -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                PulseDot(live); Muted(EDITOR_LOOKING, 16)
+                            }
+                            found.isEmpty() -> Muted(EDITOR_NOT_FOUND, 16, maxLines = 6)
+                        }
+                        if (!scanning && found.isEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NickButton("Look again", { typing = false; scanKey++ }, style = BtnStyle.GHOST)
+                            if (!typing) NickButton("Type the address", { typing = true }, style = BtnStyle.GHOST)
+                        }
+                        if (typing) NickField(typed, { typed = it.trim() }, keyboard = KeyboardType.Uri, placeholder = "192.168.49.23")
+                    }
+                    val account: @Composable (Modifier) -> Unit = { m ->
+                        Column(m) { FieldLabel("Camera account name"); NickField(user, { user = it.trim() }, keyboard = KeyboardType.Ascii) }
+                    }
+                    val password: @Composable (Modifier) -> Unit = { m ->
+                        Column(m) { FieldLabel("Password"); NickField(pass, { pass = it }, password = true) }
+                    }
+                    if (phone) { account(Modifier); password(Modifier) }
+                    else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { account(Modifier.weight(1f)); password(Modifier.weight(1f)) }
+                    if (colon) Muted(EDITOR_COLON, 16, maxLines = 4)
+                    Muted(EDITOR_ACCOUNT_HINT, 16, maxLines = 4)
+                    Column {
+                        FieldLabel("Picture")
+                        Segmented(listOf("Standard" to null, "High" to null), if (hd) 1 else 0, { hd = it == 1 })
+                    }
+                    Muted(EDITOR_PICTURE_HINT, 16)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, leading = Lucide.RotateCwSquare)
+                    Spacer(Modifier.weight(1f))
+                    if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, style = BtnStyle.DANGER, leading = Lucide.Trash2)
+                }
+                NickButton(if (useUrl) "Use camera details instead" else "Use a stream address instead", { useUrl = !useUrl }, style = BtnStyle.GHOST)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)) {
+            // Outside the scroll, so Save is on screen however tall the form gets.
+            Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)) {
                 NickButton("Cancel", onDone, style = BtnStyle.GHOST)
                 NickButton("Save", {
-                    store.saveCamera(c.copy(name = name.trim(), url = url, rotation = rotation)); onDone()
-                }, style = BtnStyle.PRIMARY, enabled = name.isNotBlank() && url.length > 8)
+                    // The Tapo fields and the stream address never travel together: whichever form is showing wins.
+                    store.saveCamera(
+                        if (useUrl) c.copy(name = name.trim(), url = url, rotation = rotation, host = null, user = "", pass = "", hd = false)
+                        else c.copy(name = name.trim(), url = "", rotation = rotation, host = chosen, user = user.trim(), pass = pass, hd = hd),
+                    )
+                    onSaved(); onDone()
+                }, style = BtnStyle.PRIMARY, enabled = canSave)
             }
         }
     }
@@ -506,53 +730,87 @@ private fun CameraEditor(c: Camera, isNew: Boolean, onDone: () -> Unit) {
 /**
  * One live feed. RTSP goes over TCP (steadier on WiFi than UDP); anything else via ExoPlayer's defaults.
  *
- * A stage tile passes [bare] (it draws its own "can't connect" under the video), fades the video
- * in with [alpha], and hears through [onPicture] when the first frame is drawn (true) or the
- * camera cannot be reached (false).
+ * A stage tile passes [bare] (it draws its own words under the video), fades the video in with
+ * [alpha], and hears through [onNews] what the camera is doing: connecting, live, or why it is not.
+ * The player pauses when the screen is left (Home, screen off) and carries on when it comes back.
+ * Nothing here logs, shows or throws the stream address: for a Tapo camera it holds the password.
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun CameraView(c: Camera, modifier: Modifier, muted: Boolean, alpha: Float = 1f, bare: Boolean = false, onPicture: (Boolean) -> Unit = {}) {
+fun CameraView(
+    c: Camera, modifier: Modifier, muted: Boolean, alpha: Float = 1f, bare: Boolean = false,
+    onNews: (RtspNews) -> Unit = {},
+    /** What the screen itself says about this camera (Looking, Moved); shown instead of the player's own news. */
+    say: RtspNews? = null,
+) {
     val ctx = LocalContext.current
-    var error by remember(c.url) { mutableStateOf<String?>(null) }
-    val picture by rememberUpdatedState(onPicture)
-    val player = remember(c.url) {
-        ExoPlayer.Builder(ctx).build().apply {
-            if (c.url.startsWith("rtsp", ignoreCase = true)) {
-                setMediaSource(RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(MediaItem.fromUri(c.url)))
-            } else setMediaItem(MediaItem.fromUri(c.url))
+    val url = c.streamUrl()
+    var news by remember(url) { mutableStateOf(RtspNews.CONNECTING) }
+    val report by rememberUpdatedState(onNews)
+    // Leaving the screen (Home, screen off) releases the player and its connection; coming back builds a fresh
+    // one and the video surface follows it. A camera nobody is looking at holds no stream.
+    var stopped by remember { mutableStateOf(false) }
+    val player = remember(url, stopped) {
+        if (stopped) null else ExoPlayer.Builder(ctx).build().apply {
+            if (url.startsWith("rtsp", ignoreCase = true)) {
+                setMediaSource(RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(MediaItem.fromUri(url)))
+            } else setMediaItem(MediaItem.fromUri(url))
             volume = if (muted) 0f else 1f
             playWhenReady = true
+            fun tell(n: RtspNews) { news = n; report(n) }
             addListener(object : Player.Listener {
-                override fun onPlayerError(e: PlaybackException) { error = CamText.RTSP_ERROR; picture(false) }
-                override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) error = null }
-                override fun onRenderedFirstFrame() { picture(true) }
+                override fun onPlayerError(e: PlaybackException) { tell(RtspNewsFor.of(e.errorCode, RtspNewsFor.chainOf(e))) }
+                override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) tell(RtspNews.LIVE) }
+                override fun onRenderedFirstFrame() { tell(RtspNews.LIVE) }
             })
             prepare()
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
-    // Cameras drop out; keep retrying quietly while the tile is on screen.
-    LaunchedEffect(error) { if (error != null) { delay(5000); player.prepare(); player.play() } }
-    player.volume = if (muted) 0f else 1f
+    val current by rememberUpdatedState(player)
+    DisposableEffect(player) { onDispose { player?.release() } }
+    LifecycleStartEffect(url) {
+        stopped = false
+        onStopOrDispose { current?.release(); stopped = true }
+    }
+    LaunchedEffect(player) { if (player != null) { news = RtspNews.CONNECTING; report(RtspNews.CONNECTING) } }
+    // Cameras drop out; keep retrying quietly while the tile is on screen. A wrong password is retried slowly:
+    // some cameras lock the account after a run of bad logins.
+    LaunchedEffect(player) {
+        if (player == null) return@LaunchedEffect
+        while (true) {
+            delay(if (news == RtspNews.WRONG_PASSWORD) 30_000L else 5_000L)
+            if (news.isFailure()) { player.prepare(); player.play() }
+        }
+    }
+    player?.volume = if (muted) 0f else 1f
+    val shown = if (say == RtspNews.LOOKING || say == RtspNews.MOVED) say else news
 
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val sideways = c.rotation % 180 != 0
-        AndroidView(
-            factory = { TextureView(it).also { tv -> player.setVideoTextureView(tv) } },
-            modifier = Modifier
-                // Portrait cams: lay the view out with width/height swapped, then rotate it into place.
-                .layout { m, cons ->
-                    val w = cons.maxWidth; val h = cons.maxHeight
-                    val p = m.measure(if (sideways) Constraints.fixed(h, w) else Constraints.fixed(w, h))
-                    layout(w, h) { p.place((w - p.width) / 2, (h - p.height) / 2) }
-                }
-                .graphicsLayer { rotationZ = c.rotation.toFloat(); this.alpha = alpha },
-        )
-        if (!bare) error?.let {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Lucide.VideoOff, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(36.dp))
-                Text(it, style = body(16.sp, 600), color = Color.White.copy(alpha = 0.8f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        // Keyed on the player: a new stream address makes a new player, and the video surface must follow it.
+        if (player != null) key(player) {
+            AndroidView(
+                factory = { TextureView(it).also { tv -> player.setVideoTextureView(tv) } },
+                modifier = Modifier
+                    // Portrait cams: lay the view out with width/height swapped, then rotate it into place.
+                    .layout { m, cons ->
+                        val w = cons.maxWidth; val h = cons.maxHeight
+                        val p = m.measure(if (sideways) Constraints.fixed(h, w) else Constraints.fixed(w, h))
+                        layout(w, h) { p.place((w - p.width) / 2, (h - p.height) / 2) }
+                    }
+                    .graphicsLayer { rotationZ = c.rotation.toFloat(); this.alpha = alpha },
+            )
+        }
+        if (!bare && shown != RtspNews.LIVE) {
+            Column(
+                Modifier.padding(40.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (shown.isFailure()) Icon(Lucide.VideoOff, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(36.dp))
+                Text(
+                    CamText.rtsp(shown), style = body(16.sp, 600), color = Color.White.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

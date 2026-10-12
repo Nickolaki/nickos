@@ -186,6 +186,24 @@ object CamText {
     const val TURN_ON_AGAIN = "Turn on again"
     const val OPEN_SETTINGS = "Open Settings"
     const val RTSP_ERROR = "Can't connect to this camera"
+    const val RTSP_CONNECTING = "Connecting..."
+    const val RTSP_UNREACHABLE = "Can't reach the camera. Is it switched on and joined to the car network?"
+    const val RTSP_WRONG_PASSWORD = "Wrong camera account name or password. Tap the pencil to fix it."
+    const val RTSP_CANT_PLAY = "This tablet can't play this picture. Tap the pencil and set Picture to Standard."
+    const val RTSP_LOOKING = "Looking for the camera on the car network..."
+    const val RTSP_MOVED = "The camera has a new address. Tap the pencil and pick it again."
+
+    /** The sentence under a camera tile for [n]. Empty while the picture shows. */
+    fun rtsp(n: RtspNews): String = when (n) {
+        RtspNews.CONNECTING -> RTSP_CONNECTING
+        RtspNews.LIVE -> ""
+        RtspNews.UNREACHABLE -> RTSP_UNREACHABLE
+        RtspNews.WRONG_PASSWORD -> RTSP_WRONG_PASSWORD
+        RtspNews.CANT_PLAY -> RTSP_CANT_PLAY
+        RtspNews.LOOKING -> RTSP_LOOKING
+        RtspNews.MOVED -> RTSP_MOVED
+        RtspNews.ERROR -> RTSP_ERROR
+    }
 
     /** The line in the middle of a tile. [tablet] is the tablet's full name ("Hailey's Tablet"). Empty while the picture shows. */
     fun tile(d: TileDisplay, tablet: String, minutes: Int): String = when (d) {

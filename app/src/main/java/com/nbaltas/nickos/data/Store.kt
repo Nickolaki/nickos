@@ -3,6 +3,7 @@ package com.nbaltas.nickos.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.nbaltas.nickos.cam.CamPrefs
+import com.nbaltas.nickos.cam.RtspUrl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -53,12 +54,30 @@ data class LinkedNode(
  */
 data class Hotspot(val ssid: String, val pass: String, val direct: Boolean = false)
 
-/** A camera feed on the Master. [rotation] is 0/90/180/270 (portrait baby cams). */
-data class Camera(val id: String, val name: String, val url: String, val rotation: Int = 0) {
+/**
+ * A camera feed on the Master. [rotation] is 0/90/180/270 (portrait baby cams).
+ * A Tapo camera has [host], [user], [pass] and [hd]; anything else has a raw [url].
+ */
+data class Camera(
+    val id: String, val name: String, val url: String = "", val rotation: Int = 0,
+    val host: String? = null, val user: String = "", val pass: String = "", val hd: Boolean = false,
+) {
+    val isTapo: Boolean get() = host != null
+
+    /** What the player opens. Built here, never stored and never shown. */
+    fun streamUrl(): String = if (host != null) RtspUrl.tapo(host, user, pass, hd) else url
+
+    /** Never the password: this is what ends up in logs. */
+    override fun toString() = "Camera($id, $name, host=$host, hd=$hd, url=${RtspUrl.redact(url)})"
+
     fun toJson() = JSONObject().put("id", id).put("name", name).put("url", url).put("rotation", rotation)
+        .put("host", host).put("user", user).put("pass", pass).put("hd", hd)
 
     companion object {
-        fun from(o: JSONObject) = Camera(o.getString("id"), o.getString("name"), o.getString("url"), o.optInt("rotation"))
+        fun from(o: JSONObject) = Camera(
+            o.getString("id"), o.getString("name"), o.optString("url"), o.optInt("rotation"),
+            o.optString("host").takeIf { it.isNotEmpty() }, o.optString("user"), o.optString("pass"), o.optBoolean("hd"),
+        )
     }
 }
 
