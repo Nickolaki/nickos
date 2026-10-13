@@ -28,6 +28,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -317,6 +321,8 @@ private fun CarNetCard() {
     val manual = hotspot?.takeIf { !it.direct }
     val copy = carNetCopy(state, manual, Build.VERSION.SDK_INT)
     var reveal by rememberSaveable { mutableStateOf(false) }
+    // Not saved: the secret is hidden again whenever this card leaves the screen.
+    var showSecret by remember { mutableStateOf(carNetStartRevealed) }
     var name by rememberSaveable(manual?.ssid) { mutableStateOf(manual?.ssid ?: "") }
     var pass by rememberSaveable(manual?.pass) { mutableStateOf(manual?.pass ?: "") }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { app.master.carNet.recheck() }
@@ -340,10 +346,16 @@ private fun CarNetCard() {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(26.dp))
             Text(copy.title, style = body(22.sp, 800), color = C.text, maxLines = 2, modifier = Modifier.weight(1f))
+            if (showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
+        }
+        (state as? CarNetState.On)?.let { on ->
+            // The password: this tablet's own record of it, never logged and never part of the state's toString.
+            if (showSecret) CarNetSecret(on.ssid, on.pass ?: hotspot?.takeIf { it.direct && it.ssid == on.ssid }?.pass ?: app.store.carNetPass())
         }
         copy.line?.let { Muted(it, 16) }
-        if (copy.primary != null || copy.ghost != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (copy.primary != null || copy.ghost != null || (up && !showSecret)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             copy.primary?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.PRIMARY) }
+            if (up && !showSecret) NickButton(CARNET_SHOW, { showSecret = true }, Modifier.height(52.dp), BtnStyle.PRIMARY)
             copy.ghost?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.GHOST) }
         }
         if (copy.fields || reveal) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -353,6 +365,28 @@ private fun CarNetCard() {
                 app.store.setHotspot(Hotspot(name.trim(), pass, direct = false)); reveal = false
             }, Modifier.height(52.dp), BtnStyle.PRIMARY, enabled = hotspotFieldsOk(name.trim(), pass))
             Muted(HOTSPOT_SAVE_NOTE, 15)
+        }
+    }
+}
+
+/** Test hook: the car network card opens with the name and password already shown. */
+internal var carNetStartRevealed = false
+
+@Composable
+private fun CarNetSecret(ssid: String, pass: String) {
+    val qr = remember(ssid, pass) { wifiQrBitmap(wifiQrPayload(ssid, pass), 500) }
+    Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column { FieldLabel("Network name"); Text(ssid, style = body(28.sp, 800), color = C.text) }
+                    Column { FieldLabel("Password"); Text(pass, style = body(28.sp, 800), color = C.text) }
+                }
+            }
+            Muted(CARNET_SHARE_HELP, 15)
+        }
+        Box(Modifier.size(170.dp).clip(RoundedCornerShape(16.dp)).background(Color.White).padding(10.dp), contentAlignment = Alignment.Center) {
+            Image(qr.asImageBitmap(), "Car network QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None)
         }
     }
 }

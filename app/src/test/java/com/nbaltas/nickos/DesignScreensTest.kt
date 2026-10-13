@@ -826,5 +826,19 @@ class DesignScreensTest {
     @Test fun controlDeviceAsked960() = deviceTabAsked()
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun controlDeviceAsked1024() = deviceTabAsked()
+
+    private fun carNetRevealed() {
+        com.nbaltas.nickos.ui.master.carNetStartRevealed = true
+        try {
+            shot("Settings-Tablets-CarNet-Revealed-${sizeTag()}") { SettingsScreen(0, {}, {}, {}) }
+        } finally {
+            com.nbaltas.nickos.ui.master.carNetStartRevealed = false
+        }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun carNetRevealed960() = carNetRevealed()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun carNetRevealed1024() = carNetRevealed()
 }
 
