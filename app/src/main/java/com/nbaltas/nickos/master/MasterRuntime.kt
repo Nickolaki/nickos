@@ -155,6 +155,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val _status = MutableStateFlow<Map<String, NodeStatus>>(emptyMap())
     val status: StateFlow<Map<String, NodeStatus>> = _status
 
+    private val _asked = MutableStateFlow<Map<String, Long>>(emptyMap())
+    /** Nodes the parent asked to show their permission card, with when (ms). The Device tab says "Asked on ..." for a while. */
+    val asked: StateFlow<Map<String, Long>> = _asked
+
     private val _online = MutableStateFlow<Set<String>>(emptySet())
     val online: StateFlow<Set<String>> = _online
 
@@ -509,6 +513,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         patch(id) { it.copy(allowed = if (on) (it.allowed - pkg) + pkg else it.allowed - pkg) }
     }
     fun lockToApp(id: String, pkg: String?) { send(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
+    /** A greyed Brightness or Off was tapped: make the Node pop up its own "Allow" card. An old Node ignores it. */
+    fun askPermission(id: String): Boolean {
+        val sent = send(id, NetMessages.askPermissionCmd())
+        if (sent) _asked.update { it + (id to System.currentTimeMillis()) }
+        return sent
+    }
     fun requestApps(id: String) = send(id, cmd("apps"))
     /** The Node checks the update track itself and installs (silently when it has the kid lock). */
     fun updateNode(id: String) = send(id, cmd("update"))

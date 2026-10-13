@@ -503,5 +503,26 @@ private fun MenuButton(text: String, primary: Boolean = false, danger: Boolean =
     }
 }
 
+/**
+ * The friendly request: "let the parent tablet change brightness and turn the screen off?". It sits over the kid home
+ * or the Grown-up menu. Allow walks through the Android screens that need a grown-up; Not now hides it for this session.
+ */
+@Composable
+fun PermissionCard(onAllow: () -> Unit, onNotNow: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0xC7080918)).tap {}, contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.padding(vertical = 12.dp).width(560.dp).shadow(40.dp, RoundedCornerShape(40.dp)).clip(RoundedCornerShape(40.dp))
+                .background(NodePalette.pinCard).verticalScroll(rememberScrollState()).padding(horizontal = 40.dp, vertical = 36.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(com.nbaltas.nickos.node.PermissionAsk.TITLE, style = disp(30.sp), color = NodeText)
+            Text(com.nbaltas.nickos.node.PermissionAsk.BODY, style = body(18.sp), color = NodePalette.soft)
+            Spacer(Modifier.height(4.dp))
+            MenuButton(com.nbaltas.nickos.node.PermissionAsk.ALLOW, primary = true, onClick = onAllow)
+            MenuButton(com.nbaltas.nickos.node.PermissionAsk.NOT_NOW, onClick = onNotNow)
+        }
+    }
+}
+
 fun androidSettingsIntent() = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 

@@ -27,6 +27,8 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.node.KioskPolicy
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.node.NodeService
+import com.nbaltas.nickos.node.PermStep
+import com.nbaltas.nickos.node.PermissionAsk
 import com.nbaltas.nickos.node.parentName
 import com.nbaltas.nickos.ui.common.AppDrawer
 import com.nbaltas.nickos.ui.setup.PairingCodeBody
@@ -85,10 +87,30 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     // One-time OKs the Master's brightness slider and Off button need on this tablet. Re-read after each page returns.
     var permTick by remember { mutableIntStateOf(0) }
-    val askPerm = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { permTick++ }
+    var onPermResult by remember { mutableStateOf({}) }
+    val askPerm = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { permTick++; onPermResult() }
     val brightnessOk = remember(screen, permTick) { rt.device.brightnessOk }
     val screenOffOk = remember(screen, permTick) { rt.device.screenOffOk }
     fun ask(i: android.content.Intent) { try { askPerm.launch(i) } catch (e: Exception) { permTick++ } }
+
+    // The friendly request card. Each system screen is opened at most once per Allow, so declining never loops.
+    val masterAsked by rt.permAsk.masterAsked.collectAsState()
+    val tried = remember { mutableSetOf<PermStep>() }
+    var walking by remember { mutableStateOf(false) }
+    val playing = screen == NodeScreen.HOME && playerUi.fid != null
+    fun nextPermScreen() {
+        val d = rt.device
+        when (PermissionAsk.nextStep(d.isDeviceOwner, d.brightnessOk, d.screenOffOk, tried)) {
+            PermStep.BRIGHTNESS -> { tried += PermStep.BRIGHTNESS; try { askPerm.launch(d.writeSettingsIntent()) } catch (e: Exception) { nextPermScreen() } }
+            PermStep.SCREEN_OFF -> { tried += PermStep.SCREEN_OFF; try { askPerm.launch(d.deviceAdminIntent()) } catch (e: Exception) { nextPermScreen() } }
+            null -> { walking = false; permTick++ }
+        }
+    }
+    onPermResult = { if (walking) nextPermScreen() }
+    val permWanted = remember(screen, permTick, masterAsked, walking, playing) {
+        PermissionAsk.showCard(rt.device.isDeviceOwner, rt.device.brightnessOk, rt.device.screenOffOk, rt.permAsk.declined, playing, masterAsked)
+    }
+    val showPermCard = !walking && permWanted && (screen == NodeScreen.HOME || screen == NodeScreen.MENU)
 
     // Tablet cameras: the grown-up menu offers "Allow camera" until the permission is there.
     var cameraOk by remember(screen) { mutableStateOf(rt.device.hasCameraPermission()) }
@@ -159,6 +181,11 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onAllowCamera = if (cameraOk) null else ({ askCamera.launch(android.Manifest.permission.CAMERA) }),
             onAllowBrightness = if (brightnessOk) null else ({ ask(rt.device.writeSettingsIntent()) }),
             onAllowScreenOff = if (screenOffOk) null else ({ ask(rt.device.deviceAdminIntent()) }),
+        )
+
+        if (showPermCard) PermissionCard(
+            onAllow = { rt.permAsk.begin(); tried.clear(); walking = true; nextPermScreen() },
+            onNotNow = { rt.permAsk.decline(); permTick++ },
         )
 
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),

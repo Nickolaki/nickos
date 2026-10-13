@@ -303,7 +303,18 @@ private fun SkipButton(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
 private fun DeviceSliders(v: NodeView) {
     val m = App.get(LocalContext.current).master
     SliderCard(Lucide.Volume2, "Volume", v.status?.volume ?: 0) { m.setVolume(v.node.id, it) }
-    SliderCard(Lucide.Sun, "Brightness", v.status?.brightness ?: 0, unavailable = brightnessReason(v)) { m.setBrightness(v.node.id, it) }
+    SliderCard(
+        Lucide.Sun, "Brightness", v.status?.brightness ?: 0, unavailable = brightnessReason(v),
+        askedLine = askedLine(v), onAsk = { m.askPermission(v.node.id) },
+    ) { m.setBrightness(v.node.id, it) }
+}
+
+/** "Asked on Hailey's Tablet. Tap Allow on that tablet." for two minutes after a greyed control was tapped, else null. */
+@Composable
+private fun askedLine(v: NodeView): String? {
+    val at = App.get(LocalContext.current).master.asked.collectAsState().value[v.node.id]
+    val now = rememberNow(1000)
+    return if (ControlAccess.askedActive(at, now)) ControlAccess.askedLine(v.node.name) else null
 }
 
 /** Why Brightness cannot work on this tablet yet, or null when it can. */
@@ -311,11 +322,12 @@ private fun brightnessReason(v: NodeView): String? =
     if (v.status?.brightnessOk == false) ControlAccess.brightnessReason(v.node.name) else null
 
 @Composable
-private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolean = false, modifier: Modifier = Modifier, unavailable: String? = null, onCommit: (Int) -> Unit) {
+private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolean = false, modifier: Modifier = Modifier, unavailable: String? = null, askedLine: String? = null, onAsk: (() -> Unit)? = null, onCommit: (Int) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val shown = dragging ?: (value / 100f)
     Column(
         modifier.fillMaxWidth().clip(RoundedCornerShape(if (big) 28.dp else 26.dp)).background(C.surface)
+            .then(if (unavailable != null && onAsk != null) Modifier.clickable(onClick = onAsk) else Modifier)
             .padding(horizontal = if (big) 24.dp else 24.dp, vertical = if (big) 24.dp else 22.dp),
         verticalArrangement = Arrangement.spacedBy(if (big) 18.dp else 20.dp),
     ) {
@@ -324,7 +336,10 @@ private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolea
             Text(label, style = body(if (big) 20.sp else 19.sp, if (big) 800 else 700), color = C.text, modifier = Modifier.weight(1f))
             if (!big && unavailable == null) Text("${(shown * 100).roundToInt()}%", style = disp(34.sp), color = C.text)
         }
-        if (unavailable != null) Muted(unavailable, if (big) 17 else 16)
+        if (unavailable != null) {
+            Muted(unavailable, if (big) 17 else 16)
+            if (askedLine != null) Text(askedLine, style = body(if (big) 17.sp else 16.sp, 700), color = C.accent)
+        }
         else {
             if (big) Text("${(shown * 100).roundToInt()}%", style = disp(56.sp, 800, 1f), color = C.text)
             Box(Modifier.padding(vertical = 12.dp)) {
@@ -531,13 +546,19 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                 DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true) {
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.surface2).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         val on = st?.screenOn != false
-                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), enabled = st?.screenOffOk != false) { m.screen(v.node.id, false) }
+                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false) {
+                            if (st?.screenOffOk == false) m.askPermission(v.node.id) else m.screen(v.node.id, false)
+                        }
                         SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f)) { m.screen(v.node.id, true) }
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
                     // One short line under Lock, so Lock is never pushed out of the card.
-                    if (st?.screenOffOk == false) Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                    if (st?.screenOffOk == false) {
+                        val asked = askedLine(v)
+                        if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = 2)
+                        else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                    }
                 }
             },
             { mod ->
@@ -578,7 +599,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                 }
             },
             { mod -> SliderCard(Lucide.Volume2, "Volume", st?.volume ?: 0, big = true, modifier = mod) { m.setVolume(v.node.id, it) } },
-            { mod -> SliderCard(Lucide.Sun, "Brightness", st?.brightness ?: 0, big = true, modifier = mod, unavailable = brightnessReason(v)) { m.setBrightness(v.node.id, it) } },
+            { mod -> SliderCard(Lucide.Sun, "Brightness", st?.brightness ?: 0, big = true, modifier = mod, unavailable = brightnessReason(v), askedLine = askedLine(v), onAsk = { m.askPermission(v.node.id) }) { m.setBrightness(v.node.id, it) } },
             { mod ->
                 DeviceCard(mod, Lucide.Settings, "Tablet", trailing = {
                     if (st != null && !st.owner) Chip(height = 30.dp, bg = C.dangerLine) { Text("Kid lock off", style = body(13.sp, 700), color = C.danger) }
@@ -633,10 +654,10 @@ private fun DeviceCard(
 }
 
 @Composable
-private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, dim: Boolean = false, onClick: () -> Unit) {
     Row(
         modifier.height(68.dp).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
-            .alpha(if (enabled) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
+            .alpha(if (enabled && !dim) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
         val col = if (on) C.onAccent else C.muted
