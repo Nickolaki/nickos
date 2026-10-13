@@ -28,8 +28,8 @@ class ControlAccessTest {
 
     @Test fun reasonsNameTheTabletAndTheMenuRow() {
         assertTrue(ControlAccess.brightnessReason("Hailey's Tablet").contains("Hailey's Tablet"))
-        assertTrue(ControlAccess.brightnessReason("x").contains("Allow brightness"))
-        assertTrue(ControlAccess.screenOffReason("x").contains("Allow screen off"))
+        assertTrue(ControlAccess.brightnessReason("x").contains("Tap here to ask"))
+        assertTrue(ControlAccess.screenOffReason("x").contains("Tap Off to ask"))
     }
 
     private fun json(extra: String) = JSONObject("{\"battery\":50,\"charging\":false,\"screenOn\":true,\"volume\":10,\"brightness\":40$extra}")

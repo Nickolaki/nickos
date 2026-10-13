@@ -174,6 +174,9 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Set by the Node activity while the kid home screen is showing. */
     @Volatile var homeVisible = false
 
+    /** The "let the parent tablet change brightness?" card: remembers "Not now" and a Master's request. */
+    val permAsk = PermissionAskState()
+
     /** After the parent PIN: kiosk and "lock to app" are paused until this time. */
     @Volatile var parentUntil = 0L
     val parentMode get() = System.currentTimeMillis() < parentUntil
@@ -365,6 +368,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // The camera answers with its own camState, never with a status broadcast.
             "camStart" -> { CamMessages.decodeStart(m)?.let { cam.start(CamProfile.of(it.profile), it.maxMs, Store.randomHex(16)) }; return }
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
+            // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
+            NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))

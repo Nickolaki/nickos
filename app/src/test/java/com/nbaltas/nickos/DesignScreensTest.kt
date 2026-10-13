@@ -801,6 +801,32 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun camerasAddNotFound1024() = camerasAddNotFound()
 
+    // ---- the Node asks for brightness and screen off by itself ----
+    private fun nodePermissionCard() {
+        nodeSeed()
+        shot("Node-PermissionCard-${sizeTag()}") {
+            kidHome()
+            com.nbaltas.nickos.ui.node.PermissionCard(onAllow = {}, onNotNow = {})
+        }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodePermissionCard960() = nodePermissionCard()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun nodePermissionCard1024() = nodePermissionCard()
+
+    /** After the parent taps a greyed Brightness or Off: the Master says it asked and what to do next. */
+    private fun deviceTabAsked() {
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin").copy(brightnessOk = false, screenOffOk = false)))
+        set(app.master, "_asked", mapOf("aaaaaaaaaaaa" to FIXED_NOW))
+        shot("Control-Device-Asked-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceAsked960() = deviceTabAsked()
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceAsked1024() = deviceTabAsked()
+
     private fun carNetRevealed() {
         com.nbaltas.nickos.ui.master.carNetStartRevealed = true
         try {

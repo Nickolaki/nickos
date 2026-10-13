@@ -62,6 +62,14 @@ object NetMessages {
         return WifiCmd(ssid, pass, gw)
     }
 
+    /**
+     * Master to Node: "show your permission card now". A plain authenticated command like volume, so it rides the sealed
+     * session. A Node that predates it falls through its command switch and ignores it.
+     */
+    const val ASK_PERMISSION = "askPerm"
+    fun askPermissionCmd(): JSONObject = JSONObject().put("t", "cmd").put("c", ASK_PERMISSION)
+    fun isAskPermission(m: JSONObject?): Boolean = m?.optString("t") == "cmd" && m.optString("c") == ASK_PERMISSION
+
     fun encodeWifi(s: WifiStatus): JSONObject =
         JSONObject().put("saved", s.saved).put("approve", s.approve).put("do", s.deviceOwner).put("doze", s.doze)
 
