@@ -342,6 +342,7 @@ class CarNetTest {
         waitFor("on") { n.isOn() }
         p.tethering = true; p.fire()
         waitFor("paused") { n.off() == Why.TETHERING_ON }
+        waitFor("group removed") { p.removes.get() >= 1 }
         val creates = p.creates.get()
         val removes = p.removes.get()
         Thread.sleep(200)                          // several watchdog laps
