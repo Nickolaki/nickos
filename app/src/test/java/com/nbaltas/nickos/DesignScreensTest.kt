@@ -594,6 +594,13 @@ class DesignScreensTest {
         shot("Settings-Tablets-CarNet-Off") { SettingsScreen(0, {}, {}, {}) }
     }
 
+    @Test fun settingsTabletsCarNetSwitchedOff() {
+        app.store.setCarNetOn(false)          // switch off; the runtime state stays On (set in seed()) to prove the card follows the preference
+        wifiReports("aaaaaaaaaaaa" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true),
+            "bbbbbbbbbbbb" to NetMessages.WifiStatus(saved = true, deviceOwner = true, doze = true))
+        shot("Settings-Tablets-CarNet-SwitchedOff") { SettingsScreen(0, {}, {}, {}) }
+    }
+
     @Test fun settingsTabletsCarNetManual() {
         app.store.setHotspot(Hotspot("Dad's phone", "hotspot-pass-1", direct = false))
         carState(CarNetState.Off(Why.MANUAL))
