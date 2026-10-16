@@ -403,6 +403,7 @@ private fun OfflineBody(v: NodeView, onAll: () -> Unit) {
     val m = app.master
     // Read so the page recomposes when the car network or the saved hotspot changes.
     m.carNet.state.collectAsState().value
+    app.store.carNetOn.collectAsState().value
     val hotspot = app.store.hotspot.collectAsState().value
     val reason = m.offlineReasons(rememberNow(1000))[v.node.id]
     val tips = offlineTips(reason, hotspot?.takeIf { !it.direct }?.ssid)

@@ -131,6 +131,45 @@ class CarNetSwitchTest {
         assertEquals(1, p.creates.get())
     }
 
+    @Test fun `switching off while the removal before a create is running starts no create`() {
+        val p = FakeP2p()
+        p.group = Group("DIRECT-zz-other", "otherpass12", "192.168.49.1", true)   // something in the way: RemoveThenCreate
+        val gate = CompletableDeferred<Unit>()
+        p.removeGate = gate
+        val n = net(p)
+        n.start()
+        waitFor("removal started") { p.removes.get() >= 1 }
+        off = true; n.poke()
+        gate.complete(Unit)
+        waitFor("off") { n.why() == Why.TURNED_OFF }
+        Thread.sleep(200)
+        assertEquals(0, p.creates.get())
+    }
+
+    @Test fun `off beats unsupported, and says nothing to remove`() {
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.TURNED_OFF)),
+            CarNetPolicy.next(inputs().copy(supported = false)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.TURNED_OFF)),
+            CarNetPolicy.next(inputs(sdk = 23)))
+        assertEquals(CarNetPolicy.Action.Nothing(CarNetState.Off(Why.UNSUPPORTED)),
+            CarNetPolicy.next(inputs(turnedOff = false).copy(supported = false)))
+    }
+
+    @Test fun `with the switch off the card and the reasons ignore stale runtime state`() {
+        val stale = listOf(CarNetState.On("DIRECT-NK-NickOS-test", "192.168.49.1", "testpassphrase01"), CarNetState.Off(Why.NO_PERMISSION), CarNetState.Starting)
+        for (s in stale) {
+            val eff = effectiveCarNetState(s, false)
+            assertEquals(CarNetState.Off(Why.TURNED_OFF), eff)
+            val copy = carNetCopy(eff, null, 34)
+            assertEquals("Car network is off", copy.title)
+            assertNull(copy.primary)
+            val reason = OnlinePolicy.reason(eff, false, null, true, 0, 1_000)
+            assertEquals(Reason.CarNetDown(Why.TURNED_OFF), reason)
+            assertNull(carNetBannerWhy(listOf(reason)))
+        }
+        assertEquals(stale[0], effectiveCarNetState(stale[0], true))
+    }
+
     @Test fun `a remove that fails is retried and nothing is created`() {
         val p = FakeP2p()
         val n = net(p)
@@ -230,6 +269,8 @@ class StoreCarNetSwitchTest {
         assertTrue(store.carNetOn.value)
         store.setCarNetOn(false)
         assertFalse(store.carNetOn.value)
+        // The value is in the preferences by the time the flow says so (the write is committed before it is published).
+        assertFalse(ctx.getSharedPreferences("nickos", android.content.Context.MODE_PRIVATE).getBoolean("carNetOn", true))
         assertFalse(Store(ctx).carNetOn.value)     // a fresh Store (a restart) reads off before anything can create a group
         store.resetAll()
         assertTrue(store.carNetOn.value)

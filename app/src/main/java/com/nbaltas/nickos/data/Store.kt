@@ -197,7 +197,10 @@ class Store(context: Context) {
     /** The parent's car network switch (Settings, Tablets). On by default, so an update changes nothing until it is used. */
     val carNetOn: StateFlow<Boolean> = _carNetOn
     @Synchronized
-    fun setCarNetOn(v: Boolean) { p.edit().putBoolean("carNetOn", v).apply(); _carNetOn.value = v }
+    fun setCarNetOn(v: Boolean) {
+        // Durable first (a tiny write), then publish: nothing reacts to a value that could be lost. A failed write keeps the old value.
+        if (p.edit().putBoolean("carNetOn", v).commit()) _carNetOn.value = v
+    }
 
     private fun readHotspot(): Hotspot? = try {
         p.getString("hotspot", null)?.let { JSONObject(it) }

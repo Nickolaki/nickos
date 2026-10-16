@@ -54,8 +54,11 @@ class FakeP2p : P2pPort {
     }
     /** The next this many removes fail and leave the group where it is. */
     val removeFails = AtomicInteger()
+    /** When set, removeGroup waits for it after being counted (a removal that takes a while). */
+    @Volatile var removeGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     override suspend fun removeGroup(): Boolean {
         removes.incrementAndGet(); events += "remove"
+        removeGate?.await()
         if (removeFails.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) return false
         group = null; return true
     }

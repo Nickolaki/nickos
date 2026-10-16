@@ -74,6 +74,7 @@ import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.master.CarNetState
 import com.nbaltas.nickos.master.NodeNet
+import com.nbaltas.nickos.master.effectiveCarNetState
 import com.nbaltas.nickos.master.OnlinePolicy
 import com.nbaltas.nickos.master.Reason
 import com.nbaltas.nickos.master.Why
@@ -326,11 +327,13 @@ internal fun offlineTips(reason: Reason?, manualSsid: String?): List<Pair<TipIco
 private fun CarNetCard() {
     val ctx = LocalContext.current
     val app = App.get(ctx)
-    val state by app.master.carNet.state.collectAsState()
+    val runtime by app.master.carNet.state.collectAsState()
     val hotspot by app.store.hotspot.collectAsState()
     val switchedOn by app.store.carNetOn.collectAsState()
+    // Off means off: the card follows the preference, not the async runtime state that may lag behind it.
+    val state = effectiveCarNetState(runtime, switchedOn)
     val manual = hotspot?.takeIf { !it.direct }
-    val copy =carNetCopy(state, manual, Build.VERSION.SDK_INT)
+    val copy = carNetCopy(state, manual, Build.VERSION.SDK_INT)
     var reveal by rememberSaveable { mutableStateOf(false) }
     // Not saved: the secret is hidden again whenever this card leaves the screen.
     var showSecret by remember { mutableStateOf(carNetStartRevealed) }

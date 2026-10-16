@@ -104,8 +104,11 @@ object CarNetPolicy {
     }
 
     fun next(i: Inputs): Action {
+        // 0. The parent's switch also wins over UNSUPPORTED; where no group of ours can exist there is nothing to remove.
+        val cannot = !i.supported || i.sdk < 24
+        if (i.turnedOff && cannot) return Action.Nothing(CarNetState.Off(Why.TURNED_OFF))
         // 1. UNSUPPORTED (below Android 7 there is no usable Wi-Fi Direct group owner; the manual hotspot is the only way)
-        if (!i.supported || i.sdk < 24) return Action.Nothing(CarNetState.Off(Why.UNSUPPORTED))
+        if (cannot) return Action.Nothing(CarNetState.Off(Why.UNSUPPORTED))
         // LEGACY (24..28): no WifiP2pConfig.Builder, so the system picks the name and passphrase. We learn them from
         // the live group (which we must own) instead of prescribing them, and need no permission or Location toggle.
         val legacy = i.sdk in 24..28
@@ -148,6 +151,10 @@ object CarNetPolicy {
         return make
     }
 }
+
+/** What the parent sees: with the switch off the preference decides, whatever the async runtime state still says. */
+fun effectiveCarNetState(runtime: CarNetState, switchedOn: Boolean): CarNetState =
+    if (switchedOn) runtime else CarNetState.Off(Why.TURNED_OFF)
 
 /** The names the Nodes save. The passphrase lives in the Store ([com.nbaltas.nickos.data.Store.carNetPass]). */
 object CarNetNames {
@@ -333,6 +340,8 @@ class CarNet(
         if (removeFirst || forceRemove) {
             forceRemove = false
             withTimeoutOrNull(config.callTimeoutMs) { try { port.removeGroup() } catch (e: Exception) { false } }
+            // The switch may have gone off while the removal was suspended: start nothing, let the next look decide.
+            if (safe(false) { off() }) return
         }
         val out = withTimeoutOrNull(config.callTimeoutMs) {
             try { port.createGroup(want.ssid, want.pass) } catch (e: SecurityException) { Outcome.ERROR } catch (e: Exception) { Outcome.ERROR }

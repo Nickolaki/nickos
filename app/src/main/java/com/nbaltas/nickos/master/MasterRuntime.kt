@@ -501,7 +501,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     fun offlineReasons(now: Long = System.currentTimeMillis()): Map<String, Reason> {
         val lan = lanAddress()
         val manual = store.hotspot.value?.direct == false
-        val car = carNet.state.value
+        val car = effectiveCarNetState(carNet.state.value, store.carNetOn.value)
         return OnlinePolicy.offline(store.nodes.value, _online.value).associate { n ->
             n.id to OnlinePolicy.reason(car, manual, lan, OnlinePolicy.wifiSaved(_net.value[n.id], n.wifiSaved), n.lastSeen, now, carNet.startingSince)
         }
