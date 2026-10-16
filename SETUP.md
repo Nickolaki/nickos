@@ -89,7 +89,13 @@ While Device Owner is set, NickOS can't be uninstalled until you use that button
 2. Type the 6-digit code from the kid's tablet.
 3. Optionally connect Jellyfin (server address, username, password). An admin login lets the
    Master see every tablet's playback and choose which Jellyfin user each tablet shows.
-4. Make NickOS the Home app if you want it as the tablet's launcher.
+
+NickOS does not need to be the parent tablet's home screen. It works like any other app: Back
+leaves it for the tablet's own home screen, and the car network keeps running in the background.
+If you do want it as the home screen, Settings → About → Open home screen settings.
+
+The parent tablet hosts the car network (Wi-Fi Direct). It can drain the battery, so Settings →
+Tablets has a Car network switch. Off means the kid tablets use your home WiFi or a hotspot instead.
 
 Rename the Master under Settings → Linked tablets (it shows up on kid tablets as
 "Linked to Dad's tablet" and "Screen locked by Dad").

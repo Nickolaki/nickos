@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
     /** The Wi-Fi Direct group needs one permission (nearby devices, or location on older Android). Asked once per start. */
     private fun askForCarNetPermission() {
         val perms = app.master.carNet.permissionToRequest()
-        if (perms.isEmpty() || askedCarNet) return
+        if (perms.isEmpty() || askedCarNet || !app.store.carNetOn.value) return
         askedCarNet = true
         try { requestPermissions(perms.toTypedArray(), REQ_CARNET) } catch (_: Exception) {}
     }
@@ -151,6 +151,8 @@ class MainActivity : ComponentActivity() {
     override fun onBackPressed() {
         // Home screen: Back never leaves it. Compose BackHandlers still get it first.
         if (onBackPressedDispatcher.hasEnabledCallbacks()) onBackPressedDispatcher.onBackPressed()
+        // The parent tablet is a normal app unless it is set as the home screen: Back goes to its own home.
+        else if (masterBackLeaves(app.store.role.value, isDefaultHome(this))) moveTaskToBack(true)
     }
 
     companion object { const val PARENT_MINUTES = 10; private const val REQ_CARNET = 41 }

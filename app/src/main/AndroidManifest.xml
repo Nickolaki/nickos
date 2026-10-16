@@ -55,6 +55,10 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- The system page where the parent picks the home screen (only checked, to hide the button when it is missing). -->
+        <intent>
+            <action android:name="android.settings.HOME_SETTINGS" />
+        </intent>
     </queries>
 
     <application

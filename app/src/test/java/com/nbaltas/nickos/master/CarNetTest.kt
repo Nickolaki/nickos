@@ -52,7 +52,13 @@ class FakeP2p : P2pPort {
         creates.incrementAndGet(); events += "create"
         return create(ssid, pass)
     }
-    override suspend fun removeGroup(): Boolean { removes.incrementAndGet(); events += "remove"; group = null; return true }
+    /** The next this many removes fail and leave the group where it is. */
+    val removeFails = AtomicInteger()
+    override suspend fun removeGroup(): Boolean {
+        removes.incrementAndGet(); events += "remove"
+        if (removeFails.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) return false
+        group = null; return true
+    }
     override fun close() { events += "close" }
 }
 

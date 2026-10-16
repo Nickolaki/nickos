@@ -22,7 +22,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * The passphrase is never logged and never appears in a [CarNetState].
  */
-enum class Why { NO_PERMISSION, NO_LOCATION, WIFI_OFF, TETHERING_ON, MANUAL, UNSUPPORTED, FAILED }
+enum class Why { NO_PERMISSION, NO_LOCATION, WIFI_OFF, TETHERING_ON, TURNED_OFF, MANUAL, UNSUPPORTED, FAILED }
 
 sealed class CarNetState {
     /** Making the group. */
@@ -91,6 +91,8 @@ object CarNetPolicy {
         /** When the system last answered OK to a create, 0 for never. */
         val createdOkAt: Long = 0,
         val timing: Timing = Timing(),
+        /** The parent switched the car network off (to save battery). */
+        val turnedOff: Boolean = false,
     )
 
     sealed class Action {
@@ -109,6 +111,8 @@ object CarNetPolicy {
         val legacy = i.sdk in 24..28
         val ours = i.live?.takeIf { if (legacy) it.isOwner else it.name == i.wanted.ssid }
         fun pause(why: Why) = if (ours != null) Action.Remove(CarNetState.Off(why)) else Action.Nothing(CarNetState.Off(why))
+        // 2a. TURNED_OFF: the parent's switch. It wins over everything below, a typed hotspot included.
+        if (i.turnedOff) return pause(Why.TURNED_OFF)
         // 2. MANUAL: the parent typed a hotspot in; our group would only get in its way
         if (i.manual) return pause(Why.MANUAL)
         // 3. NO_PERMISSION, 4. NO_LOCATION (29..32 only: 33+ has NEARBY_WIFI_DEVICES and needs no location)
@@ -155,7 +159,7 @@ object CarNetNames {
  * Keeps the car network alive for as long as it is [start]ed. One loop reads the facts, asks [CarNetPolicy], does the
  * one thing it says, then waits for an event ([poke], a system broadcast) or the watchdog, whichever is first.
  *
- *  - [wanted]: the name and passphrase to host. [manual]: the parent typed a hotspot in, so stay off.
+ *  - [wanted]: the name and passphrase to host. [manual]: the parent typed a hotspot in, so stay off. [off]: the parent's switch is off, so host nothing.
  *  - [onUp]: called when the group is up, so the credentials reach the Store before the first Node pairs.
  */
 class CarNet(
@@ -163,6 +167,7 @@ class CarNet(
     private val scope: CoroutineScope,
     private val wanted: () -> Hotspot,
     private val manual: () -> Boolean,
+    private val off: () -> Boolean = { false },
     private val onUp: (Hotspot) -> Unit = {},
     private val sdk: Int = Build.VERSION.SDK_INT,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -277,7 +282,7 @@ class CarNet(
         } else null
         val action = CarNetPolicy.next(CarNetPolicy.Inputs(
             sdk = sdk, permission = permission, locationOn = safe(true) { port.locationOn() }, wifiOn = wifiOn,
-            tetheringOn = safe(false) { port.tetheringOn() }, manual = manual(), live = live, wanted = want,
+            tetheringOn = safe(false) { port.tetheringOn() }, manual = manual(), turnedOff = safe(false) { off() }, live = live, wanted = want,
             failures = failures, lastTryAt = lastTryAt, now = now, supported = supported, createdOkAt = createdOkAt,
             timing = config.timing,
         ))

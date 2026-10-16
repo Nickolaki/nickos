@@ -140,6 +140,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         port = AndroidP2pPort(ctx), scope = scope,
         wanted = { Hotspot(CarNetNames.ssid(store.deviceId), store.carNetPass(), direct = true) },
         manual = { store.hotspot.value?.direct == false },
+        off = { !store.carNetOn.value },
         onUp = { store.adoptDirectHotspot(it) },
     )
 
@@ -227,6 +228,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             store.hotspot.collect { h ->
                 carNet.poke() // typing a hotspot in switches the car network off; clearing it switches it back on
                 if (h != last) { last = h; links.ids().forEach { sendHotspot(it) } }
+            }
+        }
+        scope.launch {
+            // The parent's car network switch: off removes our group, on goes through the normal checks again.
+            var last = store.carNetOn.value
+            store.carNetOn.collect { on ->
+                if (on && !last) carNet.recheck() else carNet.poke()
+                last = on
             }
         }
         scope.launch {

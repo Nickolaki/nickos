@@ -193,6 +193,12 @@ class Store(context: Context) {
         return true
     }
 
+    private val _carNetOn = MutableStateFlow(p.getBoolean("carNetOn", true))
+    /** The parent's car network switch (Settings, Tablets). On by default, so an update changes nothing until it is used. */
+    val carNetOn: StateFlow<Boolean> = _carNetOn
+    @Synchronized
+    fun setCarNetOn(v: Boolean) { p.edit().putBoolean("carNetOn", v).apply(); _carNetOn.value = v }
+
     private fun readHotspot(): Hotspot? = try {
         p.getString("hotspot", null)?.let { JSONObject(it) }
             ?.let { Hotspot(it.getString("ssid"), it.optString("pass"), it.optBoolean("direct", false)) }?.takeIf { it.ssid.isNotEmpty() }
@@ -322,7 +328,7 @@ class Store(context: Context) {
         val carnet = p.getString(KEY_CARNET, null)
         p.edit().clear().putString("deviceId", deviceId).apply { if (carnet != null) putString(KEY_CARNET, carnet) }.apply()
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
-        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _jellyfin.value = null; _quickApps.value = emptyList()
+        _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
         _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()
