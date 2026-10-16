@@ -168,6 +168,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     // Read before releasing: Device Owner and the home role are gone after.
                     val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
                     rt.sayGoodbye()
+                    rt.releaseLandscape() // give the tablet's own rotation settings back before the stored copy is wiped
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)

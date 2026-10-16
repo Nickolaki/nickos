@@ -40,6 +40,12 @@ class MainActivity : ComponentActivity() {
             val role by app.store.role.collectAsState()
             val theme by app.store.theme.collectAsState()
             LaunchedEffect(role) { onRoleChanged(role) }
+            // The parent's "lock to landscape" for a kid tablet. Both landscape directions; other apps are handled by NodeRuntime.
+            val landscape by app.store.landscapeLock.collectAsState()
+            LaunchedEffect(landscape, role) {
+                requestedOrientation = if (landscape && role == Role.NODE) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
             val mode = if (role == Role.MASTER) ThemeMode.valueOf(theme) else ThemeMode.DARK
             val dark = mode == ThemeMode.DARK || (mode == ThemeMode.SYSTEM && isSystemInDarkTheme())
             // Dark status/nav bar icons on the light theme, or they vanish into the background.

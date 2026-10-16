@@ -70,6 +70,38 @@ object NetMessages {
     fun askPermissionCmd(): JSONObject = JSONObject().put("t", "cmd").put("c", ASK_PERMISSION)
     fun isAskPermission(m: JSONObject?): Boolean = m?.optString("t") == "cmd" && m.optString("c") == ASK_PERMISSION
 
+    /**
+     * Master to Node: {"t":"cmd","c":"orientation","landscape":true} locks the kid tablet to landscape (both directions),
+     * false lets it turn freely again. The Node keeps the choice across reboots and answers in "status" with
+     * "landscape":{"lock","state"}. A Node that predates it ignores the command and omits the field.
+     */
+    const val ORIENTATION = "orientation"
+    fun orientationCmd(landscape: Boolean): JSONObject = JSONObject().put("t", "cmd").put("c", ORIENTATION).put("landscape", landscape)
+
+    /** Null unless this is an orientation command that carries a real boolean (a missing one must not unlock by accident). */
+    fun decodeOrientation(m: JSONObject?): Boolean? {
+        if (m == null || m.optString("t") != "cmd" || m.optString("c") != ORIENTATION) return null
+        if (m.opt("landscape") !is Boolean) return null
+        return m.getBoolean("landscape")
+    }
+
+    /** What the parent asked for ([lock]) and what the Node manages to do ([state]: on, off or no_permission). */
+    data class LandscapeStatus(val lock: Boolean, val state: String) {
+        val needsPermission get() = state == STATE_NO_PERMISSION
+    }
+    const val STATE_ON = "on"
+    const val STATE_OFF = "off"
+    const val STATE_NO_PERMISSION = "no_permission"
+
+    fun encodeLandscape(s: LandscapeStatus): JSONObject = JSONObject().put("lock", s.lock).put("state", s.state)
+
+    /** Null when the Node predates the feature and sent none: the Master hides the switch. */
+    fun decodeLandscape(status: JSONObject): LandscapeStatus? {
+        val o = status.optJSONObject("landscape") ?: return null
+        val state = o.optString("state").takeIf { it == STATE_ON || it == STATE_OFF || it == STATE_NO_PERMISSION } ?: return null
+        return LandscapeStatus(o.optBoolean("lock"), state)
+    }
+
     fun encodeWifi(s: WifiStatus): JSONObject =
         JSONObject().put("saved", s.saved).put("approve", s.approve).put("do", s.deviceOwner).put("doze", s.doze)
 

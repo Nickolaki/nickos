@@ -752,6 +752,21 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun controlDeviceNoPerms1024() = deviceTabNoPerms()
 
+    /** The Screen card's "Lock to landscape" switch: on and working, and on but missing the overlay permission. */
+    private fun deviceTabLandscape(tag: String, l: com.nbaltas.nickos.link.NetMessages.LandscapeStatus) {
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin").copy(landscape = l)))
+        shot("Control-Device-Landscape-$tag-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    private val landscapeOn = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "on")
+    private val landscapeBlocked = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "no_permission")
+
+    // 1024 only: at 960 the Device tab is one scrolling column and the control sits below the first screen.
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceLandscapeOn1024() = deviceTabLandscape("On", landscapeOn)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceLandscapeBlocked1024() = deviceTabLandscape("NoPermission", landscapeBlocked)
+
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
         com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {})
     }

@@ -69,6 +69,8 @@ data class NodeStatus(
     val brightnessOk: Boolean = true,
     /** False when the Node cannot turn its screen off yet (no device admin). Old Nodes omit it: assumed fine. */
     val screenOffOk: Boolean = true,
+    /** The landscape lock as the Node reports it. Null for an old Node: the Master hides the switch. */
+    val landscape: NetMessages.LandscapeStatus? = null,
 ) {
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
@@ -91,6 +93,7 @@ data class NodeStatus(
                 jf = o.optStr("jf"), names = o.optJSONArray("names").strings(), version = o.optString("version"),
                 caps = o.optJSONArray("caps").strings(),
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
+                landscape = NetMessages.decodeLandscape(o),
             )
         }
 
@@ -508,6 +511,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     // ---- device actions ----
+    /** Lock or free the kid tablet's rotation. Nothing is guessed: the switch follows what the Node reports back. */
+    fun setLandscape(id: String, on: Boolean) { send(id, NetMessages.orientationCmd(on)) }
+
     fun setVolume(id: String, v: Int) { send(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
     fun setBrightness(id: String, v: Int) { send(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }
     fun screen(id: String, on: Boolean) { send(id, cmd("screen").put("on", on)); patch(id) { it.copy(screenOn = on) } }

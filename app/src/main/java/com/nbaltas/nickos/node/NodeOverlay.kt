@@ -36,6 +36,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private var lockView: View? = null
     private var toastView: View? = null
+    private var guardView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -54,6 +55,27 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
         if (!toast && toastView != null) { remove(toastView); toastView = null }
+    }
+
+    /**
+     * The landscape lock for other apps: a 1 pixel window nobody can see or touch that asks Android for sensor
+     * landscape (both directions). The foreground app inherits the request. Safe to call again with the same value.
+     */
+    fun landscapeGuard(on: Boolean) = main.post {
+        if (on && guardView == null) {
+            val v = View(ctx)
+            val lp = WindowManager.LayoutParams(
+                1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
+            try { wm.addView(v, lp); guardView = v } catch (e: Exception) { android.util.Log.w("NickOS.Rotation", "landscape guard", e) }
+        }
+        if (!on && guardView != null) { remove(guardView); guardView = null }
     }
 
     fun hideAll() = main.post {
