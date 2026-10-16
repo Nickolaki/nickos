@@ -51,6 +51,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val connected by rt.connected.collectAsState()
     val lockedBy by store.lockedBy.collectAsState()
     val warn by rt.bedtimeWarning.collectAsState()
+    val talkBanner by rt.talkBanner.collectAsState()
     val pin by store.pin.collectAsState()
     val playerUi by rt.syncPlayer.ui.collectAsState()
     val player by rt.syncPlayer.player.collectAsState()
@@ -192,6 +193,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),
         // so the toast always draws here on the home screen. The wall too without the overlay permission.
         warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
+        talkBanner?.let { if (lockedBy == null) TalkBannerAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
     }
 }

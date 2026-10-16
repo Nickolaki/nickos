@@ -117,7 +117,18 @@ The Master's Cameras screen shows the kids' tablets' front cameras next to any R
 
 A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
 
-Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
+Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound from the kid tablets: their microphones are never used.
+
+### Talk to the kids
+
+Under the chips on the Cameras screen, a **Hold to talk** button speaks to every kid tablet that is on the screen (never to an RTSP camera), and the line beside it says who hears ("Hold to talk to Hailey, Leo"; with more than three it shows a count). While you hold it the button is lit and says "Talking to ...". Each tablet tile also has its own small microphone that talks to that tablet only. Let go and it stops.
+
+- The first press on the parent tablet asks Android for the microphone and does not talk. Allow it, then hold the button again. Only the parent tablet asks; kid tablets never do.
+- Who hears is fixed when you start pressing, so a tablet that turns on halfway does not suddenly listen.
+- On the kid tablet the speaker plays your voice, the movie gets quieter, and a banner says "Dad is talking" (your tablet's name, or "Parent is talking"). Over other apps the banner needs the show over other apps permission; without it the voice still plays. It stops by itself if your tablet goes quiet for a second and a half, and no talk lasts more than two minutes.
+- Talking stops when you let go, leave the Cameras screen, switch to another app, lose the microphone permission, or every tablet goes offline.
+- A tablet on an older NickOS shows a greyed microphone and "Update this tablet". The Node reports `talk1` in its capabilities.
+- If the kid hears nothing, check the tablet's call volume (talk uses the voice stream, not the movie volume) and that Wi-Fi is up.
 
 ## Tapo camera in the car
 

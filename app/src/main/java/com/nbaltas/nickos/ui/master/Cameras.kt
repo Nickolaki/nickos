@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.view.TextureView
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -119,6 +121,12 @@ import com.nbaltas.nickos.master.Described
 import com.nbaltas.nickos.master.RtspDescribe
 import com.nbaltas.nickos.master.CarNetState
 import com.nbaltas.nickos.master.RtspKnock
+import com.nbaltas.nickos.master.TalkController
+import com.nbaltas.nickos.master.TalkState
+import com.nbaltas.nickos.talk.TalkBar
+import com.nbaltas.nickos.talk.TalkStop
+import com.nbaltas.nickos.talk.TalkTarget
+import com.nbaltas.nickos.talk.TalkText
 import com.nbaltas.nickos.ui.node.kidName
 import com.nbaltas.nickos.ui.theme.Avatar
 import com.nbaltas.nickos.ui.theme.BackButton
@@ -184,6 +192,8 @@ fun CamerasScreen(
     startEditor: Camera? = null,
     /** Screenshot tests only: the cameras the editor's search "found", used while [live] is false. */
     foundPreset: List<String> = emptyList(),
+    /** Screenshot tests only: show a press in progress, used while [live] is false. */
+    talkPreset: TalkState? = null,
 ) {
     val app = App.get(LocalContext.current)
     val store = app.store
@@ -222,8 +232,10 @@ fun CamerasScreen(
     // screen going off counts as leaving: a camera nobody is looking at is just a warm tablet.
     if (live) LifecycleStartEffect(ctl) {
         ctl.setViewing(true)
-        onStopOrDispose { ctl.setViewing(false) }
+        onStopOrDispose { ctl.setViewing(false); rt.talk.stop(TalkStop.BACKGROUNDED) }
     }
+    // The microphone is only ever open while this screen is: leaving it ends any press.
+    if (live) DisposableEffect(rt) { onDispose { rt.talk.stop(TalkStop.LEFT_SCREEN) } }
     BackHandler(enabled = full != null) { full = null }
 
     // The editor runs its own search; two never run at once.
@@ -290,6 +302,31 @@ fun CamerasScreen(
             cams.filterNot { it.id in hidden }.map { RtspSource(it) }
     val visibleIds = visible.map { it.id }
 
+    // Push to talk. Only kid tablets on the stage can hear; an RTSP camera never appears here.
+    val talkLive by rt.talk.state.collectAsState()
+    val talkNow = if (live) talkLive else talkPreset ?: TalkState()
+    val shownTargets = visible.filterIsInstance<TabletSource>().map { s ->
+        TalkTarget(s.node.id, s.name, byNode[s.node.id]?.online == true, status[s.node.id]?.supportsTalk == true)
+    }
+    val micAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        rt.say(if (ok) TalkText.MIC_ALLOWED else TalkText.MIC_DENIED)
+    }
+    // Which press each button started, so lifting a finger from a button that never talked cannot end another's.
+    val holds = remember { HashMap<String, String>() }
+    fun pressTalk(key: String, targets: List<TalkTarget>) {
+        if (!live) return
+        when (rt.talk.press(targets)) {
+            // Asking does not start talking: the parent holds the button again once it is allowed.
+            TalkController.Press.NEEDS_PERMISSION -> micAsk.launch(android.Manifest.permission.RECORD_AUDIO)
+            TalkController.Press.NOBODY -> rt.say(if (targets.any { it.online && !it.capable }) TalkText.UPDATE_HINT else TalkText.NOBODY)
+            TalkController.Press.STARTED -> rt.talk.state.value.sid?.let { holds[key] = it }
+            TalkController.Press.BUSY -> {}
+        }
+    }
+    fun releaseTalk(key: String, cancelled: Boolean) {
+        holds.remove(key)?.let { rt.talk.stop(if (cancelled) TalkStop.CANCELLED else TalkStop.RELEASED, it) }
+    }
+
     val roster = remember { Roster() }
     var purge by remember { mutableIntStateOf(0) }
     purge.let { } // read, so the roster is worked out again when a fade out ends
@@ -353,6 +390,12 @@ fun CamerasScreen(
                 }
             }
 
+            if (shownTargets.isNotEmpty()) TalkBarRow(
+                TalkBar.of(shownTargets, talkNow.takeIf { it.talking }?.names),
+                onPress = { pressTalk("all", shownTargets) }, onRelease = { releaseTalk("all", it) },
+                modifier = Modifier.padding(start = 40.dp, end = 40.dp, bottom = 20.dp),
+            )
+
             if (roster.order.isEmpty()) {
                 CenterMessage(Lucide.CameraIcon, "Nothing on", "Tap a tablet above to turn its camera on, or a camera to show it.")
                 return@Column
@@ -398,8 +441,15 @@ fun CamerasScreen(
                                 when (src) {
                                     is TabletSource -> {
                                         val t = byNode[src.node.id]
+                                        val me = shownTargets.firstOrNull { it.id == src.node.id }
                                         TabletTile(
                                             ctl, src, t?.display ?: TileDisplay.OFFLINE, t?.cam, rotations[src.node.id] ?: 0, prefs, live, compact, leaving, now,
+                                            talk = me?.let {
+                                                TileTalk(
+                                                    it.online && it.capable, talkNow.talking && it.id in talkNow.ids,
+                                                    { pressTalk(id, listOf(it)) }, { c -> releaseTalk(id, c) },
+                                                )
+                                            },
                                             onTap = onTap,
                                             onMaximize = { full = id },
                                             onRotate = { store.setCamRotation(src.node.id, (rotations[src.node.id] ?: 0) + 90) },
@@ -566,13 +616,14 @@ private fun TabletTile(
     onMaximize: () -> Unit,
     onRotate: () -> Unit,
     onAction: () -> Unit,
+    talk: TileTalk? = null,
 ) {
     val frame by ctl.frames(src.node.id).collectAsState()
     // The tablet's "try again at" is on its own clock; retryAtLocal has already moved it onto this one.
     val retryIn = if (display == TileDisplay.TOO_HOT) cam?.retryAtLocal?.let { it - now } else null
     CamTile(
         src, display, frame, rotation, prefs, live, compact, leaving, retryIn, cam?.minutes ?: prefs.maxMin,
-        onTap = onTap, onMaximize = onMaximize, onEdit = onRotate, onAction = onAction,
+        onTap = onTap, onMaximize = onMaximize, onEdit = onRotate, onAction = onAction, talk = talk,
     )
 }
 

@@ -115,6 +115,8 @@ fun CamTile(
     onAction: () -> Unit = {},
     preset: RtspNews? = null,
     onNews: (RtspNews) -> Unit = {},
+    /** A tablet tile's own hold to talk microphone; null for an RTSP camera, which cannot hear anyone. */
+    talk: TileTalk? = null,
 ) {
     val tablet = source as? TabletSource
     // The last picture outlives its stream, so it can fade out instead of vanishing.
@@ -155,6 +157,7 @@ fun CamTile(
 
         if (!compact && !leaving) {
             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (talk != null) TileMic(talk)
                 SmallIcon(Lucide.Maximize, onMaximize)
                 SmallIcon(if (tablet != null) Lucide.RotateCwSquare else Lucide.Pencil, onEdit)
             }

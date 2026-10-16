@@ -114,8 +114,25 @@ class Conn(val socket: Socket) {
         return String(b, 0, n, Charsets.UTF_8)
     }
 
-    @Synchronized
-    fun send(o: JSONObject): Boolean = try {
+    // One writer at a time: a sealed line's counter must reach the wire in the order it was taken.
+    private val writeLock = java.util.concurrent.locks.ReentrantLock()
+
+    fun send(o: JSONObject): Boolean {
+        writeLock.lock()
+        try { return write(o) } finally { writeLock.unlock() }
+    }
+
+    /**
+     * For audio frames: writes only if no other line is being written right now, otherwise gives up at once and
+     * returns false (the frame is dropped). A command therefore never waits behind a queue of audio, only ever
+     * behind the one frame already on the wire.
+     */
+    fun sendLossy(o: JSONObject): Boolean {
+        if (!writeLock.tryLock()) return false
+        try { return write(o) } finally { writeLock.unlock() }
+    }
+
+    private fun write(o: JSONObject): Boolean = try {
         val s = sealer
         val line = if (s == null) o.toString() else s.seal(o.toString().toByteArray(Charsets.UTF_8))
         output.write(line.toByteArray(Charsets.UTF_8)); output.write('\n'.code); output.flush(); true

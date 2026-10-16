@@ -161,6 +161,40 @@ class ConnTest {
     }
 
     @Test
+    fun `a lossy send gives up at once while another line is being written`() {
+        // The peer never reads, so a big send fills the buffers and stays blocked holding the write lock.
+        val ss = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val client = Socket(InetAddress.getByName("127.0.0.1"), ss.localPort)
+        val peer = ss.accept()
+        val conn = Conn(client)
+        try {
+            assertTrue("free link: written", conn.sendLossy(JSONObject().put("t", "talk")))
+            val big = JSONObject().put("pad", "x".repeat(24 * 1024 * 1024))
+            val blocked = Thread { conn.send(big) }.also { it.isDaemon = true; it.start() }
+            Thread.sleep(300)
+            assertTrue(blocked.isAlive)
+            val t0 = System.nanoTime()
+            assertFalse("busy link: dropped", conn.sendLossy(JSONObject().put("t", "talk")))
+            assertTrue("gave up in ${(System.nanoTime() - t0) / 1e6} ms", (System.nanoTime() - t0) / 1e6 < 50)
+            assertTrue("the link was not closed by the drop", conn.isOpen)
+        } finally {
+            conn.close(); peer.close(); ss.close()
+        }
+    }
+
+    @Test
+    fun `a lossy line arrives in the same order and opens like any other`() {
+        Link().use { l ->
+            val key = ByteArray(32) { it.toByte() }
+            l.master.seal(Seal(key, "m2n", "n2m")); l.node.seal(Seal(key, "n2m", "m2n"))
+            assertTrue(l.master.send(JSONObject().put("n", 1)))
+            assertTrue(l.master.sendLossy(JSONObject().put("n", 2)))
+            assertTrue(l.master.send(JSONObject().put("n", 3)))
+            assertEquals(listOf(1, 2, 3), (1..3).map { l.node.read()!!.getInt("n") })
+        }
+    }
+
+    @Test
     fun `a ticket releases its slot once only`() {
         val gate = AcceptGate(max = 1)
         val t = gate.enter()!!

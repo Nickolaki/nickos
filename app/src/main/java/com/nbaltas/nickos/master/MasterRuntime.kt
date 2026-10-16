@@ -26,6 +26,10 @@ import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
+import com.nbaltas.nickos.talk.TalkMessages
+import com.nbaltas.nickos.talk.TalkStop
+import com.nbaltas.nickos.talk.TalkStopPolicy
+import com.nbaltas.nickos.talk.TalkText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -78,6 +82,8 @@ data class NodeStatus(
     val supportsDelete: Boolean get() = "del1" in caps
     /** Tablet cameras need the Node's "cam1" capability. */
     val supportsCam: Boolean get() = "cam1" in caps
+    /** Push to talk needs the Node's "talk1" capability. */
+    val supportsTalk: Boolean get() = TalkMessages.CAP in caps
 
     companion object {
         fun from(o: JSONObject): NodeStatus {
@@ -191,6 +197,35 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     val transfer = TransferController(this, store)
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
+
+    /**
+     * Push to talk. Audio frames never go through [send] (one ordered queue for every command to every tablet):
+     * each recipient's own coroutine writes them straight to its link and drops what the link cannot take at once.
+     */
+    val talk = TalkController(
+        scope, openMic = { AndroidMic() }, wireFor = { id -> talkWire(id) },
+        permission = { ctx.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED },
+        onStopped = { why -> if (TalkStopPolicy.worthSaying(why)) say(talkStopText(why)) },
+    )
+
+    private fun talkWire(id: String): TalkWire? = links[id]?.let { c ->
+        object : TalkWire {
+            override fun control(o: JSONObject) = c.send(o)
+            override fun frame(o: JSONObject): Sent = when {
+                c.sendLossy(o) -> Sent.OK
+                // Busy: another line is on the wire. Gone: the socket closed or a newer link replaced this one.
+                c.isOpen && links[id] === c -> Sent.BUSY
+                else -> Sent.GONE
+            }
+        }
+    }
+
+    private fun talkStopText(why: TalkStop) = when (why) {
+        TalkStop.PERMISSION_LOST -> "The microphone is not allowed any more, so talking stopped"
+        TalkStop.AUDIO_ERROR -> TalkText.MIC_FAILED
+        TalkStop.ALL_GONE -> "The tablets went offline, so talking stopped"
+        else -> "Talking stopped after two minutes"
+    }
 
     fun lanAddress(): String? = LanAddress.own(ctx)
     /** Every address this tablet has: the home WiFi and the car network it hosts can be up at the same time. */

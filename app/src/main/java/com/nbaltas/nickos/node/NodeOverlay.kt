@@ -37,6 +37,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var lockView: View? = null
     private var toastView: View? = null
     private var guardView: View? = null
+    private var talkView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -55,6 +56,10 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
         if (!toast && toastView != null) { remove(toastView); toastView = null }
+        // Same rule for "Dad is talking": over other apps here, on the home screen it is drawn by NodeApp.
+        val talking = rt.talkBanner.value != null && !locked && !rt.homeVisible
+        if (talking && talkView == null) talkView = add(fullScreen = false) { TalkOverlayContent(rt) }
+        if (!talking && talkView != null) { remove(talkView); talkView = null }
     }
 
     /**
@@ -81,6 +86,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     fun hideAll() = main.post {
         remove(lockView); lockView = null
         remove(toastView); toastView = null
+        remove(talkView); talkView = null
     }
 
     private fun add(fullScreen: Boolean, content: @androidx.compose.runtime.Composable () -> Unit): View {
@@ -129,6 +135,18 @@ private fun ToastOverlayContent(rt: NodeRuntime) {
                 .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
                 .padding(bottom = 28.dp),
         ) { BedtimeToast(it) }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun TalkOverlayContent(rt: NodeRuntime) {
+    val text by rt.talkBanner.collectAsStateWithLifecycle()
+    text?.let {
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier
+                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                .padding(bottom = 28.dp),
+        ) { com.nbaltas.nickos.ui.node.TalkBanner(it) }
     }
 }
 

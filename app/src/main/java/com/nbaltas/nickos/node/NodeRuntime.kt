@@ -19,6 +19,9 @@ import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.talk.TalkMessages
+import com.nbaltas.nickos.talk.TalkReceiver
+import com.nbaltas.nickos.talk.TalkText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -203,6 +206,17 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     val overlay = NodeOverlay(ctx, store, this)
 
+    /** "Dad is talking" while a parent speaks through push to talk; null otherwise. */
+    private val _talkBanner = MutableStateFlow<String?>(null)
+    val talkBanner: StateFlow<String?> = _talkBanner
+
+    /** Push to talk: the state machine decides, [TalkPlayback] plays. Frames only count from a Master still linked here. */
+    private val talk = TalkReceiver(
+        TalkPlayback(ctx, { _talkBanner.value = it; overlay.refresh() }, { id -> TalkText.banner(store.masters.value.firstOrNull { it.id == id }?.name) }),
+        linked = { id -> store.masters.value.any { it.id == id } },
+        clock = System::currentTimeMillis,
+    )
+
     /** The parent's "lock to landscape": see [LandscapeLock]. MainActivity follows the stored choice itself. */
     val landscape = LandscapeLock(AndroidRotationPort(ctx, store) { overlay.landscapeGuard(it) })
     fun applyLandscape() = landscape.apply(store.landscapeLock.value)
@@ -240,6 +254,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         applyLandscape()
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
+        jobs += scope.launch { while (isActive) { delay(200); try { talk.tick() } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
         jobs += scope.launch { kioskLoop() }
         together.start()
         applyLockdown()
@@ -329,12 +344,16 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             while (true) {
                 val msg = c.read() ?: break
                 if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                // Audio only hands a frame over here; nothing on this thread waits for the speaker.
+                else if (TalkMessages.isTalk(msg)) try { talk.onMessage(id, msg) } catch (e: Exception) { Log.w(TAG, "talk failed", e) }
             }
         } catch (e: Exception) {
             Log.d(TAG, "connection ended: ${e.message}")
         } finally {
             c.close()
             sessions.removeAll { it.second === c }
+            // Not when the same Master has already reconnected: its new link may be mid talk.
+            masterId?.let { m -> if (sessions.none { it.first == m }) talk.onMasterGone(m) }
             _connected.value = sessions.map { it.first }.toSet()
             if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
         }
@@ -433,7 +452,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> { store.removeMaster(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
+            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
             NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { store.setLandscapeLock(it); applyLandscape() }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
@@ -473,7 +492,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("now", System.currentTimeMillis())
@@ -552,6 +571,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         approvalReceiver?.let { try { ctx.applicationContext.unregisterReceiver(it) } catch (_: Exception) {} }
         approvalReceiver = null
         together.release()
+        talk.stop()
         cam.destroy()
         overlay.hideAll()
         overlay.landscapeGuard(false)

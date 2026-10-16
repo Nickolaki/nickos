@@ -57,6 +57,7 @@ import androidx.core.graphics.drawable.toBitmap
 import com.composables.icons.lucide.Link
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Mic
 import com.composables.icons.lucide.Moon
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.ResumeCard
@@ -415,6 +416,32 @@ fun BedtimeToast(secondsLeft: Int) {
             }
             Text("%d:%02d".format(secondsLeft / 60, secondsLeft % 60), style = disp(36.sp).copy(fontFeatureSettings = "tnum"), color = C.onAccent)
         }
+    }
+}
+
+// ---------------- Parent talking ----------------
+
+/** In-app placement, same spot as the bedtime pill. */
+@Composable
+fun TalkBannerAtBottom(text: String) {
+    Box(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 28.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) { TalkBanner(text) }
+}
+
+/** "Dad is talking": the pill shown while a grown-up speaks through push to talk. */
+@Composable
+fun TalkBanner(text: String) {
+    Row(
+        Modifier.padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(32.dp))
+            .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg).padding(horizontal = 26.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Box(Modifier.size(56.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+            Icon(Lucide.Mic, null, tint = C.onAccent, modifier = Modifier.size(28.dp))
+        }
+        Text(text, style = disp(30.sp), color = C.onAccent, maxLines = 1)
     }
 }
 

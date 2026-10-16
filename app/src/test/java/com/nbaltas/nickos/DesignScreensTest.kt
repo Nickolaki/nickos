@@ -333,6 +333,44 @@ class DesignScreensTest {
         shot("Cameras-Phone") { CamerasScreen({}, {}, live = false) }
     }
 
+    // ---- push to talk on the Cameras screen ----
+    private fun talkCaps(vararg ids: String) {
+        val all = listOf(CH, CL, CM).associateWith { id -> camStatus(true).let { if (id in ids) it.copy(caps = it.caps + "talk1") else it } }
+        set(app.master, "_status", all)
+    }
+
+    /** Two tablets that can hear and one that is too old: the button is ready and names who hears. */
+    @Test fun camerasTalkReady() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(), CM to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camPicture(CM, camPlum.first, camPlum.second)
+        shot("Cameras-Talk-Ready") { CamerasScreen({}, {}, live = false) }
+    }
+
+    /** A press in progress: the button is lit and the line names the frozen recipients. */
+    @Test fun camerasTalking() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL), mapOf(CH to camLive(), CL to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        shot("Cameras-Talk-Talking") {
+            CamerasScreen({}, {}, live = false, talkPreset = com.nbaltas.nickos.master.TalkState("0123456789abcdef", listOf(CH, CL), listOf("Hailey", "Leo")))
+        }
+    }
+
+    /** The only tablet on the stage is an old version: the button is greyed and says to update it. */
+    @Test fun camerasTalkOldTablet() {
+        seedCams()
+        talkCaps()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        shot("Cameras-Talk-Update") { CamerasScreen({}, {}, live = false) }
+    }
+
     @Test fun camerasNothingOn() {
         seedCams()
         cams(emptySet(), emptyMap())
