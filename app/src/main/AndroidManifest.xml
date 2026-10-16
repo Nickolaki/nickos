@@ -70,7 +70,7 @@
         android:theme="@style/Theme.NickOS"
         android:usesCleartextTraffic="true">
 
-        <!-- The home screen. HOME + DEFAULT makes it choosable as the tablet's launcher. -->
+        <!-- The app. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -84,12 +84,21 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- The home screen offer. HOME + DEFAULT makes it choosable as the tablet's launcher, so it lives on this
+             alias, which is off until a kid tablet (or a parent who asks) needs it. See HomeAlias. -->
+        <activity-alias
+            android:name=".Home"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <service
             android:name=".node.NodeService"

@@ -68,6 +68,9 @@ import com.composables.icons.lucide.Wifi
 import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
+import com.nbaltas.nickos.HomeAlias
+import com.nbaltas.nickos.homeRequestIntent
+import com.nbaltas.nickos.homeStateLine
 import com.nbaltas.nickos.isDefaultHome
 import com.nbaltas.nickos.cam.CamPrefs
 import com.nbaltas.nickos.data.Hotspot
@@ -711,21 +714,19 @@ private fun AboutSection() {
     }
 }
 
-/** What the Home screen row says. [isHome] is null when the system would not say, which reads as a normal app. */
-internal fun homeScreenLine(isHome: Boolean?): String =
-    if (isHome == true) "NickOS is this tablet's home screen" else "NickOS opens like a normal app"
-
-/** The intent for the system's home screen settings, or null when this tablet has no such page. */
-private fun homeSettingsIntent(ctx: android.content.Context): Intent? {
-    val i = Intent(android.provider.Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    return try { i.takeIf { it.resolveActivity(ctx.packageManager) != null } } catch (e: Exception) { null }
-}
-
-/** Where this tablet's home screen is set. NickOS works either way; the change happens in the system page, not here. */
+/**
+ * The parent's choice to use NickOS as this tablet's home screen. The switch is the choice; the line under it is what
+ * Android really says, so a cancelled prompt leaves the switch on with the line telling the truth.
+ */
 @Composable
 private fun HomeScreenRow() {
     val ctx = LocalContext.current
+    val app = App.get(ctx)
+    val optIn by app.store.masterHomeOptIn.collectAsState()
     var isHome by remember { mutableStateOf(isDefaultHome(ctx)) }
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) {
+        isHome = isDefaultHome(ctx)
+    }
     // Look again when the parent comes back from the system page.
     val lifecycle = (ctx as? androidx.lifecycle.LifecycleOwner)?.lifecycle
     androidx.compose.runtime.DisposableEffect(lifecycle) {
@@ -733,18 +734,21 @@ private fun HomeScreenRow() {
         lifecycle?.addObserver(obs)
         onDispose { lifecycle?.removeObserver(obs) }
     }
-    val intent = remember { homeSettingsIntent(ctx) }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Home screen", style = body(19.sp, 700), color = C.text)
-            Muted(homeScreenLine(isHome), 15)
+            Text("Use NickOS as this tablet's home screen", style = body(19.sp, 700), color = C.text)
+            Muted(homeStateLine(isHome), 15)
         }
-        if (intent != null) NickButton("Open home screen settings", {
-            try { ctx.startActivity(intent) } catch (_: android.content.ActivityNotFoundException) {}
-        }, Modifier.height(52.dp))
+        NickSwitch(optIn) { on ->
+            app.store.setMasterHomeOptIn(on)
+            HomeAlias.set(ctx, on)
+            if (on) homeRequestIntent(ctx)?.let {
+                try { ask.launch(it) } catch (_: android.content.ActivityNotFoundException) {}
+            }
+        }
     }
 }
 

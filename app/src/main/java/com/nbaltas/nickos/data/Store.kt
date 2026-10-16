@@ -122,6 +122,11 @@ class Store(context: Context) {
     val role: StateFlow<Role> = _role
     fun setRole(r: Role) { p.edit().putString("role", r.name).apply(); _role.value = r }
 
+    private val _masterHomeOptIn = MutableStateFlow(p.getBoolean("masterHomeOptIn", false))
+    /** The parent asked for NickOS to be this tablet's home screen. Separate from whether Android really made it so. */
+    val masterHomeOptIn: StateFlow<Boolean> = _masterHomeOptIn
+    fun setMasterHomeOptIn(v: Boolean) { p.edit().putBoolean("masterHomeOptIn", v).commit(); _masterHomeOptIn.value = v }
+
     // ---- this tablet ----
     private val _name = MutableStateFlow(p.getString("name", "") ?: "")
     val name: StateFlow<String> = _name
@@ -330,6 +335,7 @@ class Store(context: Context) {
     fun resetAll() {
         val carnet = p.getString(KEY_CARNET, null)
         p.edit().clear().putString("deviceId", deviceId).apply { if (carnet != null) putString(KEY_CARNET, carnet) }.apply()
+        _masterHomeOptIn.value = false
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null

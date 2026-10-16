@@ -21,7 +21,9 @@ The Master prints a short code under the QR. It matches the NickOS on the update
 server is unreachable, the NickOS on the parent tablet. If the tablet refuses the code, the update
 server is serving a different build than the code says.
 
-When setup ends, NickOS is already the home screen, so the Home button comes back to it.
+When setup ends, NickOS is already the home screen, so the Home button comes back to it. Only a kid
+tablet is made the home screen like this. A tablet with no role yet that was not set up from the QR
+code does not offer itself as a home screen at all.
 
 The APK comes from `https://nickflix-config.nbaltas.org/nickos/nickos-latest.apk` (public on
 purpose: it holds no secrets). This only works on a tablet with no accounts yet, which is
@@ -74,6 +76,12 @@ back to NickOS when another app comes up that is not on the allowed list. This i
 Owner: a kid who knows Android can still find a way out. After a restart, open NickOS once.
 The grown-up menu shows **Finish kid lock** while steps are missing.
 
+After updating NickOS, Android forgets which app was this tablet's home screen (NickOS now offers
+itself from a separate entry). A launcher mode kid tablet then shows the **Make this the kids' tablet**
+screen again until the home screen step is done once more. Until then Android may show its own "choose
+a home app" list when Home is pressed. Pick NickOS and tap Always, or open the grown-up menu (hold the
+avatar, parent PIN) and use the setup screen.
+
 On a PC, the same steps can be skipped for a Device Owner tablet with the adb line below.
 
 ### Getting out
@@ -92,7 +100,10 @@ While Device Owner is set, NickOS can't be uninstalled until you use that button
 
 NickOS does not need to be the parent tablet's home screen. It works like any other app: Back
 leaves it for the tablet's own home screen, and the car network keeps running in the background.
-If you do want it as the home screen, Settings → About → Open home screen settings.
+NickOS does not even offer itself to Android as a home screen on the parent tablet, so setup never asks
+you to pick it. If you do want it as the home screen, turn on Settings → About → "Use NickOS as this
+tablet's home screen". Android then asks you to confirm, and the line under the switch shows what
+Android really did. Turn the switch off and Android goes back to your other launcher.
 
 The parent tablet hosts the car network (Wi-Fi Direct). It can drain the battery, so Settings →
 Tablets has a Car network switch. Off means the kid tablets use your home WiFi or a hotspot instead.

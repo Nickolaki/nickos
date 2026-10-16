@@ -105,6 +105,7 @@ class PolicyComplianceActivity : Activity() {
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
         Provisioning.remember(this, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        applyHomeAlias(this)
         NodeDevice.makeHome(this)
         setResult(RESULT_OK)
         finish()
