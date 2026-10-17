@@ -118,7 +118,7 @@ class Sweep(
     data class Config(
         val maxInFlight: Int = 32,
         /** A Node must be missing this long before the timer starts a pass. */
-        val missingForMs: Long = 15_000,
+        val missingForMs: Long = 5_000,
         val repeatMs: Long = 20_000,
         /** Hard cut-off for one pass. Two /24s at 32 in flight and 400 ms is about 7 s; this is the safety net. */
         val passBudgetMs: Long = 14_000,

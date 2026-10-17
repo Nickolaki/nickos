@@ -220,16 +220,16 @@ class SweepTest {
     // ---- the timer ----
 
     @Test
-    fun `the timer waits 15 s, then sweeps, then repeats every 20 s, and idles when nothing is missing`() {
+    fun `the timer waits 5 s, then sweeps, then repeats every 20 s, and idles when nothing is missing`() {
         var now = 1_000_000L
         val rig = Rig()
         val missing = java.util.concurrent.atomic.AtomicReference<Set<String>>(setOf(nodeA))
         val s = sweep(rig, missing = { missing.get() }, prober = { _, _ -> null }, clock = { now })
         s.tick()                                   // first sight of the node missing
-        now += 14_000; s.tick()                    // 14 s: not yet
+        now += 4_000; s.tick()                     // 4 s: not yet
         Thread.sleep(20)
         assertEquals(0, s.passCount)
-        now += 1_000; s.tick()                     // 15 s: sweep
+        now += 1_000; s.tick()                     // 5 s: sweep
         waitFor("first pass") { s.passCount == 1 }
         now += 10_000; s.tick()                    // 10 s later: too soon to repeat
         Thread.sleep(20)
@@ -240,7 +240,7 @@ class SweepTest {
         now += 60_000; s.tick()
         Thread.sleep(20)
         assertEquals(2, s.passCount)
-        missing.set(setOf(nodeA))                  // and went missing again: the 15 s clock restarts
+        missing.set(setOf(nodeA))                  // and went missing again: the 5 s clock restarts
         now += 60_000; s.tick()
         Thread.sleep(20)
         assertEquals(2, s.passCount)

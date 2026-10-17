@@ -201,7 +201,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Subnet sweep: the second way to find a Node, with no multicast. */
     private val sweep = Sweep(
         scope, ownIps = { ownIps() },
-        missing = { store.nodes.value.map { it.id }.filter { it !in _online.value && found[it] == null }.toSet() },
+        missing = { store.nodes.value.map { it.id }.filter { it !in live }.toSet() },
         prober = SocketProber(), table = found,
         onFound = { id, addr -> adopt(id, addr) },
     )
@@ -214,8 +214,16 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Nodes the parent asked to show their permission card, with when (ms). The Device tab says "Asked on ..." for a while. */
     val asked: StateFlow<Map<String, Long>> = _asked
 
+    /**
+     * What the parent sees. A tablet whose link just dropped stays in here for [OnlineGrace] (10 s) while the Master
+     * reconnects, so a WiFi band switch does not flash "offline". [live] is the truth: the Nodes with a working link now.
+     */
     private val _online = MutableStateFlow<Set<String>>(emptySet())
     val online: StateFlow<Set<String>> = _online
+    private val live: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val grace = OnlineTracker(_online)
+    /** The address each link loop is dialing right now (absent while it sleeps or is linked). */
+    private val dialing = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>()
 
     private val _apps = MutableStateFlow<Map<String, List<RemoteApp>>>(emptyMap())
     val apps: StateFlow<Map<String, List<RemoteApp>>> = _apps
@@ -413,12 +421,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (store.nodes.value.any { it.id == id && (it.host != addr.first || it.port != addr.second) }) {
             store.updateNode(id) { it.copy(host = addr.first, port = addr.second) }
         }
+        // A tablet that is down or waiting out a retry: do not sit through the delay, dial what we just learned.
+        if (id in loops.ids() && AdoptPolicy.redialNow(id in live, dialing[id], addr)) loops.restart(id)
     }
 
     /** "Look again": restart discovery, dial every offline tablet now and sweep once. */
     fun reconnectAll() {
         onNetworkChanged()
-        store.nodes.value.filter { it.id !in _online.value }.forEach { loops.restart(it.id) }
+        store.nodes.value.filter { it.id !in live }.forEach { loops.restart(it.id) }
     }
 
     // ---- pairing ----
@@ -468,55 +478,74 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     // ---- per-node link ----
     private suspend fun linkLoop(id: String) {
         val backoff = LinkBackoff()
+        val retry = RetryDelay()
         while (scope.isActive) {
             val n = store.nodes.value.firstOrNull { it.id == id } ?: return
             val seen = found[id]
             val addr = seen ?: n.host?.let { it to (if (n.port > 0) n.port else Wire.PORT) }
+            var wait = RetryDelay.SLOW_MS
             if (addr != null) {
-                val linked = try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}"); false }
-                if (linked) backoff.success()
-                else if (backoff.failure() && seen != null) {
-                    // Three misses in a row: onServiceLost does not fire on an abrupt WiFi change, so this address
-                    // is probably dead. Drop it (only if nothing newer replaced it) and let discovery or the sweep re-find it.
-                    found.removeIf(id, seen)
-                    _discovered.value = found.ids()
+                dialing[id] = addr
+                val lasted = try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}"); -1L } finally { dialing.remove(id, addr) }
+                if (lasted >= 0) {
+                    // It was up and dropped. After a stable session (a band switch) the same address again at once; a
+                    // short one counts as a failure: 0.5 / 1 / 2 / 3 s.
+                    if (lasted >= RetryDelay.STABLE_MS) backoff.success()
+                    wait = retry.ended(lasted)
+                } else {
+                    wait = retry.failed()
+                    if (backoff.failure() && seen != null) {
+                        // Three misses in a row: onServiceLost does not fire on an abrupt WiFi change, so this address
+                        // is probably dead. Drop it (only if nothing newer replaced it) and let discovery or the sweep re-find it.
+                        found.removeIf(id, seen)
+                        _discovered.value = found.ids()
+                    }
                 }
             }
-            delay(3000)
+            if (wait > 0) delay(wait)
         }
     }
 
-    /** True when the Node welcomed us (even if the link later dropped); false when it could not be reached. */
-    private fun session(n: LinkedNode, addr: Pair<String, Int>): Boolean {
+    /** How long the link lasted from the welcome, in ms (even if it later dropped); -1 when the Node could not be reached. */
+    private fun session(n: LinkedNode, addr: Pair<String, Int>): Long {
         var c = Conn.open(addr.first, addr.second)
         var claimed = false
         try {
-            c.socket.soTimeout = 25_000 // Node sends status at least every 10s
+            // An old Node may be silent for 11.5 s: long until a status says "hb3" (then 8 s, see runLink).
+            c.socket.soTimeout = LinkTimeout.LEGACY_MS
             var legacy = false
             when (Handshake.helloResult(c, store.deviceId, displayName, n.token)) {
                 Handshake.Hello.OK -> linkFlags.setSec2(n.id, true)
                 // An old Node does not know v2 and says denied. Only while this Node has never done sec2 do we fall back
                 // to the v1 hello (token in clear), once, to let it update itself. After one v2 handshake: never.
                 Handshake.Hello.DENIED -> {
-                    if (!Handshake.mayFallBack(linkFlags, n.id)) return false
+                    if (!Handshake.mayFallBack(linkFlags, n.id)) return -1
                     c.close()
                     c = Conn.open(addr.first, addr.second)
-                    c.socket.soTimeout = 25_000
-                    if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return false
+                    c.socket.soTimeout = LinkTimeout.LEGACY_MS
+                    if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return -1
                     legacy = true
                 }
-                Handshake.Hello.FAIL -> return false
+                Handshake.Hello.FAIL -> return -1
             }
+            val welcomed = System.currentTimeMillis()
             links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
             claimed = true
             if (legacy) send(n.id, cmd("update")) // the Node installs the sec2 build from the track and the link comes back sealed
-            runLink(n, c)
-            return true
+            // A read timeout or reset ends a link that did work: it still counts as welcomed (so the loop redials at once).
+            try { runLink(n, c) } catch (e: Exception) { Log.d(TAG, "link ${n.id}: ${e.message}") }
+            return System.currentTimeMillis() - welcomed
         } finally {
             // Only the link that is still the current one may announce the Node offline; a replaced one must not
             // tear down its successor's state.
             if (claimed && links.release(n.id, c)) {
-                _online.update { it - n.id }
+                // The sessions below end now, at the drop. Only the parent's "online" lingers, for the grace window.
+                live.remove(n.id)
+                grace.dropped(n.id, System.currentTimeMillis())
+                scope.launch {
+                    delay(GRACE_MS)
+                    grace.expire(System.currentTimeMillis())
+                }
                 sync.onDisconnected(n.id)
                 transfer.onDisconnected(n.id)
                 cam.onDisconnected(n.id)
@@ -565,7 +594,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
-        _online.update { it + n.id }
+        live.add(n.id)
+        grace.connected(n.id)
         send(n.id, cmd("pin").put("pin", store.pin.value))
         // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
         sendHotspot(n.id)
@@ -577,7 +607,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
-                "status" -> onStatus(n.id, m)
+                "status" -> {
+                    onStatus(n.id, m)
+                    val t = LinkTimeout.forCaps(m.optJSONArray("caps")?.let { a -> (0 until a.length()).map { a.optString(it) } })
+                    if (c.socket.soTimeout != t && t == LinkTimeout.HEARTBEAT_MS) c.socket.soTimeout = t
+                }
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
@@ -734,7 +768,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         store.removeNode(id)
         _net.update { it - id }
         _status.update { it - id }
-        _online.update { it - id }
+        live.remove(id)
+        grace.forget(id)
     }
 
     private fun patch(id: String, f: (NodeStatus) -> NodeStatus) = _status.update { m -> m[id]?.let { m + (id to f(it)) } ?: m }

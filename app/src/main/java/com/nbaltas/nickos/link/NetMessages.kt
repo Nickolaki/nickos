@@ -111,6 +111,9 @@ object NetMessages {
      */
     const val RING = "ring"
     const val RING_CAP = "ring1"
+
+    /** "hb3": the Node sends a status at least every 3 s, so the Master may time a silent link out after 8 s. */
+    const val HEARTBEAT_CAP = "hb3"
     fun ringCmd(on: Boolean): JSONObject = JSONObject().put("t", "cmd").put("c", RING).put("on", on)
 
     /** Null unless this is a ring command with a real boolean. */
