@@ -2,7 +2,15 @@ package com.nbaltas.nickos.ui.master
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import com.nbaltas.nickos.ui.theme.LocalPhone
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,6 +69,7 @@ private fun Modifier.holdToTalk(onPress: () -> Unit, onRelease: (Boolean) -> Uni
 /** The big Hold to talk button and the line beside it that says who hears. */
 @Composable
 fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    if (LocalPhone.current) { PhoneTalkBar(bar, onPress, onRelease, modifier); return }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
             Modifier.height(52.dp).clip(RoundedCornerShape(26.dp))
@@ -74,6 +83,34 @@ fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, 
             Text(bar.button, style = body(17.sp, 700), color = if (bar.talking) C.onAccent else C.text, maxLines = 1)
         }
         Muted(bar.line, 16, Modifier, maxLines = 2)
+    }
+}
+
+/**
+ * Phone: a full-width 52dp hold button whose geometry never changes (only the colours animate, 120ms) and a helper slot
+ * of two 14sp lines under it that is reserved in every state, so the camera feeds above never move.
+ */
+@Composable
+private fun PhoneTalkBar(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, modifier: Modifier) {
+    val bg by animateColorAsState(if (bar.talking) C.accent else C.surface2, tween(120), label = "talkBg")
+    val fg by animateColorAsState(if (bar.talking) C.onAccent else C.text, tween(120), label = "talkFg")
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp))
+                .background(bg)
+                .alpha(if (bar.enabled || bar.talking) 1f else 0.5f)
+                .holdToTalk(onPress, onRelease)
+                .padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(Lucide.Mic, null, tint = fg, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(bar.button, style = body(17.sp, 700), color = fg, maxLines = 1)
+        }
+        Text(
+            bar.line, style = body(14.sp, 500, 1.4f), color = C.muted, minLines = 2, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

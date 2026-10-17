@@ -38,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -100,6 +101,11 @@ private sealed interface Detail {
     data class All(val title: String, val items: List<JfItem>, val landscape: Boolean) : Detail
 }
 
+private val DetailSaver = androidx.compose.runtime.saveable.Saver<Detail?, String>(
+    save = { d -> when (d) { is Detail.Series -> "s${d.id}"; is Detail.Movie -> "m${d.id}"; else -> "" } },
+    restore = { s -> when { s.startsWith("s") -> Detail.Series(s.substring(1)); s.startsWith("m") -> Detail.Movie(s.substring(1)); else -> null } },
+)
+
 /** Browse the tablet's Jellyfin user's library and play things on that tablet. */
 @Composable
 fun WatchTab(v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
@@ -135,7 +141,8 @@ fun JellyfinBrowser(
     jf: Jellyfin, uid: String, key: String, ownerLabel: String?, onPick: ((JfItem) -> Unit)?,
     v: NodeView? = null, play: ((JfItem, Boolean) -> Unit)? = null,
 ) {
-    var detail by remember(key) { mutableStateOf<Detail?>(null) }
+    // Saveable, so the Watch tab keeps its place when the parent visits another tab. A "See all" list is not kept: it falls back to the home rows.
+    var detail by rememberSaveable(key, stateSaver = DetailSaver) { mutableStateOf<Detail?>(null) }
     var backTo by remember(key) { mutableStateOf<Detail?>(null) }
     BackHandler(enabled = detail != null) { detail = backTo.also { backTo = null } }
 
@@ -175,8 +182,8 @@ fun com.nbaltas.nickos.master.MasterRuntime.toastOffline(name: String) = say("$n
 
 @Composable
 private fun LibraryHome(key: String, ownerLabel: String?, jf: Jellyfin, uid: String, open: (JfItem) -> Unit, onSeeAll: (String, List<JfItem>, Boolean) -> Unit) {
-    var mode by remember(key) { mutableIntStateOf(0) }
-    var query by remember(key) { mutableStateOf("") }
+    var mode by rememberSaveable(key) { mutableIntStateOf(0) }
+    var query by rememberSaveable(key) { mutableStateOf("") }
     val parentPhone = LocalPhone.current
     val edge = if (parentPhone) PhoneMetrics.gutter else 40.dp
     Column(Modifier.fillMaxSize().padding(top = if (parentPhone) 12.dp else 26.dp), verticalArrangement = Arrangement.spacedBy(if (parentPhone) PhoneMetrics.cardGap else 26.dp)) {

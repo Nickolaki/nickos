@@ -135,6 +135,9 @@ import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.FieldLabel
 import com.nbaltas.nickos.ui.theme.IconCircle
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneHeader
+import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
@@ -219,6 +222,8 @@ fun CamerasScreen(
     val prefs = if (live) savedPrefs else savedPrefs.copy(layoutMs = 0, fadeMs = 0)
     val phone = LocalConfiguration.current.screenWidthDp < 600
     val roomy = LocalConfiguration.current.screenWidthDp >= 1000
+    // The parent phone layout (inside ParentLayoutProvider); [phone] above is the older width-only rule the tablet pictures use.
+    val parentPhone = LocalPhone.current
 
     var override by rememberSaveable { mutableIntStateOf(0) }
     var spotlight by remember { mutableStateOf(startSpotlight) }
@@ -367,7 +372,10 @@ fun CamerasScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Row(
+            if (parentPhone) PhoneHeader("Cameras", onBack) {
+                IconCircle(Lucide.Settings, { onSettings(2) }, size = 48.dp, label = "Settings")
+                IconCircle(Lucide.Plus, { openEditor(Camera(Store.randomHex(6), "")) }, size = 48.dp, bg = C.accent, tint = C.onAccent, label = "Add camera")
+            } else Row(
                 Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 40.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 20.dp),
             ) {
@@ -388,8 +396,8 @@ fun CamerasScreen(
             }
 
             LazyRow(
-                Modifier.fillMaxWidth().padding(bottom = 20.dp),
-                contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                Modifier.fillMaxWidth().padding(bottom = if (parentPhone) 12.dp else 20.dp),
+                contentPadding = PaddingValues(horizontal = if (parentPhone) 16.dp else 40.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(tablets, key = { "t:${it.node.id}" }) { t ->
                     TabletChip(t) {
@@ -410,7 +418,7 @@ fun CamerasScreen(
             if (shownTargets.isNotEmpty()) TalkBarRow(
                 TalkBar.of(shownTargets, talkNow.takeIf { it.talking }?.names, talkNow.tryAgain),
                 onPress = { pressTalk("all", shownTargets) }, onRelease = { releaseTalk("all", it) },
-                modifier = Modifier.padding(start = 40.dp, end = 40.dp, bottom = 20.dp),
+                modifier = Modifier.padding(start = if (parentPhone) 16.dp else 40.dp, end = if (parentPhone) 16.dp else 40.dp, bottom = if (parentPhone) 12.dp else 20.dp),
             )
 
             if (roster.order.isEmpty()) {
@@ -418,7 +426,7 @@ fun CamerasScreen(
                 return@Column
             }
 
-            BoxWithConstraints(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, bottom = 40.dp)) {
+            BoxWithConstraints(Modifier.fillMaxSize().padding(start = if (parentPhone) 16.dp else 40.dp, end = if (parentPhone) 16.dp else 40.dp, bottom = if (parentPhone) 16.dp else 40.dp)) {
                 val density = LocalDensity.current
                 val w = constraints.maxWidth.toFloat()
                 val h = constraints.maxHeight.toFloat()
@@ -428,7 +436,7 @@ fun CamerasScreen(
                 val picked = visibleIds.indexOf(spotlight)
                 val mode = CamLayout.modeFor(n, CamLayout.Override.values()[override.coerceIn(0, 2)], picked >= 0)
                 val big = if (mode == CamLayout.Mode.SPOTLIGHT) picked.coerceAtLeast(0) else -1
-                val gap = with(density) { 20.dp.toPx() }
+                val gap = with(density) { (if (parentPhone) 12.dp else 20.dp).toPx() }
                 val stripH = with(density) { CamLayout.stripHeight(wide, phone).dp.toPx() }
                 val rects = CamLayout.rects(mode, n, w, h, gap, wide, picked.coerceAtLeast(0), stripH, if (phone) 2 else Int.MAX_VALUE)
                 // Six or more sources: the strip runs off to the right and is dragged sideways. The spotlight never shrinks.
@@ -544,6 +552,18 @@ private fun Context.activity(): Activity? {
 /** The dashed box, a title and a line, centred in what is left of the screen. */
 @Composable
 private fun CenterMessage(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, text: String) {
+    if (LocalPhone.current) {
+        // Phone: 16dp gutters, icon 64, title 24, the whole instruction at 16.
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(bottom = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        ) {
+            Icon(icon, null, tint = C.muted, modifier = Modifier.size(64.dp))
+            Text(title, style = disp(24.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center)
+            Text(text, style = body(16.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center)
+        }
+        return
+    }
     Column(
         Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, bottom = 80.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
@@ -561,15 +581,25 @@ private fun CenterMessage(icon: androidx.compose.ui.graphics.vector.ImageVector,
 private fun TabletChip(t: TabletCam, onTap: () -> Unit) {
     val lit = CamText.chipLit(t.armed, t.display)
     val word = CamText.chip(t.armed, t.online, t.supportsCam, t.cam, t.display)
+    val phone = LocalPhone.current
+    // Phone: a 56dp pill capped at 200dp, so one long status cannot push its peers off screen. The tile holds the full reason.
     Chip(
-        Modifier.alpha(if (t.online) 1f else 0.5f).clip(RoundedCornerShape(22.dp)).tap(onTap),
+        Modifier.alpha(if (t.online) 1f else 0.5f).then(if (phone) Modifier.widthIn(max = 200.dp) else Modifier).clip(RoundedCornerShape(if (phone) 28.dp else 22.dp)).tap(onTap),
+        height = if (phone) 56.dp else 44.dp,
         bg = if (lit) C.accent else C.surface2, padding = PaddingValues(start = 8.dp, end = 18.dp),
     ) {
         Avatar(t.node.name, t.node.color, t.node.avatar, 28.dp)
-        Text(kidName(t.node.name), style = body(17.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1)
-        if (word.isNotEmpty()) {
-            if (lit) Text(word, style = body(14.sp, 500), color = C.onAccent.copy(alpha = 0.8f), maxLines = 1)
-            else Muted(word, 14, maxLines = 1)
+        if (phone) {
+            Column(Modifier.weight(1f, fill = false)) {
+                Text(kidName(t.node.name), style = body(16.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (word.isNotEmpty()) Text(word, style = body(14.sp, 500), color = if (lit) C.onAccent.copy(alpha = 0.8f) else C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        } else {
+            Text(kidName(t.node.name), style = body(17.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1)
+            if (word.isNotEmpty()) {
+                if (lit) Text(word, style = body(14.sp, 500), color = C.onAccent.copy(alpha = 0.8f), maxLines = 1)
+                else Muted(word, 14, maxLines = 1)
+            }
         }
     }
 }
@@ -577,9 +607,14 @@ private fun TabletChip(t: TabletCam, onTap: () -> Unit) {
 /** An RTSP camera's chip: tap to show or hide it. Lit while shown. */
 @Composable
 private fun RtspChip(c: Camera, shown: Boolean, onTap: () -> Unit) {
-    Chip(Modifier.clip(RoundedCornerShape(22.dp)).tap(onTap), bg = if (shown) C.accent else C.surface2) {
+    val phone = LocalPhone.current
+    Chip(
+        Modifier.then(if (phone) Modifier.widthIn(max = 200.dp) else Modifier).clip(RoundedCornerShape(if (phone) 28.dp else 22.dp)).tap(onTap),
+        height = if (phone) 56.dp else 44.dp, bg = if (shown) C.accent else C.surface2,
+    ) {
         Icon(Lucide.Cctv, null, tint = if (shown) C.onAccent else C.muted, modifier = Modifier.size(22.dp))
-        Text(c.name, style = body(17.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1)
+        if (phone) Text(c.name, style = body(16.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        else Text(c.name, style = body(17.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1)
     }
 }
 

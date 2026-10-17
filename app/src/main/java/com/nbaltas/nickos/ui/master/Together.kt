@@ -44,6 +44,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1057,10 +1058,10 @@ internal fun PhoneBackChip(label: String, onBack: () -> Unit) {
 @Composable
 internal fun PhoneMediaHeader(
     art: @Composable (Modifier) -> Unit, eyebrow: String?, title: String, meta: String?,
-    eyebrowColor: Color = C.muted, extra: @Composable ColumnScope.() -> Unit = {},
+    eyebrowColor: Color = C.muted, extra: @Composable ColumnScope.() -> Unit = {}, fullWidthArt: Boolean = false,
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
-        art(Modifier.height(160.dp).aspectRatio(16f / 9f))
+        art(if (fullWidthArt) Modifier.fillMaxWidth().aspectRatio(16f / 9f) else Modifier.height(160.dp).aspectRatio(16f / 9f))
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             eyebrow?.let { EyebrowText(it, eyebrowColor) }
             PhoneMediaTitle(title)
@@ -1226,9 +1227,8 @@ internal fun PhoneGroupRemote(
     val bg = thumbs[s.fid]
 
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-        if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.3f)
-        else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.3f), radius = 0.dp, showTitle = false)
+        // A plain dark gradient: a blurred copy of the poster behind the content read as a shape.
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to C.bg.copy(alpha = 0.92f), 1f to C.bg)))
         Column(
             Modifier.fillMaxSize().verticalScroll(scroll).padding(PhoneMetrics.gutter),
             verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap),
@@ -1238,7 +1238,13 @@ internal fun PhoneGroupRemote(
                 art = { MovieThumb(bg, s.title, it, radius = PhoneMetrics.nestedRadius, showTitle = false, art = s.art) },
                 eyebrow = if (epLabel != null) "Watching together · $epLabel" else "Watching together", eyebrowColor = C.accent,
                 title = s.title, meta = if (nodeId == null) "On ${TogetherText.join(nodes.map { it.node.name })}" else null,
+                fullWidthArt = true,
             )
+            // One line tall, kept under the title (not between the times and the buttons) so it leaves no gap above the transport row.
+            Column(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalArrangement = Arrangement.Center) {
+                if (starting > 0) Text("Starting on $starting tablets...", style = body(16.sp, 500, 1.3f), color = C.muted)
+                waiting?.let { Text(it, style = body(16.sp, 700, 1.3f), color = C.accent) }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (s.durMs > 0) {
                     NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })
@@ -1247,11 +1253,6 @@ internal fun PhoneGroupRemote(
                     Box(Modifier.fillMaxWidth().height(PhoneMetrics.minTarget), contentAlignment = Alignment.Center) { ProgressBar(0f, height = 8.dp) }
                     PhoneTimes("--:--", "--:--")
                 }
-            }
-            // Always 40dp tall, so "Starting..." or "Waiting for Leo" appearing never moves the buttons.
-            Column(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalArrangement = Arrangement.Center) {
-                if (starting > 0) Text("Starting on $starting tablets...", style = body(16.sp, 500, 1.3f), color = C.muted)
-                waiting?.let { Text(it, style = body(16.sp, 700, 1.3f), color = C.accent) }
             }
             streamFails.values.filter { it.fid == s.fid }.forEach { f ->
                 StreamFailRow(f, sync.kid(f.id)) { onSaveInstead(f) }

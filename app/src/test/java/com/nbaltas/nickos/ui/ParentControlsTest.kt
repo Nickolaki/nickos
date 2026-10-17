@@ -16,6 +16,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -105,6 +106,41 @@ class ParentControlsTest {
         }
         rule.onNodeWithText("One").assertIsNotSelected()
         rule.onNodeWithText("Two").assertIsSelected()
+    }
+
+    /**
+     * The screen viewer's header changed on phone; the picture area did not. A tap on the picture's corners and centre
+     * must still arrive as the same 0..1 tablet coordinates TouchMap gives for the picture's own box.
+     */
+    @Test fun screenViewerPictureTapsKeepTheirTabletCoordinates() {
+        val taps = mutableListOf<Pair<Double, Double>>()
+        val frame = android.graphics.Bitmap.createBitmap(600, 960, android.graphics.Bitmap.Config.ARGB_8888)
+        rule.setContent {
+            NickTheme {
+                ParentLayoutProvider {
+                    com.nbaltas.nickos.ui.master.ScreenViewer(frame, "live", true, false, {}, {}, {}, {}, { x, y -> taps += x to y }, { _, _, _, _, _ -> })
+                }
+            }
+        }
+        val picture = rule.onNodeWithContentDescription("The tablet's screen")
+        val size = picture.fetchSemanticsNode().size
+        val box = com.nbaltas.nickos.remote.TouchMap.content(size.width.toFloat(), size.height.toFloat(), 600, 960)!!
+        val points = listOf(
+            Offset(box.left + 1f, box.top + 1f), Offset(box.left + box.width - 2f, box.top + 1f),
+            Offset(box.left + 1f, box.top + box.height - 2f), Offset(box.left + box.width - 2f, box.top + box.height - 2f),
+            Offset(size.width / 2f, size.height / 2f),
+        )
+        points.forEach { p -> picture.performTouchInput { click(p) } }
+        rule.runOnIdle {
+            assertEquals(points.size, taps.size)
+            points.forEachIndexed { i, p ->
+                val want = com.nbaltas.nickos.remote.TouchMap.toNorm(p.x, p.y, size.width.toFloat(), size.height.toFloat(), 600, 960)!!
+                assertEquals(want.x, taps[i].first, 1e-6)
+                assertEquals(want.y, taps[i].second, 1e-6)
+            }
+            assertEquals(0.5, taps.last().first, 1e-6)
+            assertEquals(0.5, taps.last().second, 1e-6)
+        }
     }
 
     @Test fun pauseActionsHaveEqualBoundsAtFont200() {

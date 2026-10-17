@@ -460,6 +460,18 @@ class DesignScreensTest {
         shot("Cameras-Talk-Ready") { CamerasScreen({}, {}, live = false) }
     }
 
+    /** Phone, system font 2.0: the hold button keeps its 52dp and the helper slot its two lines. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun camerasTalkReadyPhoneFont200() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(), CM to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camPicture(CM, camPlum.first, camPlum.second)
+        phoneFont200("Cameras-Talk-Ready-font200") { CamerasScreen({}, {}, live = false) }
+    }
+
     /** A press in progress: the button is lit and the line names the frozen recipients. */
     @Test fun camerasTalking() {
         seedCams()
@@ -1180,6 +1192,12 @@ class DesignScreensTest {
     @Test fun screenViewerWithControl() = viewer("Screen-Viewer-Control", control = true)
     @Test fun screenViewerNeedsConsent() = viewer("Screen-Viewer-NeedsConsent", control = false, frame = null, state = "needs_consent")
     @Test fun screenViewerLost() = viewer("Screen-Viewer-Lost", control = false, lost = true)
+
+    /** Phone, system font 2.0: Stop, Back and Home must still fit as three equal buttons. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun screenViewerControlPhoneFont200() = phoneFont200("Screen-Viewer-Control-font200") {
+        com.nbaltas.nickos.ui.master.ScreenViewer(kidScreen(), "live", true, false, {}, {}, {}, {}, { _, _ -> }, { _, _, _, _, _ -> })
+    }
 
     // ---- Tapo camera on the car network ----
     private fun tapo(id: String, name: String, host: String) =

@@ -28,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,7 +77,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     val sync = master.sync
     val transfer = master.transfer
     val jfAccount by app.store.jellyfin.collectAsState()
-    var legacy by remember { mutableStateOf(false) }
+    var legacy by rememberSaveable { mutableStateOf(false) }
 
     if (legacy) {
         Column(Modifier.fillMaxSize()) {
@@ -92,8 +93,8 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     val thumbs by sync.thumbs.collectAsState()
     val library = remember(videosMap) { sync.library() }
     val mine = remember(library) { Library.ownedBy(library, nodeId) }
-    var segment by remember { mutableStateOf(0) }
-    var openFid by remember { mutableStateOf<String?>(null) }
+    var segment by rememberSaveable { mutableStateOf(0) }
+    var openFid by rememberSaveable { mutableStateOf<String?>(null) }
     // The open movie is looked up in the current library every time, so one that was just deleted
     // closes the panel instead of leaving Play and Delete on screen.
     val openItem = openItemFor(mine, openFid)

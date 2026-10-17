@@ -118,6 +118,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -186,17 +189,23 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
     val offlineScroll = rememberScrollState()
     val appsGrid = rememberLazyGridState()
     // Phone: only the static bodies (Apps, Device, offline) fade in over 150ms. Players, the library and the Screen viewer never do.
-    val firstTab = remember { tab }
+    // Only the very first entry skips the fade; coming back to the tab the screen opened on fades like any other.
+    val rendered = remember { booleanArrayOf(false) }
     val staticBody = phone && (!v.online && tab != TAB_WATCH && tab != TAB_SCREEN && !(tab == TAB_NOW && inTogether) || v.online && (tab == TAB_APPS || tab == TAB_DEVICE))
-    val fade = remember(tab, staticBody) { Animatable(if (staticBody && tab != firstTab) 0f else 1f) }
+    val fade = remember(tab, staticBody) { Animatable(if (staticBody && rendered[0]) 0f else 1f) }
+    SideEffect { rendered[0] = true }
     LaunchedEffect(tab, staticBody) { if (fade.value < 1f) fade.animateTo(1f, tween(150)) }
+    // Phone: the Watch tab's saveable state (library segment, open movie or show, scroll) survives a visit to another tab.
+    val saveable = rememberSaveableStateHolder()
 
     Column(Modifier.fillMaxSize()) {
         // The screen viewer takes the whole window.
         if (!(tab == TAB_SCREEN && watchingScreen == nodeId && v.online)) ControlHeader(v, tab, onTab, onBack)
         Box(Modifier.fillMaxSize().then(if (staticBody) Modifier.graphicsLayer { alpha = fade.value } else Modifier)) {
             when {
-                tab == TAB_WATCH -> TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
+                tab == TAB_WATCH ->
+                    if (phone) saveable.SaveableStateProvider("watch") { TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) }) }
+                    else TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
                 tab == TAB_NOW && inTogether -> if (phone) PhoneGroupRemote(nodeId, nowScroll) else TabletRemote(nodeId)
                 !v.online -> OfflineBody(v, onBack, offlineScroll)
                 tab == TAB_NOW -> if (v.playback?.item != null) NowPlaying(v, nowScroll) else NothingPlaying(v, nowScroll) { onTab(TAB_WATCH) }
@@ -233,9 +242,13 @@ private fun PhoneControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBa
             Triple("Playing", "Now Playing", Solid.Play), Triple("Watch", "Watch", Lucide.Film), Triple("Apps", "Apps", Lucide.LayoutGrid),
             Triple("Device", "Device", Lucide.Tablet), Triple("Screen", "Screen", Lucide.Monitor),
         )
+        val tabScroll = rememberScrollState()
+        val requesters = remember { List(tabs.size) { BringIntoViewRequester() } }
+        // Large font: the row scrolls, so the selected tab is brought into view whenever it changes (and on entering this mode).
+        LaunchedEffect(tab, scaled) { if (scaled) requesters[tab.coerceIn(0, tabs.lastIndex)].bringIntoView() }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter).clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(C.surface).padding(4.dp)
-                .then(if (scaled) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+                .then(if (scaled) Modifier.horizontalScroll(tabScroll) else Modifier),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             tabs.forEachIndexed { i, (label, full, icon) ->
@@ -243,7 +256,7 @@ private fun PhoneControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBa
                 val bg by animateColorAsState(if (on) C.accent else Color.Transparent, tween(120), label = "tabBg")
                 val fg by animateColorAsState(if (on) C.onAccent else C.muted, tween(120), label = "tabFg")
                 Column(
-                    (if (scaled) Modifier.widthIn(min = 88.dp) else Modifier.weight(1f)).heightIn(min = 64.dp).clip(RoundedCornerShape(10.dp)).background(bg)
+                    (if (scaled) Modifier.widthIn(min = 88.dp) else Modifier.weight(1f)).heightIn(min = 64.dp).bringIntoViewRequester(requesters[i]).clip(RoundedCornerShape(10.dp)).background(bg)
                         .selectable(selected = on, role = Role.Tab) { onTab(i) }
                         .semantics { contentDescription = full }
                         .padding(horizontal = 4.dp, vertical = 6.dp),
@@ -561,8 +574,9 @@ private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolea
         Column(
             modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface)
                 .then(if (unavailable != null && onAsk != null) Modifier.clickable(onClick = onAsk) else Modifier)
-                .padding(PhoneMetrics.cardPadding),
-            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+                // A working slider keeps its 48dp hit box but loses the extra air under the thumb.
+                .padding(start = PhoneMetrics.cardPadding, end = PhoneMetrics.cardPadding, top = PhoneMetrics.cardPadding, bottom = if (unavailable == null) 8.dp else PhoneMetrics.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(if (unavailable == null) 4.dp else PhoneMetrics.relatedGap),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(icon, null, tint = C.text, modifier = Modifier.size(20.dp))
