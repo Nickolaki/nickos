@@ -234,6 +234,11 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         // so the toast always draws here on the home screen. The wall too without the overlay permission.
         warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
+        val pausedMsg by store.pausedMsg.collectAsState()
+        val pausedBy by store.pausedBy.collectAsState()
+        val ringing by rt.ringing.collectAsState()
+        if (!canOverlay) pausedMsg?.let { PausedScreen(it, pausedBy) }
+        if (!canOverlay && ringing) FoundMeScreen { rt.stopRing(com.nbaltas.nickos.node.RingMachine.Stop.TAP) }
         // After the locked wall, so the banner is drawn over it: the speech is audible there too.
         if (!canOverlay) talkBanner?.let { TalkBannerAtBottom(it) }
     }

@@ -219,6 +219,14 @@ class DesignScreensTest {
     @Test fun controlOffline() = shot("Control-Offline") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
     @Test fun controlApps() = shot("Control-Apps") { ControlScreen("aaaaaaaaaaaa", TAB_APPS, {}, {}, {}) }
     @Test fun controlDevice() = shot("Control-Device") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    @Test fun masterPauseSheet() = shot("Master-Pause-Sheet") { com.nbaltas.nickos.ui.master.PauseAllSheet(paused = false, startMsg = "Time to eat", onSubmit = { _, _ -> }, onClose = {}) }
+    @Test fun controlDeviceRing() {
+        set(app.master, "_status", mapOf(
+            "aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1")),
+            "bbbbbbbbbbbb" to status(41, fg = "com.example.drawing", fgLabel = "Drawing"),
+        ))
+        shot("Control-Device-Ring") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
     @Test fun settingsTablets() = shot("Settings-Tablets") { SettingsScreen(0, {}, {}, {}) }
     @Test fun settingsJellyfin() = shot("Settings-Jellyfin") { SettingsScreen(1, {}, {}, {}) }
     @Test fun settingsPin() = shot("Settings-PIN") { SettingsScreen(3, {}, {}, {}) }

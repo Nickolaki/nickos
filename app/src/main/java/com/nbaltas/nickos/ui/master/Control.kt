@@ -555,6 +555,8 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // An old Node has no "ring1": no button.
+                    if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
                     // One short line under Lock, so Lock is never pushed out of the card.
                     if (st?.screenOffOk == false) {
                         val asked = askedLine(v)
@@ -696,6 +698,11 @@ private fun StartButton(icon: ImageVector, label: String, modifier: Modifier = M
         Text(label, style = body(if (height < 56.dp) 16.sp else 19.sp, 700), color = col, maxLines = 1)
     }
 }
+
+/** "Ring" finds a lost tablet; while it sounds the same button reads "Stop ringing". */
+@Composable
+internal fun RingButton(ringing: Boolean, onClick: () -> Unit) =
+    StartButton(Lucide.Volume2, if (ringing) "Stop ringing" else "Ring", danger = ringing, height = 48.dp, onClick = onClick)
 
 /** True when a Device tab card is too short for three full-size buttons (every landscape tablet we support). */
 internal fun tabletCompact(cardHeight: Dp) = cardHeight < 300.dp

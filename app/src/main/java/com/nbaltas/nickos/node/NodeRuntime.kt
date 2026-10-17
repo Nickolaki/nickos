@@ -400,8 +400,63 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // Not when the same Master has already reconnected: its new link may be mid talk.
             masterId?.let { m -> if (sessions.none { it.first == m }) talk.onMasterGone(m) }
             _connected.value = sessions.map { it.first }.toSet()
-            if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
+            if (sessions.isEmpty()) {
+                cam.stop(NodeCam.LINK) // no parent tablet left to look
+                stopRing(RingMachine.Stop.LINK)
+            }
         }
+    }
+
+    // ---- ring a lost tablet ----
+    private val ringMachine = RingMachine()
+    private val _ringing = MutableStateFlow(false)
+    /** True while the alarm sounds; the overlay shows "Found me!" for it and the status reports it. */
+    val ringing: StateFlow<Boolean> = _ringing
+    private var ringJob: Job? = null
+
+    private fun startRing() = synchronized(ringMachine) {
+        if (!ringMachine.start(System.currentTimeMillis(), device.alarmVolume())) return@synchronized
+        device.wake()
+        device.startAlarm()
+        _ringing.value = true
+        ringJob = scope.launch {
+            while (isActive) {
+                delay(1000)
+                val restore = synchronized(ringMachine) { ringMachine.tick(System.currentTimeMillis()) } ?: continue
+                finishRing(restore)
+                break
+            }
+        }
+        overlay.refresh()
+    }
+
+    /** The kid tapped the overlay, the parent tapped Stop, or the link dropped. Safe to call when not ringing. */
+    fun stopRing(reason: RingMachine.Stop) {
+        val restore = synchronized(ringMachine) { ringMachine.stop(reason) } ?: return
+        ringJob?.cancel()
+        finishRing(restore)
+        if (reason != RingMachine.Stop.LINK) pushStatus()
+    }
+
+    private fun finishRing(restore: Int) {
+        device.stopAlarm()
+        device.setAlarmVolume(restore)
+        _ringing.value = false
+        overlay.refresh()
+    }
+
+    // ---- pause everyone ----
+    private fun applyPause(p: NetMessages.PauseAll, parentName: String) {
+        if (p.on) {
+            // A Master re-sends this on every connect: pause the video only when the wall is new.
+            if (store.pausedMsg.value == null) device.mediaKey("pause")
+            store.setPausedBy(parentName)
+            store.setPausedMsg(PauseAll.wallText(p.msg))
+        } else {
+            store.setPausedMsg(null)
+            store.setPausedBy(null)
+        }
+        overlay.refresh()
     }
 
     /** A fresh kid tablet starts with Jellyfin on its home screen, if it has it. */
@@ -442,6 +497,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
+            NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, master?.name ?: "Parent's Tablet") }
+            NetMessages.RING -> NetMessages.decodeRing(m)?.let { if (it) startRing() else stopRing(RingMachine.Stop.PARENT) }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))
@@ -535,10 +592,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("talk", talkStatus())
+            .put("ringing", _ringing.value).put("paused", store.pausedMsg.value != null)
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("now", System.currentTimeMillis())

@@ -133,6 +133,38 @@ class NodeDevice(private val ctx: Context) {
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
     }
 
+    // ---- ring a lost tablet ----
+    private var ringtone: android.media.Ringtone? = null
+
+    fun alarmVolume(): Int = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+
+    fun setAlarmVolume(v: Int) {
+        try { audio.setStreamVolume(AudioManager.STREAM_ALARM, v.coerceIn(0, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0) }
+        catch (e: Exception) { Log.w(TAG, "alarm volume", e) }
+    }
+
+    /** Alarm volume to the top and the default alarm sound looping. USAGE_ALARM keeps it loud with the media volume muted. */
+    fun startAlarm() {
+        setAlarmVolume(audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))
+        try {
+            val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+                ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+            val r = android.media.RingtoneManager.getRingtone(ctx, uri) ?: return
+            r.audioAttributes = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            if (Build.VERSION.SDK_INT >= 28) r.isLooping = true
+            r.play()
+            ringtone = r
+        } catch (e: Exception) { Log.w(TAG, "alarm sound", e) }
+    }
+
+    fun stopAlarm() {
+        try { ringtone?.stop() } catch (e: Exception) { Log.w(TAG, "alarm stop", e) }
+        ringtone = null
+    }
+
     fun brightness(): Int = try {
         (Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS) * 100f / 255f).roundToInt()
     } catch (e: Exception) { 50 }

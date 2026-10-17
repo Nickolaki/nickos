@@ -193,8 +193,11 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
     val poster: ((JfItem) -> String?)? = jf?.let { j -> { i: JfItem -> j.poster(i, 400) } }
     val portrait = LocalConfiguration.current.let { it.screenHeightDp > it.screenWidthDp }
     val pad = if (portrait) 32.dp else 40.dp
+    var pauseSheet by remember { mutableStateOf(false) }
+    val pausedMsg by app.store.pausedMsg.collectAsState()
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether)
+        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
         CarNetBanner(pad, onSettings)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
@@ -222,6 +225,12 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
             }
         }
     }
+    if (pauseSheet) PauseAllSheet(
+        paused = pausedMsg != null,
+        onSubmit = { on, msg -> app.master.pauseAll(on, msg); pauseSheet = false },
+        onClose = { pauseSheet = false },
+    )
+    }
 }
 
 /** One warning row, only when the car network itself is down (the one offline reason fixed from this tablet) and no typed hotspot is in use. */
@@ -247,7 +256,7 @@ private fun CarNetBanner(pad: Dp, onSettings: () -> Unit) {
 }
 
 @Composable
-private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit) {
+private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit, paused: Boolean, onPause: () -> Unit) {
     val ctx = LocalContext.current
     val app = App.get(ctx)
     val session by app.master.sync.session.collectAsState()
@@ -291,6 +300,10 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
         if (!phone) Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onSettings), height = 48.dp) {
             Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(20.dp).rotate90())
             Text("${name.ifBlank { "Parent's Tablet" }} · Master", style = body(16.sp, 700), color = C.text, maxLines = 1)
+        }
+        Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(onClick = onPause), height = 48.dp, bg = if (paused) C.accent else C.surface2) {
+            Icon(if (paused) Solid.Play else Solid.Pause, null, tint = if (paused) C.onAccent else C.text, modifier = Modifier.size(20.dp))
+            if (!phone) Text(if (paused) "Resume everyone" else "Pause all", style = body(16.sp, 700), color = if (paused) C.onAccent else C.text, maxLines = 1)
         }
         IconCircle(Lucide.Cctv, onCameras)
         if (session != null) {

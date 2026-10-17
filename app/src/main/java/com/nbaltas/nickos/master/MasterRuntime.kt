@@ -27,6 +27,7 @@ import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
+import com.nbaltas.nickos.node.PauseAll
 import com.nbaltas.nickos.talk.TalkMessages
 import com.nbaltas.nickos.talk.TalkStop
 import com.nbaltas.nickos.talk.TalkStopPolicy
@@ -78,7 +79,15 @@ data class NodeStatus(
     val landscape: NetMessages.LandscapeStatus? = null,
     /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
     val talk: String = TalkMessages.STATUS_OK,
+    /** The alarm is sounding on the Node. Old Nodes omit it: false. */
+    val ringing: Boolean = false,
+    /** The pause wall is up on the Node. Old Nodes omit it: false. */
+    val paused: Boolean = false,
 ) {
+    /** "ring1": the Node can sound its alarm when asked. The Master hides the Ring button without it. */
+    val supportsRing: Boolean get() = NetMessages.RING_CAP in caps
+    /** "pause1": the Node shows the pause wall. */
+    val supportsPause: Boolean get() = NetMessages.PAUSE_CAP in caps
     /** The Node refuses talk audio until a grown-up allows notifications on it. */
     val talkNeedsPermission: Boolean get() = talk == TalkMessages.STATUS_NEEDS_PERMISSION
 
@@ -107,6 +116,7 @@ data class NodeStatus(
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
                 landscape = NetMessages.decodeLandscape(o),
                 talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
+                ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
             )
         }
 
@@ -486,6 +496,19 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      */
     internal fun sendIntent(id: String) {
         store.nodes.value.firstOrNull { it.id == id }?.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        PauseAll.intent(store.pausedMsg.value)?.let { send(id, it) }
+    }
+
+    /** Pause (or resume) every linked tablet that is online. The state is kept, so a tablet that connects later gets it too. */
+    fun pauseAll(on: Boolean, msg: String) {
+        val text = if (on) PauseAll.wallText(msg.trim().take(NetMessages.MAX_PAUSE_MSG)) else null
+        store.setPausedMsg(text)
+        _online.value.forEach { id -> sendControl(id, NetMessages.pauseAllCmd(on, text ?: "")) }
+    }
+
+    fun ring(id: String, on: Boolean) {
+        sendControl(id, NetMessages.ringCmd(on))
+        patch(id) { it.copy(ringing = on) }
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
@@ -517,6 +540,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (m.optJSONArray("caps")?.let { a -> (0 until a.length()).any { a.optString(it) == Handshake.CAP } } == true) linkFlags.setSec2Capable(id, true)
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
+        PauseAll.staleWall(st.paused, store.pausedMsg.value)?.let { send(id, it) }
         val net = NodeNet.from(m)
         _net.update { it + (id to net) }
         val n = store.nodes.value.firstOrNull { it.id == id } ?: return

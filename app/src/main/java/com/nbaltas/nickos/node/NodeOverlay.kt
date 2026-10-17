@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.unit.dp
 import com.nbaltas.nickos.ui.node.BedtimeToast
+import com.nbaltas.nickos.ui.node.FoundMeScreen
 import com.nbaltas.nickos.ui.node.LockedScreen
+import com.nbaltas.nickos.ui.node.PausedScreen
 
 /**
  * Draws the "Screen locked" wall and the bedtime warning on top of whatever app the kid is in.
@@ -37,6 +39,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var lockView: View? = null
     private var toastView: View? = null
     private var guardView: View? = null
+    private var pauseView: View? = null
+    private var ringView: View? = null
     @Volatile private var talkView: View? = null
 
     fun refresh() = main.post { update() }
@@ -56,6 +60,13 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             if (talkView != null) { remove(talkView); talkView = null }
         }
         if (!locked && lockView != null) { remove(lockView); lockView = null }
+        // The pause wall and "Found me!" are full screen walls too, the ring one on top of the rest.
+        val paused = store.pausedMsg.value != null
+        if (paused && pauseView == null) pauseView = add(fullScreen = true) { PausedOverlayContent(store) }
+        if (!paused && pauseView != null) { remove(pauseView); pauseView = null }
+        val ringing = rt.ringing.value
+        if (ringing && ringView == null) ringView = add(fullScreen = true) { FoundMeScreen { rt.stopRing(RingMachine.Stop.TAP) } }
+        if (!ringing && ringView != null) { remove(ringView); ringView = null }
         // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
@@ -118,6 +129,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
 
     fun hideAll() = main.post {
         remove(lockView); lockView = null
+        remove(pauseView); pauseView = null
+        remove(ringView); ringView = null
         remove(toastView); toastView = null
         remove(talkView); talkView = null
     }
@@ -159,6 +172,13 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
 private fun LockedOverlayContent(store: Store) {
     val by by store.lockedBy.collectAsStateWithLifecycle()
     LockedScreen(store, by)
+}
+
+@androidx.compose.runtime.Composable
+private fun PausedOverlayContent(store: Store) {
+    val msg by store.pausedMsg.collectAsStateWithLifecycle()
+    val by by store.pausedBy.collectAsStateWithLifecycle()
+    msg?.let { PausedScreen(it, by) }
 }
 
 @androidx.compose.runtime.Composable

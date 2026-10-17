@@ -326,6 +326,16 @@ class Store(context: Context) {
     val lockedBy: StateFlow<String?> = _locked
     fun setLockedBy(v: String?) { p.edit().putString("lockedBy", v).apply(); _locked.value = v }
 
+    private val _pausedMsg = MutableStateFlow(p.getString("pausedMsg", null))
+    /** Non-null while the parent has paused everyone; holds the message. On the Node it is what the wall shows, on the Master what is re-sent. */
+    val pausedMsg: StateFlow<String?> = _pausedMsg
+    fun setPausedMsg(v: String?) { p.edit().putString("pausedMsg", v).apply(); _pausedMsg.value = v }
+
+    private val _pausedBy = MutableStateFlow(p.getString("pausedBy", null))
+    /** Node only: the parent's display name shown under the pause message. */
+    val pausedBy: StateFlow<String?> = _pausedBy
+    fun setPausedBy(v: String?) { p.edit().putString("pausedBy", v).apply(); _pausedBy.value = v }
+
     private val _bedtime = MutableStateFlow(p.getLong("bedtimeAt", 0))
     /** Wall-clock millis when the bedtime timer turns the screen off, 0 when unset. */
     val bedtimeAt: StateFlow<Long> = _bedtime
@@ -388,6 +398,7 @@ class Store(context: Context) {
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
+        _pausedMsg.value = null; _pausedBy.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
         _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()
     }

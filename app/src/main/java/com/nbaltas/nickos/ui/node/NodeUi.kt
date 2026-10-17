@@ -386,6 +386,33 @@ fun LockedScreen(store: Store, by: String?) {
     }
 }
 
+/** "Look out the window!" and the parent's name under it. Nothing on it can be tapped away: only the parent's Resume removes it. */
+@Composable
+fun PausedScreen(msg: String, by: String?) {
+    val now = rememberNow(1000)
+    Box(Modifier.fillMaxSize().background(NodePalette.lockedBg).tap {}, contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 80.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+        ) {
+            Text(msg, style = disp(88.sp, 800, 1f), color = NodeText, textAlign = TextAlign.Center)
+            Text(parentName(by), style = body(30.sp, 600), color = NodePalette.soft)
+            Text(clockText(now), style = disp(44.sp), color = NodePalette.soft, modifier = Modifier.padding(top = 20.dp))
+        }
+    }
+}
+
+/** The ringing tablet's wall. A tap anywhere stops the alarm. */
+@Composable
+fun FoundMeScreen(onStop: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(NodePalette.lockedBg).tap { onStop() }, contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            Text("Found me!", style = disp(110.sp, 800, 1f), color = NodeText, textAlign = TextAlign.Center)
+            Text("Tap to stop", style = body(34.sp, 600), color = NodePalette.soft)
+        }
+    }
+}
+
 // ---------------- Bedtime ----------------
 
 /** In-app placement: bottom centre of the screen, clear of the header. */
