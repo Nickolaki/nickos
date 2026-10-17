@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.unit.dp
 import com.nbaltas.nickos.ui.node.BedtimeToast
+import com.nbaltas.nickos.ui.node.FoundMeScreen
 import com.nbaltas.nickos.ui.node.LockedScreen
+import com.nbaltas.nickos.ui.node.PausedScreen
 
 /**
  * Draws the "Screen locked" wall and the bedtime warning on top of whatever app the kid is in.
@@ -37,6 +39,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var lockView: View? = null
     private var toastView: View? = null
     private var guardView: View? = null
+    private var pauseView: View? = null
+    private var ringView: View? = null
     @Volatile private var talkView: View? = null
 
     fun refresh() = main.post { update() }
@@ -44,29 +48,37 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private fun update() {
         val locked = store.lockedBy.value != null
         val warn = rt.bedtimeWarning.value != null
+        val paused = store.pausedMsg.value != null
+        val ringing = rt.ringing.value
         val canOverlay = rt.device.canOverlay()
         if (!canOverlay) {
             hideAll()
-            if (locked && !rt.homeVisible) rt.device.goHome()
+            // No window to draw in: bring NickOS to the front, its activity draws the same walls (see NodeApp).
+            if ((locked || paused || ringing) && !rt.homeVisible) rt.device.goHome()
             return
         }
-        if (locked && lockView == null) {
-            lockView = add(fullScreen = true) { LockedOverlayContent(store) }
-            // The talking banner is added after the wall so it stays on top of it.
-            if (talkView != null) { remove(talkView); talkView = null }
-        }
-        if (!locked && lockView != null) { remove(lockView); lockView = null }
-        // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
-        val toast = warn && !locked && !rt.homeVisible
-        if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
-        if (!toast && toastView != null) { remove(toastView); toastView = null }
+        val toast = warn && !locked && !rt.homeVisible // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
         // Talk always uses an attached window, including on home, so playback can confirm presentation.
         val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
-        if (talking && talkView == null) {
-            // Only a banner that was added without an exception counts as shown (see talkOnScreen).
-            talkView = try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+        // Stacking, bottom to top: lock, pause, bedtime toast, "Found me!", the talking banner. A new window is always
+        // added last, so when a lower one has to appear, every one above it is taken down and put back after it.
+        val wanted = booleanArrayOf(locked, paused, toast, ringing, talking)
+        val views = arrayOf(lockView, pauseView, toastView, ringView, talkView)
+        val lowestNew = wanted.indices.firstOrNull { wanted[it] && views[it] == null }
+        for (i in wanted.indices) {
+            if (views[i] != null && (!wanted[i] || (lowestNew != null && i > lowestNew))) { remove(views[i]); views[i] = null }
         }
-        if (!talking && talkView != null) { remove(talkView); talkView = null }
+        for (i in wanted.indices) {
+            if (wanted[i] && views[i] == null) views[i] = when (i) {
+                0 -> add(fullScreen = true) { LockedOverlayContent(store) }
+                1 -> add(fullScreen = true) { PausedOverlayContent(store) }
+                2 -> add(fullScreen = false) { ToastOverlayContent(rt) }
+                3 -> add(fullScreen = true) { FoundMeScreen { rt.stopRing(RingMachine.Stop.TAP) } }
+                // Only a banner that was added without an exception counts as shown (see talkOnScreen).
+                else -> try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+            }
+        }
+        lockView = views[0]; pauseView = views[1]; toastView = views[2]; ringView = views[3]; talkView = views[4]
     }
 
     /**
@@ -119,6 +131,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
 
     fun hideAll() = main.post {
         remove(lockView); lockView = null
+        remove(pauseView); pauseView = null
+        remove(ringView); ringView = null
         remove(toastView); toastView = null
         remove(talkView); talkView = null
     }
@@ -166,6 +180,13 @@ internal fun talkBannerShown(added: Boolean, attached: Boolean, hasParent: Boole
 private fun LockedOverlayContent(store: Store) {
     val by by store.lockedBy.collectAsStateWithLifecycle()
     LockedScreen(store, by)
+}
+
+@androidx.compose.runtime.Composable
+private fun PausedOverlayContent(store: Store) {
+    val msg by store.pausedMsg.collectAsStateWithLifecycle()
+    val by by store.pausedBy.collectAsStateWithLifecycle()
+    msg?.let { PausedScreen(it, by) }
 }
 
 @androidx.compose.runtime.Composable

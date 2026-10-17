@@ -404,8 +404,70 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // Not when the same Master has already reconnected: its new link may be mid talk.
             masterId?.let { m -> if (sessions.none { it.first == m }) talk.onMasterGone(m) }
             _connected.value = sessions.map { it.first }.toSet()
-            if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
+            if (sessions.isEmpty()) {
+                cam.stop(NodeCam.LINK) // no parent tablet left to look
+                stopRing(RingMachine.Stop.LINK)
+            }
         }
+    }
+
+    // ---- ring a lost tablet ----
+    private val _ringing = MutableStateFlow(false)
+    /** True while the alarm sounds; the overlay shows "Found me!" for it and the status reports it. */
+    val ringing: StateFlow<Boolean> = _ringing
+
+    /** Start, stop and timeout all go through this one lock, device effects included (see [RingController]). */
+    private val ring = RingController(object : RingPort {
+        override fun alarmVolume() = device.alarmVolume()
+        override fun setAlarmVolume(v: Int) = device.setAlarmVolume(v)
+        override fun saveVolumeBackup(v: Int): Boolean = store.setSavedAlarmVolume(v).also {
+            if (!it) Log.w(TAG, "could not save the alarm volume; ringing at current volume")
+        }
+        override fun volumeBackup() = store.savedAlarmVolume()
+        override fun clearVolumeBackup() { store.setSavedAlarmVolume(null) }
+        override fun wake() = device.wake()
+        override fun startAlarm(raiseVolume: Boolean) = device.startAlarm(raiseVolume)
+        override fun stopAlarm() = device.stopAlarm()
+        override fun shown(ringing: Boolean) { _ringing.value = ringing; overlay.refresh() }
+    }, clock = { android.os.SystemClock.elapsedRealtime() }) // monotonic: a clock correction cannot stretch the 60 seconds
+
+    private fun startRing() {
+        val id = ring.start()
+        if (id == 0L) return
+        scope.launch {
+            while (isActive && ring.isCurrent(id)) {
+                delay(1000)
+                if (ring.tick()) { pushStatus(); break }
+            }
+        }
+    }
+
+    /** The kid tapped the overlay, the parent tapped Stop, or the link dropped. Safe to call when not ringing. */
+    fun stopRing(reason: RingMachine.Stop) {
+        if (ring.stop(reason) && reason != RingMachine.Stop.LINK) pushStatus()
+    }
+
+    // ---- pause everyone ----
+    private fun applyPause(p: NetMessages.PauseAll, masterId: String, parentName: String) {
+        if (p.on) {
+            // A Master re-sends this on every connect: pause the video only when the wall is new.
+            if (store.pausedMsg.value == null) device.mediaKey("pause")
+            store.setPausedOwner(masterId)
+            store.setPausedBy(parentName)
+            store.setPausedMsg(PauseAll.wallText(p.msg))
+        } else if (PauseAll.mayClear(store.pausedOwner(), masterId, p.force)) {
+            clearPause()
+        } else Log.i(TAG, "pause belongs to another parent: resume ignored")
+        overlay.refresh()
+    }
+
+    /** Lifts the wall on this tablet only: a right PIN on the wall, unlinking the last parent tablet, or a Master allowed to. */
+    fun clearPause() {
+        store.setPausedMsg(null)
+        store.setPausedBy(null)
+        store.setPausedOwner(null)
+        overlay.refresh()
+        pushStatus()
     }
 
     /** A fresh kid tablet starts with Jellyfin on its home screen, if it has it. */
@@ -446,6 +508,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
+            NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, masterId, master?.name ?: "Parent's Tablet") }
+            NetMessages.RING -> NetMessages.decodeRing(m)?.let { if (it) startRing() else stopRing(RingMachine.Stop.PARENT) }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
             "brightness" -> device.setBrightness(m.getInt("v"))
@@ -501,7 +565,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) { releaseLandscape(); powerRunner.release() } }
+            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) { releaseLandscape(); clearPause(); powerRunner.release() } }
             NetMessages.POWER -> NetMessages.decodePower(m)?.let { if (store.setPower(it.wake, it.offMin)) powerRunner.refresh() else Log.w(TAG, "could not save the power choice") }
             NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
@@ -540,10 +604,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("talk", talkStatus())
+            .put("ringing", _ringing.value).put("paused", store.pausedMsg.value != null)
+            .put("pausedOwner", store.pausedOwner())
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("power", NetMessages.encodePower(powerRunner.status()))

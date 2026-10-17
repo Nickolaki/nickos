@@ -126,6 +126,51 @@ class NodeDevice(private val ctx: Context) {
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
     }
 
+    // ---- ring a lost tablet ----
+    private var player: android.media.MediaPlayer? = null
+
+    fun alarmVolume(): Int = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+
+    fun setAlarmVolume(v: Int): Boolean {
+        return try {
+            audio.setStreamVolume(AudioManager.STREAM_ALARM, v.coerceIn(0, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0)
+            (alarmVolume() == v).also { if (!it) Log.w(TAG, "alarm volume restoration not confirmed") }
+        } catch (e: Exception) { Log.w(TAG, "alarm volume", e); false }
+    }
+
+    /** Alarm volume to the top and the default alarm sound looping. USAGE_ALARM keeps it loud with the media volume muted. */
+    fun startAlarm(raiseVolume: Boolean = true) {
+        if (raiseVolume) setAlarmVolume(audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))
+        // MediaPlayer on every version: Ringtone.isLooping only exists from API 28, and the app supports 24.
+        val mp = android.media.MediaPlayer()
+        try {
+            val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+                ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+            mp.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            mp.setDataSource(ctx, uri)
+            mp.isLooping = true
+            mp.prepare()
+            mp.start()
+            player = mp
+        } catch (e: Exception) {
+            Log.w(TAG, "alarm sound", e)
+            try { mp.release() } catch (_: Exception) {}
+        }
+    }
+
+    fun stopAlarm() {
+        player?.let {
+            try { it.stop() } catch (e: Exception) { Log.w(TAG, "alarm stop", e) }
+            try { it.release() } catch (_: Exception) {}
+        }
+        player = null
+    }
+
     fun brightness(): Int = try {
         (Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS) * 100f / 255f).roundToInt()
     } catch (e: Exception) { 50 }

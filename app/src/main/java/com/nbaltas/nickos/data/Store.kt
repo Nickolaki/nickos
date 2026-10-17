@@ -333,6 +333,28 @@ class Store(context: Context) {
     val lockedBy: StateFlow<String?> = _locked
     fun setLockedBy(v: String?) { p.edit().putString("lockedBy", v).apply(); _locked.value = v }
 
+    private val _pausedMsg = MutableStateFlow(p.getString("pausedMsg", null))
+    /** Non-null while the parent has paused everyone; holds the message. On the Node it is what the wall shows, on the Master what is re-sent. */
+    val pausedMsg: StateFlow<String?> = _pausedMsg
+    fun setPausedMsg(v: String?) { p.edit().putString("pausedMsg", v).apply(); _pausedMsg.value = v }
+
+    private val _pausedBy = MutableStateFlow(p.getString("pausedBy", null))
+    /** Node only: the parent's display name shown under the pause message. */
+    val pausedBy: StateFlow<String?> = _pausedBy
+    fun setPausedBy(v: String?) { p.edit().putString("pausedBy", v).apply(); _pausedBy.value = v }
+
+    /** Node only: the id of the Master that paused everyone. Only that Master (or the PIN, or a forced resume) lifts the pause. */
+    fun pausedOwner(): String? = p.getString("pausedOwner", null)
+    fun setPausedOwner(v: String?) { p.edit().putString("pausedOwner", v).apply() }
+
+    /** The alarm volume as it was before Ring raised it, or null when nothing is waiting to be put back. Written to disk before the volume is raised. */
+    fun savedAlarmVolume(): Int? = if (p.contains("alarmVolSaved")) p.getInt("alarmVolSaved", 0) else null
+    fun setSavedAlarmVolume(v: Int?): Boolean {
+        val e = p.edit()
+        if (v == null) e.remove("alarmVolSaved") else e.putInt("alarmVolSaved", v)
+        return e.commit()
+    }
+
     private val _bedtime = MutableStateFlow(p.getLong("bedtimeAt", 0))
     /** Wall-clock millis when the bedtime timer turns the screen off, 0 when unset. */
     val bedtimeAt: StateFlow<Long> = _bedtime
@@ -413,11 +435,13 @@ class Store(context: Context) {
         val carnet = p.getString(KEY_CARNET, null)
         // A rotation restore that has not finished is the tablet's own setting, not NickOS data: it survives a reset and is retried.
         val rotation = savedRotation()
+        val alarmVolume = savedAlarmVolume() // likewise the tablet's own alarm volume
         val screenTimeout = savedScreenTimeout()
         val migration = p.getInt(KEY_MIGRATION, 0)
         p.edit().clear().putString("deviceId", deviceId).apply {
             if (migration > 0) putInt(KEY_MIGRATION, migration)
             if (carnet != null) putString(KEY_CARNET, carnet)
+            if (alarmVolume != null) putInt("alarmVolSaved", alarmVolume)
             if (rotation != null) putInt("rotSavedAccel", rotation.accelerometer).putInt("rotSavedUser", rotation.user)
             if (screenTimeout != null) putInt("powerSavedTimeout", screenTimeout)
         }.apply()
@@ -426,6 +450,7 @@ class Store(context: Context) {
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
+        _pausedMsg.value = null; _pausedBy.value = null
         _bedtime.value = 0; _resume.value = emptyList(); _theme.value = "DARK"; _cameras.value = emptyList()
         _camArmed = emptySet(); _camRotation.value = emptyMap(); _camRtspHidden.value = emptySet(); _camPrefs.value = CamPrefs()
     }

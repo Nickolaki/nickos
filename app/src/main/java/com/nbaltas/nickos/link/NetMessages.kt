@@ -86,6 +86,41 @@ object NetMessages {
     }
 
     /**
+     * Master to Node: {"t":"cmd","c":"pauseAll","on":true,"msg":"Time to eat"} pauses the video and puts a wall with the
+     * message on the kid tablet; on=false takes the wall away (the video is not resumed). Capability "pause1".
+     * An old Node falls through the command and ignores it.
+     */
+    const val PAUSE_ALL = "pauseAll"
+    const val PAUSE_CAP = "pause1"
+    const val MAX_PAUSE_MSG = 120
+    /** [force]: only the explicit "Resume everyone" button sets it; it lifts a pause another Master started. */
+    data class PauseAll(val on: Boolean, val msg: String, val force: Boolean = false)
+    fun pauseAllCmd(on: Boolean, msg: String, force: Boolean = false): JSONObject =
+        JSONObject().put("t", "cmd").put("c", PAUSE_ALL).put("on", on).put("msg", msg.trim().take(MAX_PAUSE_MSG)).apply { if (force) put("force", true) }
+
+    /** Null unless this is a pauseAll with a real boolean "on" (a missing one must not pause or resume by accident). */
+    fun decodePauseAll(m: JSONObject?): PauseAll? {
+        if (m == null || m.optString("t") != "cmd" || m.optString("c") != PAUSE_ALL) return null
+        if (m.opt("on") !is Boolean) return null
+        return PauseAll(m.getBoolean("on"), m.optString("msg").trim().take(MAX_PAUSE_MSG), m.opt("force") == true)
+    }
+
+    /**
+     * Master to Node: {"t":"cmd","c":"ring","on":true} makes a lost kid tablet wake and sound its alarm until it is
+     * stopped. The Node reports "ringing" in its status. Capability "ring1".
+     */
+    const val RING = "ring"
+    const val RING_CAP = "ring1"
+    fun ringCmd(on: Boolean): JSONObject = JSONObject().put("t", "cmd").put("c", RING).put("on", on)
+
+    /** Null unless this is a ring command with a real boolean. */
+    fun decodeRing(m: JSONObject?): Boolean? {
+        if (m == null || m.optString("t") != "cmd" || m.optString("c") != RING) return null
+        if (m.opt("on") !is Boolean) return null
+        return m.getBoolean("on")
+    }
+
+    /**
      * What the parent asked for ([lock]) and what the Node manages to do ([state]: on, off, no_permission, or pending
      * when applying it or putting the old rotation back has not worked yet and is being tried again).
      */
