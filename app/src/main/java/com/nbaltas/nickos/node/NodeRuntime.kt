@@ -196,6 +196,57 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     @Volatile var parentUntil = 0L
     val parentMode get() = System.currentTimeMillis() < parentUntil
 
+    /** The parent's "Open setting" window: the lock is paused until this time (90 s at most). Kept in the store, so a restart sees it. */
+    val maintenanceUntil get() = store.maintenanceUntil()
+    val maintenance get() = KioskLock.maintenanceActive(System.currentTimeMillis(), maintenanceUntil)
+
+    /** Kiosk and "lock to app" are paused: a parent window or the settings window is open. */
+    val lockPaused get() = parentMode || maintenance
+
+    private var relockPending = false
+    private var relockTries = 0
+
+    /**
+     * The one place the lock goes back on after a parent window or the settings window ran out. Cheap and safe to call often
+     * (NodeApp, [kioskLoop], MainActivity.onResume): it does nothing while a window is open or when nothing ran out. After
+     * applyLockdown, a Device Owner tablet still outside lock task gets MainActivity brought to the front so startLockTask runs.
+     */
+    @Synchronized
+    fun relockIfExpired() {
+        when (KioskLock.relockState(System.currentTimeMillis(), parentUntil, maintenanceUntil)) {
+            KioskLock.Relock.ACTIVE -> { relockPending = false; return }
+            KioskLock.Relock.DUE -> { parentUntil = 0; store.setMaintenanceUntil(0); relockPending = true; relockTries = 0 }
+            KioskLock.Relock.IDLE -> {}
+        }
+        if (!relockPending) return
+        applyLockdown()
+        if (!KioskLock.needsFront(device.isDeviceOwner, device.lockTaskNone()) || ++relockTries > MAX_RELOCK_TRIES) { relockPending = false; return }
+        try { device.goHome() } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock front", e) }
+    }
+
+    /** Ends the settings window now (Lock now, the service connected, NickOS back in front, a restart) and puts the lock back unless a parent window is open. */
+    @Synchronized
+    fun endMaintenance() {
+        if (store.maintenanceUntil() == 0L) return
+        store.setMaintenanceUntil(0)
+        if (!parentMode) { relockPending = true; relockTries = 0 }
+        relockIfExpired()
+    }
+
+    /** NickOS came to the front: that ends the settings window, once its first moments are over. */
+    fun onForeground() {
+        if (KioskLock.foregroundEndsMaintenance(System.currentTimeMillis(), maintenanceUntil)) endMaintenance()
+        relockIfExpired()
+    }
+
+    /** Once per app update, with a grown-up's consent: put the remote control switch back if the update dropped it. Android refusing it is final. */
+    private fun reenableRemoteOncePerUpdate() {
+        val version = BuildConfig.VERSION_CODE.toLong()
+        val may = KioskLock.mayReenable(store.remoteConsent(), RemoteInputService.running, store.remoteReenableUnsupported(), store.lastVersionCode(), version)
+        store.setLastVersionCode(version) // written before the try: a crash or a refusal never makes it retry
+        if (may && !device.reenableRemoteInput()) store.setRemoteReenableUnsupported()
+    }
+
     /** Wrong-PIN lockout for the grown-up PIN pad. Memory only: see [PinGate]. */
     val pinGate = PinGate()
 
@@ -318,7 +369,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         jobs += scope.launch { while (isActive) { delay(200); try { talk.tick(); if (!talkPlayer.indicatorHolds()) { Log.w(TAG, "talk ended: the indicator was lost"); talk.stop() } } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
         jobs += scope.launch { kioskLoop() }
         together.start()
+        // A settings window left over from before a restart or reboot ends now; the lock goes back on.
+        if (KioskLock.maintenanceLeftOver(store.maintenanceUntil())) endMaintenance()
+        reenableRemoteOncePerUpdate()
         applyLockdown()
+        relockIfExpired()
     }
 
     /**
@@ -532,12 +587,15 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "touch" -> { RemoteMessages.decodeTouch(m)?.let { screen.touch(masterId, it) }; return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
-            // Sealed link only (checked in the read loop). A short parent window keeps the lock from bouncing Settings; the lock returns when it ends.
+            // Sealed link and a paired Master only (checked in the read loop). A bounded settings window, 90 s at most, ends
+            // when it times out, the remote control connects, NickOS comes back, the app restarts, or the parent taps Lock now.
             NetMessages.ASK_CONTROL -> {
-                parentUntil = System.currentTimeMillis() + ASK_CONTROL_MS
+                if (master == null) return
+                store.setMaintenanceUntil(System.currentTimeMillis() + KioskLock.MAINTENANCE_MS)
                 device.wake()
                 device.pauseLockdown()
-                try { ctx.startActivity(device.remoteInputIntent()) } catch (e: Exception) { Log.w(TAG, "open accessibility settings", e) }
+                try { ctx.startActivity(device.remoteInputPageIntent()) } catch (e: Exception) { Log.w(TAG, "open accessibility settings", e); endMaintenance() }
+                broadcast(status())
                 return
             }
             NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, masterId, master?.name ?: "Parent's Tablet") }
@@ -566,6 +624,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                 device.launch(pkg)
             }
             "home" -> {
+                endMaintenance() // "Lock now" on the parent's settings-open line
                 openedByParent = null
                 store.setLockedApp(null)
                 applyLockdown()
@@ -622,8 +681,6 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Re-applies kiosk lockdown with the current allowlist (plus [extra], a one-off parent "open"). */
     fun applyLockdown(extra: String? = null) {
         device.applyLockdown(store.allowed.value + listOfNotNull(store.lockedApp.value, extra, device.jellyfinPackage()))
-        // An update can drop the remote control switch: put it back, but only where a grown-up turned it on before.
-        if (KioskLock.mayReenable(store.remoteControlEverOn(), RemoteInputService.running)) device.reenableRemoteInput()
     }
 
     fun status(): JSONObject {
@@ -641,7 +698,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("talk", talkStatus())
-            .put("screen", screen.statusWire()).put("control", screen.controlWire())
+            .put("screen", screen.statusWire()).put("control", screen.controlWire()).put("maintenance", maintenance)
             .put("ringing", _ringing.value).put("paused", store.pausedMsg.value != null)
             .put("pausedOwner", store.pausedOwner())
             .put("jf", device.jellyfinPackage())
@@ -682,7 +739,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                 val owner = device.isDeviceOwner
                 KioskWatch.Inputs(
                     deviceOwner = owner,
-                    parentMode = parentMode,
+                    parentMode = lockPaused,
                     homeVisible = homeVisible,
                     fg = if (owner) null else device.foregroundPackage(false),
                     allowed = store.allowed.value + listOfNotNull(store.lockedApp.value, openedByParent, device.jellyfinPackage()),
@@ -692,17 +749,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             goHome = { device.goHome() },
             log = { Log.w("NickOS.Kiosk", it) },
         )
-        val expiry = KioskLock.ParentExpiry()
         while (scope.isActive) {
             delay(1000)
             try { watch.tick(System.currentTimeMillis()) } catch (e: Exception) { Log.w("NickOS.Kiosk", "tick", e) }
-            // The parent window ran out while the kid is in another app: lock again now, and bring the kid home so lock task restarts.
-            try {
-                if (expiry.tick(parentMode)) {
-                    applyLockdown()
-                    if (!homeVisible) device.goHome()
-                }
-            } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock", e) }
+            // A parent or settings window ran out while the kid is in another app: lock again now, and bring the kid home so lock task restarts.
+            try { relockIfExpired() } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock", e) }
         }
     }
 
@@ -744,5 +795,5 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         powerRunner.stop()
     }
 
-    companion object { private const val TAG = "NickOS.Node"; private const val ASK_CONTROL_MS = 3 * 60_000L }
+    companion object { private const val TAG = "NickOS.Node"; private const val MAX_RELOCK_TRIES = 5 }
 }

@@ -69,6 +69,7 @@ fun ScreenTab(v: NodeView) {
             onBack = { ctl.back() }, onHome = { ctl.home() },
             onTap = { x, y -> ctl.tap(x, y) }, onSwipe = { x1, y1, x2, y2, ms -> ctl.swipe(x1, y1, x2, y2, ms) },
             openSettingLabel = "Open setting on ${v.node.name}", onOpenSetting = { rt.askControl(id) },
+            nodeName = v.node.name, maintenance = v.status?.maintenance == true, onLockNow = { rt.home(id) },
         )
     }
 }
@@ -103,6 +104,9 @@ internal fun ScreenViewer(
     onSwipe: (Double, Double, Double, Double, Long) -> Unit,
     openSettingLabel: String? = null,
     onOpenSetting: (() -> Unit)? = null,
+    nodeName: String? = null,
+    maintenance: Boolean = false,
+    onLockNow: (() -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -122,12 +126,17 @@ internal fun ScreenViewer(
                     NickButton("Watch again", onWatchAgain, style = BtnStyle.PRIMARY)
                 }
                 state == RemoteMessages.NEEDS_PERMISSION -> Muted(SCREEN_NEEDS_PERMISSION, 20, Modifier.padding(32.dp), maxLines = 3)
-                state == RemoteMessages.NEEDS_CONSENT || state == RemoteMessages.OFF && frame == null -> Muted(SCREEN_NEEDS_CONSENT, 20, Modifier.padding(32.dp), maxLines = 3)
+                state == RemoteMessages.NEEDS_CONSENT || state == RemoteMessages.OFF && frame == null ->
+                    Muted(if (nodeName != null) "Screen: tap Allow on $nodeName" else SCREEN_NEEDS_CONSENT, 20, Modifier.padding(32.dp), maxLines = 3)
                 else -> Muted("Connecting", 20)
             }
         }
-        if (!control) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Muted(SCREEN_VIEW_ONLY, 14, Modifier.weight(1f), maxLines = 2)
+        // Two separate things: the picture (screen sharing allowed on the tablet) and touch (the accessibility switch).
+        if (maintenance) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Muted("Settings open on ${nodeName ?: "the tablet"}", 14, Modifier.weight(1f), maxLines = 2)
+            if (onLockNow != null) NickButton("Lock now", onLockNow, style = BtnStyle.DANGER)
+        } else if (!control) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Muted(if (nodeName != null) "Touch control: off. $SCREEN_VIEW_ONLY" else SCREEN_VIEW_ONLY, 14, Modifier.weight(1f), maxLines = 2)
             if (onOpenSetting != null) NickButton(openSettingLabel ?: "Open setting", onOpenSetting)
         }
     }

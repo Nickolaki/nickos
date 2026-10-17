@@ -234,6 +234,19 @@ class NodeDevice(private val ctx: Context) {
         return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
+    /**
+     * The most specific accessibility page: on Android 13+ the details page of the NickOS service, if some activity answers
+     * it, else the general accessibility settings.
+     */
+    fun remoteInputPageIntent(): Intent {
+        val general = remoteInputIntent()
+        if (Build.VERSION.SDK_INT < 33) return general
+        val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS") // Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS, API 33
+            .putExtra(Intent.EXTRA_COMPONENT_NAME, ComponentName(ctx, RemoteInputService::class.java).flattenToString())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return if (details.resolveActivity(ctx.packageManager) != null) details else general
+    }
+
     fun goHome() {
         lastLaunched = null
         ctx.startActivity(
@@ -378,9 +391,10 @@ class NodeDevice(private val ctx: Context) {
     /**
      * Best effort: switch the remote control accessibility service back on after an update dropped it. Appends to the
      * enabled list and keeps every other entry. Needs WRITE_SECURE_SETTINGS (or an old Android's device policy); never throws.
-     * Only called on a tablet where a grown-up turned remote control on before.
+     * Only called on a tablet where a grown-up turned remote control on before. False when Android refused it (SecurityException):
+     * the caller remembers that and stops trying.
      */
-    fun reenableRemoteInput() {
+    fun reenableRemoteInput(): Boolean {
         try {
             val flat = KioskLock.serviceName(ctx.packageName, RemoteInputService::class.java.name)
             val cr = ctx.contentResolver
@@ -392,8 +406,14 @@ class NodeDevice(private val ctx: Context) {
                 Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next)
                 Settings.Secure.putString(cr, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
             }
+        } catch (e: SecurityException) { Log.d(TAG, "re-enabling remote control is not allowed here", e); return false
         } catch (e: Throwable) { Log.d(TAG, "could not re-enable remote control", e) }
+        return true
     }
+
+    /** True while no lock task is running (API 23+; older Android has no way to ask, so it counts as running). */
+    fun lockTaskNone(): Boolean =
+        Build.VERSION.SDK_INT >= 23 && ctx.getSystemService(ActivityManager::class.java).lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE
 
     fun releaseLockdown() {
         if (!isDeviceOwner) {

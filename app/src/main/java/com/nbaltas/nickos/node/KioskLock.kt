@@ -5,6 +5,13 @@ object KioskLock {
     const val SETTINGS_PKG = "com.android.settings"
     const val SYSTEMUI_PKG = "com.android.systemui"
 
+    /** The longest the lock stays paused for "Open setting" on a parent's request. */
+    const val MAINTENANCE_MS = 90_000L
+    /** NickOS coming to the front this soon after the window opened is the screen waking up, not the end of Settings. */
+    const val MAINTENANCE_GRACE_MS = 3_000L
+    /** The notification shade is pushed back at most this often. */
+    const val SHADE_GAP_MS = 1_000L
+
     /** The accessibility service flat name, as Android stores it in the enabled list. */
     fun serviceName(pkg: String, cls: String) = "$pkg/$cls"
 
@@ -18,26 +25,62 @@ object KioskLock {
         return if (flat in parts) parts.joinToString(":") else (parts + flat).joinToString(":")
     }
 
-    /** Silent re-enable only on a tablet where a grown-up turned remote control on before, and only if it is off now. */
-    fun mayReenable(everConnected: Boolean, running: Boolean) = everConnected && !running
+    // ---- remote control consent ----
+
+    /** The service connected: that is a grown-up's consent only while a parent window or the settings window is open. */
+    fun consentOnConnect(parentMode: Boolean, maintenance: Boolean) = parentMode || maintenance
+
+    /**
+     * The service unbound while the app lives on: the grown-up turned it off, unless an update is replacing the app
+     * (the installed version is no longer the running one).
+     */
+    fun consentClearedOnUnbind(runningVersion: Long, installedVersion: Long) = installedVersion == runningVersion
+
+    /**
+     * The silent re-enable: once per app update ([lastTriedVersion] is the version already tried), only with consent,
+     * only if the service is off now, and never again after Android refused it ([unsupported]).
+     */
+    fun mayReenable(consent: Boolean, running: Boolean, unsupported: Boolean, lastTriedVersion: Long, version: Long) =
+        consent && !running && !unsupported && lastTriedVersion != version
+
+    // ---- the settings (maintenance) window ----
+
+    /** A stored deadline in the past, or left over from before a restart: the lock goes back on. */
+    fun maintenanceOver(now: Long, until: Long) = until > 0 && now >= until
+
+    fun maintenanceActive(now: Long, until: Long) = now < until
+
+    /** NickOS back in front ends the window, but not in its first moments. */
+    fun foregroundEndsMaintenance(now: Long, until: Long) =
+        until > 0 && now < until && now - (until - MAINTENANCE_MS) >= MAINTENANCE_GRACE_MS
+
+    /** A start of the app with any stored window: the process died or the tablet rebooted, so the lock goes back on. */
+    fun maintenanceLeftOver(until: Long) = until != 0L
+
+    enum class Relock { ACTIVE, DUE, IDLE }
+
+    /** [ACTIVE]: a parent window or the settings window is open, leave it. [DUE]: one has run out and was never cleared. */
+    fun relockState(now: Long, parentUntil: Long, maintenanceUntil: Long): Relock = when {
+        now < parentUntil || now < maintenanceUntil -> Relock.ACTIVE
+        parentUntil > 0 || maintenanceUntil > 0 -> Relock.DUE
+        else -> Relock.IDLE
+    }
+
+    /** After applyLockdown: bring the kid home to the front only on a Device Owner tablet that is still not in lock task. */
+    fun needsFront(deviceOwner: Boolean, lockTaskNone: Boolean) = deviceOwner && lockTaskNone
+
+    // ---- accessibility backstop ----
 
     enum class Bounce { NONE, HOME, COLLAPSE }
 
-    /** What the accessibility service does when a window of [pkg] comes up. */
-    fun bounce(pkg: String?, parentMode: Boolean, sdk: Int): Bounce = when {
-        parentMode -> Bounce.NONE
+    /**
+     * What the accessibility service does when a window of [pkg] comes up: kid (Node) tablets in kid mode only, never in
+     * a parent window or the settings window. systemui only for the shade on Android 12+, at most once per [SHADE_GAP_MS].
+     */
+    fun bounce(pkg: String?, isNode: Boolean, parentMode: Boolean, maintenance: Boolean, sdk: Int, now: Long, lastShade: Long): Bounce = when {
+        !isNode || parentMode || maintenance -> Bounce.NONE
         pkg == SETTINGS_PKG -> Bounce.HOME
-        pkg == SYSTEMUI_PKG && sdk >= 31 -> Bounce.COLLAPSE
+        pkg == SYSTEMUI_PKG && sdk >= 31 && now - lastShade >= SHADE_GAP_MS -> Bounce.COLLAPSE
         else -> Bounce.NONE
-    }
-
-    /** True exactly once when parent mode goes from on to off, so the lock is put back once. */
-    class ParentExpiry {
-        private var was = false
-        fun tick(parentMode: Boolean): Boolean {
-            val fire = was && !parentMode
-            was = parentMode
-            return fire
-        }
     }
 }

@@ -121,6 +121,7 @@ open class MainActivity : ComponentActivity() {
             app.node.homeVisible = true
             app.node.device.lastLaunched = null
             app.node.pushStatus()
+            app.node.onForeground() // ends the parent's settings window and puts the lock back if a window ran out
             enterKidMode()
         }
     }
@@ -138,7 +139,7 @@ open class MainActivity : ComponentActivity() {
      * "locked to" app if the parent set one. Paused while the parent PIN window is open.
      */
     private fun enterKidMode() {
-        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.parentMode) return
+        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.lockPaused) return
         showSystemBars(false)
         app.node.applyLockdown()
         val am = getSystemService(ActivityManager::class.java)

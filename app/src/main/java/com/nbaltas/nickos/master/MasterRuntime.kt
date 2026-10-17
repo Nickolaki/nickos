@@ -90,6 +90,8 @@ data class NodeStatus(
     val ringing: Boolean = false,
     /** The pause wall is up on the Node. Old Nodes omit it: false. */
     val paused: Boolean = false,
+    /** The parent's "Open setting" window is open on the Node (the lock is paused for up to 90 s). Old Nodes omit it: false. */
+    val maintenance: Boolean = false,
 ) {
     /** Seeing the screen needs the Node's "screen1" capability. */
     val supportsScreen: Boolean get() = RemoteMessages.CAP in caps
@@ -130,6 +132,7 @@ data class NodeStatus(
                 screen = o.optString("screen", RemoteMessages.OFF).ifBlank { RemoteMessages.OFF },
                 control = o.optString("control", RemoteMessages.CONTROL_OFF).ifBlank { RemoteMessages.CONTROL_OFF },
                 ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
+                maintenance = o.optBoolean("maintenance"),
             )
         }
 
