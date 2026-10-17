@@ -15,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.RoborazziOptions
@@ -514,6 +516,23 @@ class DesignScreensTest {
         }
     }
 
+    @Test fun togetherJellyfinStreamConverted() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-Stream-Converted") {
+            val nodes = rememberNodeViews()
+            val selected = nodes.filter { it.online }.map { it.node.id }.toSet()
+            val (ok, no) = JfTogether.streamSplit(selected) { id -> nodes.first { it.node.id == id }.node.name.startsWith("Hailey") }
+            val stream = JfStreamUi(
+                ok.size, JfTogether.streamLabel(ok.size, no.map { id -> nodes.first { it.node.id == id }.node.name }), onStream = {},
+                convertedLine = com.nbaltas.nickos.sync.StreamCodec.convertedLine(listOf("Leo")),
+            )
+            JfPickContent(
+                jfMovie(), nodes, selected, { _, _ -> },
+                prep = null, note = null, onBack = {}, onPrimary = {}, stream = stream,
+            )
+        }
+    }
+
     @Test fun togetherStreamWaiting() {
         val m = app.master
         val now = android.os.SystemClock.elapsedRealtime()
@@ -529,6 +548,35 @@ class DesignScreensTest {
         ))
         set(m.sync, "_waiting", "Waiting for Leo")
         shot("Together-Stream-Waiting") { TogetherScreen({}, {}) }
+    }
+
+    @Test fun togetherJellyfinPlaying() {
+        val m = app.master
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(m.sync, "_session", SyncSession(
+            "jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true,
+            "http://jf.local/x", "http://jf.local/Items/m1/Images/Primary",
+        ))
+        set(m.sync, "_states", mapOf(
+            "aaaaaaaaaaaa" to NodeSyncState(SyncState.PLAYING, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+            "bbbbbbbbbbbb" to NodeSyncState(SyncState.PLAYING, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+        ))
+        set(m.sync, "_offsets", mapOf(
+            "aaaaaaaaaaaa" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+            "bbbbbbbbbbbb" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+        ))
+        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
+    }
+
+    /** The tablet's own Now Playing tab during a Jellyfin stream: poster and title from the Jellyfin artwork. */
+    @Test fun controlNowPlayingJellyfinTogether() {
+        val m = app.master
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(m.sync, "_session", SyncSession(
+            "jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true,
+            "http://jf.local/x", "http://jf.local/Items/m1/Images/Primary",
+        ))
+        shot("Control-NowPlaying-JellyfinTogether") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     }
 
     @Test fun togetherLibraryEmpty() = shot("Together-Library-Empty") { TogetherScreen({}, {}) }
@@ -922,6 +970,55 @@ class DesignScreensTest {
             .copy(landscape = landscapeOn, caps = listOf("touch1"), touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"))
         set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
         shot("Device-TouchSwitch") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    /** A node with touch1 and landscape: the Touch switch and "Lock to landscape" must both be fully visible. The foreman records them. */
+    private fun deviceTouchLandscape(size: String) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin")
+            .copy(landscape = landscapeOn, caps = listOf("touch1"), touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        shot("Control-Device-Touch-Landscape-$size") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceTouchLandscape1024() = deviceTouchLandscape("1024x768")
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceTouchLandscape960() = deviceTouchLandscape("960x600")
+
+    /** A real 0.12 tablet: ring1, touch1, landscape, power and screen together. Every control must be visible at 1024 and 1280. */
+    private fun deviceAllFeatures(size: String) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        shot("Control-Device-AllFeatures-$size") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1024() = deviceAllFeatures("1024x768")
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280() = deviceAllFeatures("1280x800")
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures960() = deviceAllFeatures("960x600")
+
+    /** The same page scrolled to the bottom: the last row of cards is complete, none is clipped inside. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1024Scrolled() {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } }
+            waitForIdle()
+            repeat(3) { onRoot().performTouchInput { swipeUp() } }
+            waitForIdle()
+            onRoot().captureRoboImage(
+                "../design/screens/Control-Device-AllFeatures-1024x768-Scrolled.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            )
+        }
     }
 
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {

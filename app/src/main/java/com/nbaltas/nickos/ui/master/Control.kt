@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -573,7 +574,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
                     // An old Node has no "ring1": no button.
                     if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
-                    // One short line under Lock, so Lock is never pushed out of the card.
+                    // One short line under Lock.
                     if (st?.screenOffOk == false) {
                         val asked = askedLine(v)
                         if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = 2)
@@ -588,7 +589,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                             NickButton("Lock now", { m.home(v.node.id) }, Modifier.fillMaxWidth(), BtnStyle.DANGER)
                         } else if (st.control != RemoteMessages.CONTROL_READY) {
                             Text("Touch control: off", style = body(14.sp, 700), color = C.danger, maxLines = 2)
-                            NickButton("Open setting on ${v.node.name}", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
+                            NickButton("Open setting on tablet", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -638,15 +639,10 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                             if (confirmUnlink) { m.unlink(v.node.id); onUnlinked() } else confirmUnlink = true
                         }
                     }
-                    // The cards are about 217dp tall on a 1024x768 or 960x600 tablet: three full buttons did not fit and
-                    // Unlink was cut off. Short cards put Restart and Rename side by side.
-                    // The landscape switch makes the card one row taller, so it uses the short layout too.
-                    if (tabletCompact(cardH) || st?.landscape != null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StartButton(Lucide.RefreshCw, "Restart", Modifier.weight(1f), height = 48.dp) { m.restartJellyfin(v.node.id) }
-                            StartButton(Lucide.Pencil, "Rename", Modifier.weight(1f), height = 48.dp) { renaming = true }
-                        }
-                        unlink(48.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
+                        StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
+                        unlink(60.dp)
                         // An old Node does not report it, so there is nothing to switch.
                         st?.landscape?.let { l ->
                             Row(
@@ -659,23 +655,18 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                             if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700), color = C.danger)
                             if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700), color = C.danger)
                         }
-                    } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
-                        StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
-                        unlink(60.dp)
                     }
                 }
             },
         )
         Column(
-            Modifier.fillMaxSize().then(if (cols == 1) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(start = 40.dp, end = 40.dp, top = 26.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             cards.chunked(cols).forEach { row ->
-                // The Touch row makes the Screen card taller: its grid row gets a fixed extra, every card keeps a bounded height.
-                val rowH = if (st?.supportsTouch == true && row.any { it === cards[0] }) cardH + 64.dp else cardH
-                Row(Modifier.height(rowH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
+                // A row is as tall as its tallest card (never below cardH); a tall row just makes the page scroll.
+                Row(Modifier.height(IntrinsicSize.Min).heightIn(min = cardH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
             }
         }
     }
@@ -687,23 +678,23 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
  * what the tablet really does (see [TouchText]), and the Allow button asks the kid tablet for the overlay permission.
  */
 @Composable
-private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlayOk: Boolean, m: com.nbaltas.nickos.master.MasterRuntime) {
+private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlayOk: Boolean, m: com.nbaltas.nickos.master.MasterRuntime, compact: Boolean = false) {
     val on = TouchText.touchOn(touch)
     val change = { nowOn: Boolean ->
         // Without the overlay permission the shield only covers NickOS: ask for the permission first.
         if (!nowOn && !overlayOk) m.askPermission(v.node.id)
         m.setTouchOff(v.node.id, !nowOn)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 4.dp)) {
         Row(
             Modifier.fillMaxWidth().toggleable(on, role = androidx.compose.ui.semantics.Role.Switch) { change(it) },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Touch", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+            Text("Touch", style = body(if (compact) 16.sp else 17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
             NickSwitch(on) { change(it) }
         }
         val status = TouchText.status(touch, v.node.name)
-        Text(status ?: TouchText.HINT, style = body(14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
+        Text(status ?: TouchText.HINT, style = body(if (compact) 13.sp else 14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
         if (TouchText.offerAllow(touch)) StartButton(Lucide.Settings, "Allow on ${v.node.name}", height = 40.dp) { m.askPermission(v.node.id) }
     }
 }
@@ -736,7 +727,7 @@ private fun DeviceCard(
     modifier: Modifier, icon: ImageVector, title: String, rotateIcon: Boolean = false,
     trailing: @Composable () -> Unit = {}, content: @Composable () -> Unit,
 ) {
-    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp).then(if (rotateIcon) Modifier.rotate90() else Modifier))
             Text(title, style = body(20.sp, 800), color = C.text, modifier = Modifier.weight(1f))
@@ -747,9 +738,9 @@ private fun DeviceCard(
 }
 
 @Composable
-private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, dim: Boolean = false, onClick: () -> Unit) {
+private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, dim: Boolean = false, height: Dp = 68.dp, onClick: () -> Unit) {
     Row(
-        modifier.height(68.dp).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
+        modifier.height(height).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
             .alpha(if (enabled && !dim) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {

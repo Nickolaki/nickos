@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -67,7 +68,9 @@ import com.nbaltas.nickos.master.DlState
 import com.nbaltas.nickos.master.JellyfinDownloads
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.sync.JfTogether
+import com.nbaltas.nickos.sync.JfVideo
 import com.nbaltas.nickos.sync.JobState
+import com.nbaltas.nickos.sync.StreamCodec
 import com.nbaltas.nickos.sync.Library
 import com.nbaltas.nickos.sync.LibraryItem
 import com.nbaltas.nickos.sync.Show
@@ -105,9 +108,9 @@ fun fmtMs(ms: Long): String {
  * [Artwork]'s placeholder underneath, the Bitmap and the title drawn above it when there is one.
  */
 @Composable
-fun MovieThumb(bitmap: Bitmap?, title: String, modifier: Modifier, radius: Dp = 18.dp, titleSize: Int = 18, showTitle: Boolean = true) {
+fun MovieThumb(bitmap: Bitmap?, title: String, modifier: Modifier, radius: Dp = 18.dp, titleSize: Int = 18, showTitle: Boolean = true, art: String? = null) {
     Box(modifier.clip(RoundedCornerShape(radius))) {
-        Artwork(null, title, Modifier.fillMaxSize(), radius = radius, titleSize = titleSize, showTitle = showTitle && bitmap == null)
+        Artwork(art, title, Modifier.fillMaxSize(), radius = radius, titleSize = titleSize, showTitle = showTitle && bitmap == null && art == null)
         if (bitmap != null) {
             Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (showTitle) {
@@ -438,6 +441,8 @@ internal class JfStreamFail(val id: String, val text: String, val canSave: Boole
 internal class JfStreamUi(
     val count: Int, val label: String, val onStream: () -> Unit,
     val failures: List<JfStreamFail> = emptyList(), val onSaveInstead: (String) -> Unit = {},
+    /** "Leo's tablet gets a converted stream (...)", or null when every tablet plays the file directly. */
+    val convertedLine: String? = null,
 )
 
 /** Pick a Jellyfin movie or episode, choose the tablets, save it, send it, and start it on all of them in sync. */
@@ -500,7 +505,8 @@ internal fun JfPickPanel(
         }
         if (go != null && lib != null) {
             started = true
-            sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go)
+            sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go,
+                art = master.jellyfin()?.let { it.landscape(item) ?: it.poster(item) })
         }
     }
 
@@ -540,15 +546,26 @@ internal fun JfPickPanel(
     // A tablet can be streamed to only when it is online, on a sealed link and says "stream1". The label counts the real ones.
     val account by App.get(LocalContext.current).store.jellyfin.collectAsState()
     val client = remember(account) { master.jellyfin() }
+    // The movie's video stream (one GET), to know which tablets cannot decode the file. Unknown until it arrives: the file as before.
+    var video by remember(item.id, account) { mutableStateOf<JfVideo?>(null) }
+    LaunchedEffect(item.id, client, account) {
+        val a = account
+        if (client != null && a != null) video = runCatching { client.video(a.userId, item.id) }.getOrNull()
+    }
     val (streamOk, streamNo) = JfTogether.streamSplit(selected) { id ->
         nodes.firstOrNull { it.node.id == id }?.let { it.online && it.status?.supportsStream == true && master.isSealed(id) } == true
     }
+    val decs = streamOk.associateWith { id -> nodes.firstOrNull { it.node.id == id }?.status?.dec }
     val stream = if (client == null) null else JfStreamUi(
         count = streamOk.size,
         label = JfTogether.streamLabel(streamOk.size, streamNo.map(nameOf)),
+        convertedLine = StreamCodec.convertedLine(StreamCodec.converted(video, decs).map { sync.kid(it) }),
         onStream = {
             note = null
-            sync.start(client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item))
+            sync.start(
+                client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item),
+                art = client.landscape(item) ?: client.poster(item), nodeUrls = client.streamUrls(item, video, decs),
+            )
         },
         failures = failures.values.filter { it.fid == client.streamFid(item) }.map { f ->
             JfStreamFail(f.id, TogetherText.streamError(nameOf(f.id), f.code), f.canSaveInstead)
@@ -562,6 +579,7 @@ internal fun JfPickPanel(
     JfPickContent(
         item = item, nodes = nodes, selected = selected, onToggle = { id, on -> selected = if (on) selected + id else selected - id },
         prep = prep, note = note, onBack = onBack, stream = stream,
+        art = client?.let { it.landscape(item) ?: it.poster(item) },
         onPrimary = { beginSave(selected) },
         onRetryRow = { id -> attempt++; lib?.let { transfer.retry(it.fid, id) } },
         onRetrySave = {
@@ -590,6 +608,8 @@ internal fun JfPickContent(
     prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
     onRetryRow: (String) -> Unit = {}, onRetrySave: () -> Unit = {}, onCancel: () -> Unit = {},
     stream: JfStreamUi? = null,
+    /** The Jellyfin artwork for the poster; null draws the placeholder. */
+    art: String? = null,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
@@ -598,7 +618,7 @@ internal fun JfPickContent(
         }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            MovieThumb(null, item.displayTitle, Modifier.size(400.dp, 225.dp), showTitle = false)
+            MovieThumb(null, item.displayTitle, Modifier.size(400.dp, 225.dp), showTitle = false, art = art)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (item.isEpisode) EyebrowText("${item.epCode} · ${item.name}")
                 Title(item.displayTitle, 44, lineHeight = 1.05f)
@@ -642,6 +662,7 @@ internal fun JfPickContent(
                     style = BtnStyle.SECONDARY, big = true, leading = Lucide.Tablet, enabled = k > 0,
                 )
                 Muted(TogetherText.STREAM_HINT, 15, Modifier.padding(top = 10.dp))
+                stream.convertedLine?.let { Muted(it, 15, Modifier.padding(top = 4.dp)) }
             } else NickButton(
                 if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
                 style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0,
@@ -722,7 +743,9 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
         val narrow = maxWidth < 1000.dp
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-            thumbs[s.fid]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f) }
+            val bg = thumbs[s.fid]
+            if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
+            else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.35f), radius = 0.dp, showTitle = false)
         }
         val content = @Composable {
             Column(Modifier.padding(40.dp)) {
@@ -730,7 +753,7 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
                 Spacer(Modifier.height(20.dp))
                 // The poster sits left of the title block, as on the tablet pick panel.
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    MovieThumb(thumbs[s.fid], s.title, Modifier.height(if (narrow) 160.dp else 225.dp).aspectRatio(16f / 9f), showTitle = false)
+                    MovieThumb(thumbs[s.fid], s.title, Modifier.height(if (narrow) 160.dp else 225.dp).aspectRatio(16f / 9f), showTitle = false, art = s.art)
                     Column(Modifier.weight(1f)) {
                         EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
                         Title(s.title, if (narrow) 40 else 64, lineHeight = 1.0f)
@@ -833,10 +856,18 @@ fun TabletRemote(nodeId: String) {
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-        thumbs[s.fid]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f) }
+        val bg = thumbs[s.fid]
+        if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
+        else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.35f), radius = 0.dp, showTitle = false)
         Column(Modifier.padding(32.dp)) {
-            EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
-            Title(s.title, 40, lineHeight = 1.0f)
+            // The poster sits left of the title, as on the Watch together player: a local frame, else the Jellyfin artwork.
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                MovieThumb(bg, s.title, Modifier.height(135.dp).aspectRatio(16f / 9f), showTitle = false, art = s.art)
+                Column(Modifier.weight(1f)) {
+                    EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
+                    Title(s.title, 40, lineHeight = 1.0f)
+                }
+            }
             Spacer(Modifier.height(20.dp))
             if (s.durMs > 0) {
                 NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })

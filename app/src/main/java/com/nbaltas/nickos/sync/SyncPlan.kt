@@ -14,9 +14,19 @@ data class SyncSession(
     val playing: Boolean,
     /** The stream address (token inside) when the tablets stream this movie; null for a file on the tablets. Never log it. */
     val url: String? = null,
+    /** An image URL for the parent's player when there is no decoded thumb. Never persisted, never sent to nodes. */
+    val art: String? = null,
+    /** Per tablet address (token inside) where it differs from [url]: a converted stream for a tablet that cannot decode the file. Never log it. */
+    val nodeUrls: Map<String, String> = emptyMap(),
 ) {
     /** True when the tablets stream this movie from Jellyfin. */
     val streaming: Boolean get() = JfStream.isStreamFid(fid)
+
+    /** The address tablet [id] is sent: its own when it has one, else the shared [url]. */
+    fun urlFor(id: String): String? = nodeUrls[id] ?: url
+
+    /** True when any tablet in the session gets a converted stream (a longer lead, as it takes longer to start). */
+    val converted: Boolean get() = nodes.any { JfStream.isHls(nodeUrls[it]) }
 
     override fun toString() = "SyncSession(fid=$fid, nodes=$nodes, playing=$playing, stream=${url != null})"
 
@@ -42,10 +52,10 @@ object SyncPlan {
      * (nodeClock - masterClock). [at] is already translated into the Node's own clock, which
      * is the one detail a plan commonly gets wrong.
      */
-    fun planFor(session: SyncSession, nodeOffset: Long, now: Long, leadMs: Long = 1500): SyncCmd {
+    fun planFor(session: SyncSession, nodeOffset: Long, now: Long, leadMs: Long = 1500, nodeId: String? = null): SyncCmd {
         val targetMasterTime = now + leadMs
         val pos = if (session.playing) session.expectedPos(targetMasterTime) else session.anchorPos
         val at = targetMasterTime + nodeOffset
-        return SyncCmd(session.fid, pos, at, session.title, session.url)
+        return SyncCmd(session.fid, pos, at, session.title, if (nodeId != null) session.urlFor(nodeId) else session.url)
     }
 }

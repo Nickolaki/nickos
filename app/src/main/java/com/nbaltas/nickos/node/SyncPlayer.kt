@@ -11,6 +11,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
@@ -62,7 +63,8 @@ class SyncPlayer(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     private val main = Handler(Looper.getMainLooper())
-    private val policy = DriftPolicy()
+    /** Replaced for each new movie: a converted (HLS) stream gets the slower-seeking policy. */
+    private var policy = DriftPolicy()
     private var exo: ExoPlayer? = null
 
     private val _player = MutableStateFlow<Player?>(null)
@@ -171,7 +173,7 @@ class SyncPlayer(
             err = null; ended = false; started = false
             readyOnce = false; rebufferSince = 0L
             main.removeCallbacks(loadTimeout)
-            policy.reset()
+            policy = DriftPolicy.forUrl(msg.url)
             // Held in memory for this movie only: never saved, dropped on stop and on failure.
             streamUrl = msg.url
             if (msg.url == null && JfStream.isStreamFid(msg.fid)) return fail(StreamError.CANT_REACH)
@@ -179,7 +181,11 @@ class SyncPlayer(
             val p = player()
             try {
                 p.playWhenReady = false
-                p.setMediaItem(MediaItem.fromUri(msg.url?.let { Uri.parse(it) } ?: video!!.uri))
+                p.setMediaItem(
+                    if (msg.url != null) MediaItem.Builder().setUri(Uri.parse(msg.url))
+                        .apply { if (JfStream.isHls(msg.url)) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+                    else MediaItem.fromUri(video!!.uri),
+                )
                 p.prepare()
             } catch (e: Exception) {
                 // Not the exception itself: its text can hold the stream address.
@@ -203,7 +209,7 @@ class SyncPlayer(
         playing = true
         // Already playing on a line that agrees with the new one (the minute re-anchor, or the plan
         // the Master resends on reconnect): keep going, the drift loop does the rest.
-        if (started && p.playWhenReady && abs(p.currentPosition - (anchorPos + (now - anchorAt))) <= SEEK_OVER_MS) return publish()
+        if (started && p.playWhenReady && abs(p.currentPosition - (anchorPos + (now - anchorAt))) <= policy.seekOverMs) return publish()
         started = false
         p.pause()
         p.setPlaybackSpeed(1f)
@@ -229,7 +235,7 @@ class SyncPlayer(
         val want = anchorPos + (now - anchorAt)
         policy.reset(keepLead = true)
         // A late join (or a slow load): jump to where the group is now, a little ahead for the seek itself.
-        if (abs(p.currentPosition - want) > SEEK_OVER_MS) {
+        if (abs(p.currentPosition - want) > policy.seekOverMs) {
             p.seekTo((want + policy.seekLeadMs).coerceAtLeast(0))
             policy.noteSeek(now)
         }
@@ -379,8 +385,6 @@ class SyncPlayer(
     private companion object {
         const val TAG = "NickOS.SyncPlayer"
         const val TICK_MS = 500L
-        /** Beyond this the player seeks instead of nudging its speed; same figure as [DriftPolicy]. */
-        const val SEEK_OVER_MS = 400L
         /** How long "The end" or an error stays up before the kid home comes back. */
         const val CLOSE_MS = 3000L
     }

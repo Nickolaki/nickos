@@ -15,7 +15,13 @@ sealed interface DriftAction {
  * instance per session, [reset] on a new fid or on stop. Never corrects from what the Master
  * reports; only from this Node's own measured [DriftAction] against its own anchor.
  */
-class DriftPolicy {
+class DriftPolicy(
+    /**
+     * Drift beyond this is a seek; below it the speed is nudged. A converted (HLS) stream seeks slowly, so
+     * its policy uses [CONVERTED_SEEK_OVER_MS] and leans on rate nudges.
+     */
+    val seekOverMs: Long = SEEK_OVER_MS,
+) {
     private var nudging = false
     private var wasBuffering = false
     private var lastSeekAt = NEVER
@@ -57,7 +63,7 @@ class DriftPolicy {
             return DriftAction.Rate(1f)
         }
 
-        if (magnitude > 400) {
+        if (magnitude > seekOverMs) {
             if (now - lastSeekAt < SEEK_COOLDOWN_MS) return DriftAction.None
             lastSeekAt = now
             nudging = false
@@ -92,7 +98,15 @@ class DriftPolicy {
         if (!keepLead) seekLeadMs = 200
     }
 
-    private companion object {
+    companion object {
+        /** Beyond this a file or a plain stream seeks instead of nudging its speed. */
+        const val SEEK_OVER_MS = 400L
+        /** The same for a converted stream. */
+        const val CONVERTED_SEEK_OVER_MS = 1500L
+
+        /** The policy for the address a tablet was given. */
+        fun forUrl(url: String?) = DriftPolicy(if (JfStream.isHls(url)) CONVERTED_SEEK_OVER_MS else SEEK_OVER_MS)
+
         /** Far enough in the past that "now - lastSeekAt" never overflows and never cools down. */
         const val NEVER = -1_000_000_000_000L
         const val SEEK_COOLDOWN_MS = 3000L

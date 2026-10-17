@@ -95,6 +95,8 @@ data class NodeStatus(
     val maintenance: Boolean = false,
     /** The touch lock as the Node reports it (wish and what is really in place). Null for an old Node: the Master hides the switch. */
     val touch: NetMessages.TouchStatus? = null,
+    /** What the Node can decode. Null for an old Node: unknown, so it is streamed the file as before. */
+    val dec: com.nbaltas.nickos.sync.NodeDec? = null,
 ) {
     /** "touch1": the Node can ignore touches on request. */
     val supportsTouch: Boolean get() = NetMessages.TOUCH_CAP in caps
@@ -142,6 +144,7 @@ data class NodeStatus(
                 ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
                 maintenance = o.optBoolean("maintenance"),
                 touch = NetMessages.readTouchStatus(o),
+                dec = com.nbaltas.nickos.sync.NodeDec.decode(o),
             )
         }
 
