@@ -282,11 +282,59 @@ class StreamControllerTest {
     }
 
     @Test
-    fun `an unknown error text is read as unsupported and never kept`() {
+    fun `an unknown error text is read as other and never kept`() {
         playBoth()
         report(L, SyncState.ERROR, 0, err = "http://192.168.1.5/x?api_key=$token")
-        assertEquals("unsupported", c.failed.value.getValue(L).code)
+        assertEquals("other", c.failed.value.getValue(L).code)
         assertTrue(port.said.none { it.contains(token) || it.contains("192.168") })
+    }
+
+    @Test
+    fun `error text on a buffering or playing report never reaches the states`() {
+        playBoth()
+        val leak = "http://192.168.1.5/x?api_key=$token"
+        report(L, SyncState.BUFFERING, 100, err = leak)
+        assertTrue(c.states.value.values.none { it.err?.contains(token) == true || it.err?.contains("192.168") == true })
+        assertEquals("other", c.states.value.getValue(L).err)
+        report(H, SyncState.PLAYING, 100, err = "cant_reach")
+        assertEquals("cant_reach", c.states.value.getValue(H).err)
+        report(H, SyncState.PLAYING, 100, err = leak)
+        assertEquals("other", c.states.value.getValue(H).err)
+    }
+
+    @Test
+    fun `an old error stopped or ended report after a seek does not drop a tablet`() {
+        for (st in listOf(SyncState.ERROR, SyncState.STOPPED, SyncState.ENDED)) {
+            playBoth()
+            val staleAt = now - 10_000
+            c.seek(30_000)
+            c.onMessage(L, SyncMessages.encodeSyncState(fid, st.wire, 800, staleAt - 3000, 600_000, 1f, "cant_reach"))
+            assertEquals("$st", setOf(H, L), c.session.value!!.nodes)
+            assertTrue("$st", c.failed.value.isEmpty())
+        }
+    }
+
+    @Test
+    fun `an old error report after a restart of the same stream does not drop a tablet`() {
+        playBoth()
+        val staleAt = now - 10_000
+        c.start(fid, "Star Harbour", 600_000, setOf(H, L), url)
+        c.onMessage(L, SyncMessages.encodeSyncState(fid, "error", 0, staleAt - 3000, 600_000, 1f, "cant_reach"))
+        assertEquals(setOf(H, L), c.session.value!!.nodes)
+        assertTrue(c.failed.value.isEmpty())
+        report(L, SyncState.ERROR, 0, err = "cant_reach") // a current one still drops it
+        assertEquals(setOf(H), c.session.value!!.nodes)
+    }
+
+    @Test
+    fun `an old buffering report does not change the states`() {
+        playBoth()
+        report(L, SyncState.PLAYING, 500)
+        val before = c.states.value.getValue(L)
+        val staleAt = now - 10_000
+        c.seek(30_000)
+        c.onMessage(L, SyncMessages.encodeSyncState(fid, "buffering", 9, staleAt - 3000, 600_000, 1f))
+        assertEquals(before, c.states.value[L])
     }
 
     @Test

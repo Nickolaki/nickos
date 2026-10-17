@@ -502,9 +502,12 @@ class DesignScreensTest {
         addStatus("cccccccccccc", 23)
         shot("Together-Jellyfin-Stream") {
             val nodes = rememberNodeViews()
-            val stream = JfStreamUi(2, JfTogether.streamLabel(2, listOf("Leo")), onStream = {})
+            // Hailey can stream, Leo's tablet is too old; the count and label come from the same split the screen uses.
+            val selected = nodes.filter { it.online }.map { it.node.id }.toSet()
+            val (ok, no) = JfTogether.streamSplit(selected) { id -> nodes.first { it.node.id == id }.node.name.startsWith("Hailey") }
+            val stream = JfStreamUi(ok.size, JfTogether.streamLabel(ok.size, no.map { id -> nodes.first { it.node.id == id }.node.name }), onStream = {})
             JfPickContent(
-                jfMovie(), nodes, nodes.filter { it.online }.map { it.node.id }.toSet(), { _, _ -> },
+                jfMovie(), nodes, selected, { _, _ -> },
                 prep = null, note = null, onBack = {}, onPrimary = {}, stream = stream,
             )
         }

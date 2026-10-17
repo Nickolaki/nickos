@@ -59,9 +59,10 @@ data class StreamFail(val id: String, val code: String, val fid: String, val tit
         const val AUTH = "auth"
         const val UNSUPPORTED = "unsupported"
         const val TIMEOUT = "timeout"
-        val CODES = setOf(CANT_REACH, AUTH, UNSUPPORTED, TIMEOUT)
-        /** Anything else a tablet says is read as a format problem. */
-        fun clean(code: String?): String = if (code in CODES) code!! else UNSUPPORTED
+        const val OTHER = "other"
+        val CODES = setOf(CANT_REACH, AUTH, UNSUPPORTED, TIMEOUT, OTHER)
+        /** Anything a tablet says that is not one of the fixed codes becomes [OTHER]; its own words are never kept. */
+        fun clean(code: String?): String = if (code != null && code in CODES) code else OTHER
     }
 }
 
@@ -249,18 +250,23 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
                 lastAnchor = now - REANCHOR_MS + ADOPT_SETTLE_MS // pull everyone onto one line shortly
             }
             if (msg.fid != s.fid) return // still on the previous movie; the new plan is on its way
+            // A report made before the last start or seek (on the tablet's clock, mapped to ours) is from the old line.
+            val off = clocks[id]?.offset
+            val stale = off != null && msg.at - off < genAt
+            // For a stream, an old report of any kind (even ERROR or STOPPED) must not touch the current session.
+            if (s.streaming && stale) return
             if (id !in s.nodes) {
                 if (!joinable) return
                 s = s.copy(nodes = s.nodes + id)
                 _session.value = s
             }
-            _states.update { it + (id to NodeSyncState(st, pos, msg.at, dur, msg.rate, msg.err?.take(40), now)) }
+            // What a tablet says about an error is never kept as it came: only a fixed code (or "missing") gets through.
+            val err = if (s.streaming) StreamFail.clean(msg.err).takeIf { msg.err != null } else msg.err.takeIf { it == "missing" }
+            _states.update { it + (id to NodeSyncState(st, pos, msg.at, dur, msg.rate, err, now)) }
             if (dur > 0 && s.durMs <= 0) _session.value = s.copy(durMs = dur)
             // A tablet that failed or left is taken out below, which also lets the group go on without it.
             if (wait.enabled && st != SyncState.ERROR && st != SyncState.STOPPED && st != SyncState.ENDED) {
-                // A report made before the last start or seek (on the tablet's clock, mapped to ours) is from the old line.
-                val off = clocks[id]?.offset
-                val gen = if (off != null && msg.at - off < genAt) wait.gen - 1 else wait.gen
+                val gen = if (stale) wait.gen - 1 else wait.gen
                 act(wait.report(id, st, now, gen), now)
             }
             when (st) {
@@ -270,7 +276,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
                         val f = StreamFail(id, StreamFail.clean(msg.err), s.fid, s.title)
                         _failed.update { it + (id to f) }
                         port.say(TogetherText.streamError(kid(id), f.code))
-                    } else port.say("${kid(id)}: ${TogetherText.error(msg.err)}")
+                    } else port.say("${kid(id)}: ${TogetherText.error(err)}")
                     drop(id)
                 }
                 SyncState.STOPPED -> drop(id)

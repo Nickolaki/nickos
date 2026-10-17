@@ -125,9 +125,10 @@ class StreamTest {
         assertTrue(StreamFail("a", "timeout", "jf:x:I", "Star").canSaveInstead)
         assertFalse(StreamFail("a", "unsupported", "jf:x:I", "Star").canSaveInstead)
         assertFalse(StreamFail("a", "auth", "jf:x:I", "Star").canSaveInstead)
-        assertEquals("unsupported", StreamFail.clean("http://leak/api_key=1"))
+        assertEquals("other", StreamFail.clean("http://leak/api_key=1"))
         assertEquals("cant_reach", StreamFail.clean("cant_reach"))
-        assertEquals("unsupported", StreamFail.clean(null))
+        assertEquals("unsupported", StreamFail.clean("unsupported"))
+        assertEquals("other", StreamFail.clean(null))
     }
 
     @Test
