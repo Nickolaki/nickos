@@ -37,8 +37,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -131,8 +133,24 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
     val sync = master.sync
     val transfer = master.transfer
     val session by sync.session.collectAsState()
-    if (session != null) {
-        TogetherRemote(onBack)
+    // "Save to tablets instead" from the remote opens the save for that one tablet while the others keep watching.
+    var saveInstead by remember { mutableStateOf<Pair<JfItem, String>?>(null) }
+    if (session != null && saveInstead == null) {
+        val scope = rememberCoroutineScope()
+        val account = app.store.jellyfin.collectAsState().value
+        TogetherRemote(onBack) { f ->
+            val jfc = master.jellyfin()
+            if (jfc != null && account != null) scope.launch {
+                sync.dismissFailure(f.id)
+                runCatching { jfc.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+            }
+        }
+        return
+    }
+    saveInstead?.let { (item, id) ->
+        val nodes = rememberNodeViews()
+        val library = remember { sync.library() }
+        JfPickPanel(item, nodes, library, master, onBack = { saveInstead = null }, saveFor = id)
         return
     }
     val nodes = rememberNodeViews()
@@ -182,6 +200,18 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             Spacer(Modifier.width(20.dp))
             Title("Watch together", 40, Modifier.weight(1f))
             IconCircle(Lucide.RefreshCw, { sync.rescan() })
+        }
+        // A streamed movie that no tablet could play ended the session: say why, and offer the save.
+        val streamFails by sync.failed.collectAsState()
+        val failScope = rememberCoroutineScope()
+        streamFails.values.forEach { f ->
+            StreamFailRow(f, sync.kid(f.id), Modifier.padding(horizontal = 40.dp, vertical = 6.dp)) {
+                val account = jfAccount
+                if (jf != null && account != null) failScope.launch {
+                    sync.dismissFailure(f.id)
+                    runCatching { jf.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+                } else sync.dismissFailure(f.id)
+            }
         }
         LazyRow(
             Modifier.fillMaxWidth().padding(horizontal = 40.dp),
@@ -398,9 +428,25 @@ internal class JfRow(val id: String, val text: String, val fraction: Float?, val
 /** What the Getting ready panel shows. [saveFraction] is the parent's save progress, null when it is not saving. */
 internal class JfPrep(val saveFraction: Float?, val saveError: String?, val rows: List<JfRow>, val stuck: String? = null)
 
+/** A tablet that could not stream this movie. [canSave] false: saving would not help (it cannot play this one). */
+internal class JfStreamFail(val id: String, val text: String, val canSave: Boolean)
+
+/**
+ * The "Stream now" half of the pick panel. [count] is the real number of tablets that can stream now,
+ * [label] says so ("Stream now on 2 tablets (Leo can't stream yet)").
+ */
+internal class JfStreamUi(
+    val count: Int, val label: String, val onStream: () -> Unit,
+    val failures: List<JfStreamFail> = emptyList(), val onSaveInstead: (String) -> Unit = {},
+)
+
 /** Pick a Jellyfin movie or episode, choose the tablets, save it, send it, and start it on all of them in sync. */
 @Composable
-internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<LibraryItem>, master: com.nbaltas.nickos.master.MasterRuntime, onBack: () -> Unit) {
+internal fun JfPickPanel(
+    item: JfItem, nodes: List<NodeView>, library: List<LibraryItem>, master: com.nbaltas.nickos.master.MasterRuntime, onBack: () -> Unit,
+    /** "Save to tablets instead": only this tablet, saving starts at once, and a group already playing is left alone. */
+    saveFor: String? = null,
+) {
     val sync = master.sync
     val transfer = master.transfer
     val downloads = master.jfDownloads
@@ -411,7 +457,10 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
     val owners = lib?.owners.orEmpty()
     val online = nodes.filter { it.online }.map { it.node.id }.toSet()
     val nameOf: (String) -> String = { id -> nodes.firstOrNull { it.node.id == id }?.node?.name ?: sync.kid(id) }
-    var selected by remember(item.id) { mutableStateOf(nodes.filter { it.online && it.status?.supportsSync == true }.map { it.node.id }.toSet()) }
+    var selected by remember(item.id) {
+        mutableStateOf(if (saveFor != null) setOf(saveFor) else nodes.filter { it.online && it.status?.supportsSync == true }.map { it.node.id }.toSet())
+    }
+    val failures by sync.failed.collectAsState()
     var preparing by remember(item.id) { mutableStateOf(false) }
     var started by remember(item.id) { mutableStateOf(false) }
     var note by remember(item.id) { mutableStateOf<String?>(null) }
@@ -442,6 +491,13 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
             return@LaunchedEffect
         }
         val go = step.start
+        // Saving for one tablet that could not stream: the others are watching, so this does not restart them.
+        if (go != null && lib != null && saveFor != null && sync.session.value != null) {
+            started = true
+            preparing = false
+            note = "Saved on ${nameOf(saveFor)}'s tablet"
+            return@LaunchedEffect
+        }
         if (go != null && lib != null) {
             started = true
             sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go)
@@ -469,19 +525,44 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
             )
         },
     )
+    fun beginSave(sel: Set<String>) {
+        note = null
+        downloads.clear(item.id)
+        preparing = true
+        when (JfTogether.plan(sel, owners, online)) {
+            JfTogether.Plan.START_NOW -> {}
+            JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, sel) } ?: downloads.save(item, sel)
+            JfTogether.Plan.SAVE -> downloads.save(item, sel)
+        }
+    }
+    if (saveFor != null) LaunchedEffect(item.id, saveFor) { beginSave(setOf(saveFor)) }
+
+    // A tablet can be streamed to only when it is online, on a sealed link and says "stream1". The label counts the real ones.
+    val account by App.get(LocalContext.current).store.jellyfin.collectAsState()
+    val client = remember(account) { master.jellyfin() }
+    val (streamOk, streamNo) = JfTogether.streamSplit(selected) { id ->
+        nodes.firstOrNull { it.node.id == id }?.let { it.online && it.status?.supportsStream == true && master.isSealed(id) } == true
+    }
+    val stream = if (client == null) null else JfStreamUi(
+        count = streamOk.size,
+        label = JfTogether.streamLabel(streamOk.size, streamNo.map(nameOf)),
+        onStream = {
+            note = null
+            sync.start(client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item))
+        },
+        failures = failures.values.filter { it.fid == client.streamFid(item) }.map { f ->
+            JfStreamFail(f.id, TogetherText.streamError(nameOf(f.id), f.code), f.canSaveInstead)
+        },
+        onSaveInstead = { id ->
+            sync.dismissFailure(id)
+            selected = setOf(id)
+            beginSave(setOf(id))
+        },
+    )
     JfPickContent(
         item = item, nodes = nodes, selected = selected, onToggle = { id, on -> selected = if (on) selected + id else selected - id },
-        prep = prep, note = note, onBack = onBack,
-        onPrimary = {
-            note = null
-            downloads.clear(item.id)
-            preparing = true
-            when (JfTogether.plan(selected, owners, online)) {
-                JfTogether.Plan.START_NOW -> {}
-                JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, selected) } ?: downloads.save(item, selected)
-                JfTogether.Plan.SAVE -> downloads.save(item, selected)
-            }
-        },
+        prep = prep, note = note, onBack = onBack, stream = stream,
+        onPrimary = { beginSave(selected) },
         onRetryRow = { id -> attempt++; lib?.let { transfer.retry(it.fid, id) } },
         onRetrySave = {
             // Plan again from what is true now: send from an owner that is online, else save to this tablet.
@@ -508,6 +589,7 @@ internal fun JfPickContent(
     item: JfItem, nodes: List<NodeView>, selected: Set<String>, onToggle: (String, Boolean) -> Unit,
     prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
     onRetryRow: (String) -> Unit = {}, onRetrySave: () -> Unit = {}, onCancel: () -> Unit = {},
+    stream: JfStreamUi? = null,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
@@ -541,9 +623,26 @@ internal fun JfPickContent(
                 }
             }
             note?.let { Muted(it, 16, Modifier.padding(top = 8.dp)) }
+            stream?.failures?.forEach { f ->
+                Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(f.text, style = body(15.sp, 500, 1.3f), color = C.danger)
+                    if (f.canSave) NickButton(TogetherText.SAVE_INSTEAD, { stream.onSaveInstead(f.id) }, style = BtnStyle.SECONDARY)
+                }
+            }
             Spacer(Modifier.height(20.dp))
             val k = selected.size
-            NickButton(
+            if (stream != null) {
+                NickButton(
+                    if (k == 0) "Pick a tablet" else if (stream.count == 0) "No tablet can stream yet" else stream.label, stream.onStream,
+                    style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
+                )
+                Spacer(Modifier.height(12.dp))
+                NickButton(
+                    "Save to tablets", onPrimary,
+                    style = BtnStyle.SECONDARY, big = true, leading = Lucide.Tablet, enabled = k > 0,
+                )
+                Muted(TogetherText.STREAM_HINT, 15, Modifier.padding(top = 10.dp))
+            } else NickButton(
                 if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
                 style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0,
             )
@@ -588,14 +687,25 @@ internal fun JfPickContent(
     }
 }
 
+/** One tablet that could not stream: why, and "Save to tablets instead" when saving would help. */
 @Composable
-internal fun TogetherRemote(onBack: () -> Unit) {
+internal fun StreamFailRow(f: com.nbaltas.nickos.master.StreamFail, who: String, modifier: Modifier = Modifier, onSave: () -> Unit) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(TogetherText.streamError(who, f.code), style = body(15.sp, 500, 1.3f), color = C.danger)
+        if (f.canSaveInstead) NickButton(TogetherText.SAVE_INSTEAD, onSave, style = BtnStyle.SECONDARY)
+    }
+}
+
+@Composable
+internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit = {}) {
     val app = App.get(LocalContext.current)
     val master = app.master
     val sync = master.sync
     val session by sync.session.collectAsState()
     val s = session ?: return onBack()
     val states by sync.states.collectAsState()
+    val waiting by sync.waiting.collectAsState()
+    val streamFails by sync.failed.collectAsState()
     val now = rememberNow(500)
     val pos = sync.expectedPos()
     val nodeViews = rememberNodeViews()
@@ -642,6 +752,10 @@ internal fun TogetherRemote(onBack: () -> Unit) {
                     Text("--:--", style = body(18.sp, 700), color = C.muted)
                 }
                 if (starting > 0) Muted("Starting on $starting tablets...", 17, Modifier.padding(top = 8.dp))
+                waiting?.let { Text(it, style = body(18.sp, 700), color = C.accent, modifier = Modifier.padding(top = 8.dp)) }
+                streamFails.values.filter { it.fid == s.fid }.forEach { f ->
+                    StreamFailRow(f, sync.kid(f.id), Modifier.padding(top = 8.dp)) { onSaveInstead(f) }
+                }
                 Spacer(Modifier.height(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     SkipButtonWatch(back = true) { sync.skip(-10_000) }

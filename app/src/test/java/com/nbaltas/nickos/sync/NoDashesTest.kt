@@ -117,6 +117,14 @@ class NoDashesTest {
         File(moduleDir, "ui/master/Settings.kt"),
         File(moduleDir, "ui/setup/Setup.kt"),
         File("../SETUP.md"),
+        // Watch together by streaming from Jellyfin.
+        File(moduleDir, "sync/JfStream.kt"),
+        File(moduleDir, "sync/GroupWait.kt"),
+        File(moduleDir, "sync/StreamError.kt"),
+        File(moduleDir, "sync/JfTogether.kt"),
+        File(testDir, "sync/StreamTest.kt"),
+        File(testDir, "sync/StreamControllerTest.kt"),
+        File(testDir, "sync/GroupWaitTest.kt"),
         // Android 7 Master.
         File(moduleDir, "node/NodeSupport.kt"),
         File(testDir, "node/NodeSupportTest.kt"),
