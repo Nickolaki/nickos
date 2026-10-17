@@ -138,6 +138,7 @@ import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.FieldLabel
 import com.nbaltas.nickos.ui.theme.IconCircle
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.selfWords
 import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.Muted
@@ -784,7 +785,7 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                             }
                         }
                         when {
-                            noNetwork -> Muted(EDITOR_NO_NETWORK, 16)
+                            noNetwork -> Muted(EDITOR_NO_NETWORK.selfWords(LocalPhone.current), 16)
                             scanning -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 PulseDot(live); Muted(EDITOR_LOOKING, 16)
                             }

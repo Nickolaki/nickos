@@ -83,6 +83,7 @@ import com.nbaltas.nickos.node.NodeSupport
 import com.nbaltas.nickos.ui.theme.AvatarColors
 import com.nbaltas.nickos.ui.theme.AvatarIcons
 import com.nbaltas.nickos.ui.theme.Avatar
+import com.nbaltas.nickos.ui.theme.selfWords
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.Chip
@@ -503,7 +504,7 @@ internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
                     Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(32.dp))
                 }
                 Title(MASTER_NET_TITLE, 52)
-                Text(MASTER_NET_BODY.replace("from this tablet", "from this device"), style = body(16.sp, 500, 1.4f), color = C.text)
+                Text(MASTER_NET_BODY.selfWords(true), style = body(16.sp, 500, 1.4f), color = C.text)
                 Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(14.sp, 500, 1.4f), color = C.muted)
                 NickButton("Allow", {
                     val p = app.master.carNet.permissionToRequest()

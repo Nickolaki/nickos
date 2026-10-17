@@ -38,6 +38,17 @@ object PhoneMetrics {
     val iconCircle = 48.dp
 }
 
+/** What the parent calls its own device: "phone" on a phone, "tablet" otherwise. Kid devices stay "tablet". */
+fun selfNoun(phone: Boolean): String = if (phone) "phone" else "tablet"
+
+/** [selfNoun] for the current layout. */
+@Composable
+fun selfNoun(): String = selfNoun(LocalPhone.current)
+
+/** Swaps "this tablet" (and "This tablet") in copy about the parent's own device when [phone]. */
+fun String.selfWords(phone: Boolean): String =
+    if (!phone) this else replace("this tablet", "this phone").replace("This tablet", "This phone")
+
 /** Measures the width this content has (not the screen's orientation) and tells everything below whether it is a phone. */
 @Composable
 fun ParentLayoutProvider(content: @Composable () -> Unit) {

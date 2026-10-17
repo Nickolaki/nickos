@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.Role
 import com.nbaltas.nickos.ui.theme.LocalPhone
 import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import com.nbaltas.nickos.ui.theme.selfNoun
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -197,7 +198,8 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
 
     val library = remember(videosMap) { sync.library() }
     val order = remember(nodes) { listOf(Library.SELF) + nodes.map { it.node.id } }
-    val name: (String) -> String = { id -> if (id == Library.SELF) "This tablet" else nodes.firstOrNull { it.node.id == id }?.node?.name?.let { com.nbaltas.nickos.node.parentName(it) } ?: "A tablet" }
+    val selfName = "This ${selfNoun()}"
+    val name: (String) -> String = { id -> if (id == Library.SELF) selfName else nodes.firstOrNull { it.node.id == id }?.node?.name?.let { com.nbaltas.nickos.node.parentName(it) } ?: "A tablet" }
     val expected = remember(nodes) { setOf(Library.SELF) + nodes.filter { it.online && it.status?.supportsSync == true }.map { it.node.id } }
 
     openItem?.let { fid ->
@@ -262,7 +264,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                     if (label == "No video access") videosLauncher.launch(LocalVideos.permissions().toTypedArray())
                 }, height = if (phone) 56.dp else 44.dp) {
                     Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(if (phone) 24.dp else 28.dp))
-                    Column { Text("This tablet", style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
+                    Column { Text("This ${selfNoun(phone)}", style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
                 }
             }
             items(nodes) { n ->
@@ -301,14 +303,14 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         val scanningCount = scanning.size
 
         when {
-            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this tablet are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
-                NickButton("Allow videos on this tablet", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
+            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this ${selfNoun(phone)} are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
+                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
             }
             segment == 2 && jf == null -> CenterMessage("Connect Jellyfin", "Add your Jellyfin server in Settings to pick a movie or show and watch it together.") {
                 NickButton("Open Settings", { onSettings(1) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
             }
             segment == 2 -> JellyfinBrowser(jf!!, jfAccount!!.userId, "together", null, onPick = { openJf = it })
-            onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this tablet, show up here.") {
+            onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this ${selfNoun(phone)}, show up here.") {
                 NickButton("All tablets", onBack, fullOnPhone(), style = BtnStyle.GHOST, big = !LocalPhone.current)
             }
             onlineNodes.isNotEmpty() && capableOnline.isEmpty() -> CenterMessage("Update the kids' tablets", "Watch together needs the latest NickOS on each tablet. Update them from Settings, then come back.") {
@@ -321,10 +323,10 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                 Column(Modifier.fillMaxSize().padding(horizontal = if (phone) 0.dp else edge)) {
                     if (scanningCount > 0) Muted("Looking for movies on $scanningCount tablets...", 18, Modifier.padding(start = if (phone) edge else 0.dp, end = if (phone) edge else 0.dp, bottom = 12.dp))
                     when {
-                        segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
+                        segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this ${selfNoun(phone)} or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
                             NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
                         }
-                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.") {
+                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this ${selfNoun(phone)}, or send them from another tablet.") {
                             NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
                         }
                         segment == 0 -> LibraryGrid(visible!!, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
@@ -1221,7 +1223,7 @@ private fun PhoneJfPickContent(
         } else {
             Title("Getting ready", 40)
             if (prep.saveFraction != null) {
-                PhoneDeviceRowBase({ Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(32.dp)) }, "Saving to this tablet", null) {
+                PhoneDeviceRowBase({ Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(32.dp)) }, "Saving to this ${selfNoun()}", null) {
                     PhoneProgressLine(prep.saveFraction, "${(prep.saveFraction * 100).toInt()}%")
                 }
             }

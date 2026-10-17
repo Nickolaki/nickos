@@ -90,6 +90,8 @@ import kotlinx.coroutines.launch
 import com.nbaltas.nickos.ui.setup.JellyfinForm
 import com.nbaltas.nickos.ui.setup.rotate90
 import com.nbaltas.nickos.ui.theme.Avatar
+import com.nbaltas.nickos.ui.theme.selfNoun
+import com.nbaltas.nickos.ui.theme.selfWords
 import com.nbaltas.nickos.ui.theme.BackButton
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
@@ -291,9 +293,9 @@ private fun TabletsSection(onAdd: () -> Unit) {
                 }
                 Column(Modifier.weight(1f)) {
                     Text(name.ifBlank { "Parent's Tablet" }, style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.2f else 1.3f), color = C.text)
-                    Muted("This tablet · Master", 16)
+                    Muted(if (phone) "This ${selfNoun(phone)} · Parent" else "This tablet · Master", 16)
                 }
-                if (phone) IconCircle(Lucide.Pencil, { renaming = "" }, label = "Rename this tablet")
+                if (phone) IconCircle(Lucide.Pencil, { renaming = "" }, label = "Rename this ${selfNoun(phone)}")
                 else NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
             }
             val ctx = LocalContext.current
@@ -361,7 +363,7 @@ private fun TabletsSection(onAdd: () -> Unit) {
         }
     }
     renaming?.let { id ->
-        if (id.isEmpty()) RenameDialog(name.ifBlank { "Parent's Tablet" }, "Rename this tablet") { n -> renaming = null; if (n != null) app.store.setName(n) }
+        if (id.isEmpty()) RenameDialog(name.ifBlank { "Parent's Tablet" }, "Rename this ${selfNoun()}") { n -> renaming = null; if (n != null) app.store.setName(n) }
         else views.firstOrNull { it.node.id == id }?.let { v -> RenameDialog(v.node.name) { n -> renaming = null; if (n != null) app.master.rename(id, n) } }
     }
 }
@@ -472,7 +474,9 @@ private fun CarNetCard() {
     // Off means off: the card follows the preference, not the async runtime state that may lag behind it.
     val state = effectiveCarNetState(runtime, switchedOn)
     val manual = hotspot?.takeIf { !it.direct }
-    val copy = carNetCopy(state, manual, Build.VERSION.SDK_INT)
+    val onPhone = LocalPhone.current
+    val raw = carNetCopy(state, manual, Build.VERSION.SDK_INT)
+    val copy = raw.copy(title = raw.title.selfWords(onPhone), line = raw.line?.selfWords(onPhone))
     var reveal by rememberSaveable { mutableStateOf(false) }
     // Not saved: the secret is hidden again whenever this card leaves the screen.
     var showSecret by remember { mutableStateOf(carNetStartRevealed) }
@@ -763,7 +767,7 @@ private fun ThemeSection() {
                 }
             }
         }
-        Muted("Kid tablets keep their own colour. Theme applies to this tablet.", 17)
+        Muted("Kid tablets keep their own colour. Theme applies to this ${selfNoun()}.", 17)
     }
 }
 
@@ -925,14 +929,14 @@ private fun AboutSection() {
             }
         }
         Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp))) {
-            InfoRow("This tablet", "${name.ifBlank { "Parent's Tablet" }} · Master")
+            InfoRow("This ${selfNoun()}", "${name.ifBlank { "Parent's Tablet" }} · ${if (phone) "Parent" else "Master"}")
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
             InfoRow("Linked tablets", nodes.size.toString())
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
             InfoRow("Connection", "Local WiFi only")
         }
         HomeScreenRow()
-        NickButton(if (confirmReset) "Tap again: forget every tablet and start over" else "Reset this tablet", {
+        NickButton(if (confirmReset) "Tap again: forget every tablet and start over" else "Reset this ${selfNoun()}", {
             if (confirmReset) {
                 if (EntrySwitch.enableMain(ctx)) com.nbaltas.nickos.RoleReset.run(ctx, app)
             } else confirmReset = true
@@ -978,7 +982,7 @@ private fun HomeScreenRow() {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Use NickOS as this tablet's home screen", style = body(if (LocalPhone.current) 16.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
+            Text("Use NickOS as this ${selfNoun()}'s home screen", style = body(if (LocalPhone.current) 16.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
             Muted(homeStateLine(isHome), 15)
         }
         NickSwitch(optIn) { on ->

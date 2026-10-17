@@ -996,40 +996,59 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
         val cards: List<@Composable (Modifier) -> Unit> = listOf(
             { mod ->
                 DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true) {
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 22.dp)).background(C.surface2).padding(if (phone) 4.dp else 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if (phone) 4.dp else 6.dp),
-                    ) {
-                        val on = st?.screenOn != false
-                        val segH = if (phone) PhoneMetrics.minTarget else 68.dp
-                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false, height = segH) {
-                            if (st?.screenOffOk == false) m.askPermission(v.node.id) else m.screen(v.node.id, false)
+                    val segmented: @Composable () -> Unit = {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 22.dp)).background(C.surface2).padding(if (phone) 4.dp else 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (phone) 4.dp else 6.dp),
+                        ) {
+                            val on = st?.screenOn != false
+                            val segH = if (phone) PhoneMetrics.minTarget else 68.dp
+                            SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false, height = segH) {
+                                if (st?.screenOffOk == false) m.askPermission(v.node.id) else m.screen(v.node.id, false)
+                            }
+                            SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f), height = segH) { m.screen(v.node.id, true) }
                         }
-                        SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f), height = segH) { m.screen(v.node.id, true) }
                     }
-                    if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = !phone, leading = Lucide.LockOpen)
-                    else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.buttonHeight) else Modifier), big = !phone, leading = Lucide.Lock)
+                    val lockBtn: @Composable () -> Unit = {
+                        if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = !phone, leading = Lucide.LockOpen)
+                        else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.buttonHeight) else Modifier), big = !phone, leading = Lucide.Lock)
+                    }
                     // Hidden when the Node does not have the touch1 capability.
-                    if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
+                    val touchRow: @Composable () -> Unit = { if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m) }
                     // An old Node has no "ring1": no button.
-                    if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
-                    // One short line under Lock.
-                    if (st?.screenOffOk == false) {
-                        val asked = askedLine(v)
-                        if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
-                        else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                    val ringBtn: @Composable () -> Unit = { if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) } }
+                    // One short line about the On/Off switch.
+                    val offHint: @Composable () -> Unit = {
+                        if (st?.screenOffOk == false) {
+                            val asked = askedLine(v)
+                            if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
+                            else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                        }
                     }
                     // Two separate things. Screen view: the grown-up taps Allow on the tablet. Touch control: the accessibility switch,
                     // which some updates turn off; open that setting on the tablet in one tap (a 90 s window the parent can end).
-                    if (st?.supportsScreen == true) {
-                        if (st.screen == RemoteMessages.NEEDS_CONSENT) Text("Screen: tap Allow on ${v.node.name}", style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
-                        if (st.maintenance) {
-                            Text("Settings open on ${v.node.name}", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
-                            NickButton("Lock now", { m.home(v.node.id) }, Modifier.fillMaxWidth(), BtnStyle.DANGER)
-                        } else if (st.control != RemoteMessages.CONTROL_READY) {
-                            Text("Touch control: off", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
-                            NickButton("Open setting on tablet", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
+                    val remote: @Composable () -> Unit = {
+                        if (st?.supportsScreen == true) {
+                            if (st.screen == RemoteMessages.NEEDS_CONSENT) Text("Screen: tap Allow on ${v.node.name}", style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
+                            if (st.maintenance) {
+                                Text("Settings open on ${v.node.name}", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
+                                NickButton("Lock now", { m.home(v.node.id) }, Modifier.fillMaxWidth(), BtnStyle.DANGER)
+                            } else if (st.control != RemoteMessages.CONTROL_READY) {
+                                Text("Touch control: off", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
+                                NickButton("Open setting on tablet", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
+                            }
                         }
+                    }
+                    if (phone) {
+                        // The hint explains the On/Off switch, so it sits right under it. Touch is its own group below a divider.
+                        Column(verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) { segmented(); offHint() }
+                        lockBtn()
+                        ringBtn()
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
+                        touchRow()
+                        remote()
+                    } else {
+                        segmented(); lockBtn(); touchRow(); ringBtn(); offHint(); remote()
                     }
                 }
             },
