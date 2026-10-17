@@ -97,6 +97,8 @@ interface JobIo {
     fun has(fid: String): Boolean
     /** A new, empty, not yet visible destination for a file called [name]. Null when it cannot be made. */
     fun create(name: String): String?
+    /** Same, inside folder [sub] of the library folder. Implementations without folders ignore it. */
+    fun create(name: String, sub: String?): String? = create(name)
     /** Null when the destination is gone. */
     fun open(dest: String): JobFile?
     /** The copy is complete and checked: make it a normal file in the library. */
@@ -516,20 +518,23 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
 
     override fun has(fid: String): Boolean = videos.find(fid) != null
 
-    override fun create(name: String): String? = try {
+    override fun create(name: String): String? = create(name, null)
+
+    override fun create(name: String, sub: String?): String? = try {
+        val folder = if (sub.isNullOrBlank()) "" else "/$sub"
         if (Build.VERSION.SDK_INT >= 29) {
             val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())?.takeIf { it.startsWith("video/") }
             fun values(m: String?) = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 if (m != null) put(MediaStore.Video.Media.MIME_TYPE, m)
-                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}$folder")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val uri = try { resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values(mime)) }
             catch (e: Exception) { resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values("video/mp4")) }
             uri?.toString()
         } else {
-            val dir = moviesDir().apply { mkdirs() }
+            val dir = (if (sub.isNullOrBlank()) moviesDir() else File(moviesDir(), sub)).apply { mkdirs() }
             File(dir, "$name.part").apply { delete(); createNewFile() }.absolutePath
         }
     } catch (e: Exception) { Log.w(TAG, "create $name: ${e.message}"); null }
@@ -548,7 +553,7 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
         if (dest.startsWith("content:")) {
             resolver.update(Uri.parse(dest), ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null) > 0
         } else {
-            val dir = moviesDir()
+            val dir = File(dest).parentFile ?: moviesDir()
             var target = File(dir, name)
             var n = 1
             while (target.exists()) target = File(dir, "${name.substringBeforeLast('.')} (${n++})" + name.substringAfterLast('.', "").let { if (it.isEmpty() || '.' !in name) "" else ".$it" })

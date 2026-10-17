@@ -58,9 +58,14 @@ import coil.compose.AsyncImage
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.RotateCcw
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.Send
+import com.nbaltas.nickos.master.DlState
+import com.nbaltas.nickos.master.JellyfinDownloads
+import com.nbaltas.nickos.master.Progress
 import com.composables.icons.lucide.Server
 import com.composables.icons.lucide.X
 import com.nbaltas.nickos.App
@@ -349,6 +354,12 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
         value = try { jf.episodes(uid, id, seasonId = s) } catch (e: Exception) { emptyList() }
     }
 
+    val app = App.get(LocalContext.current)
+    val downloads = app.master.jfDownloads
+    val dl by downloads.progress.collectAsState()
+    val videosMap by app.master.sync.videos.collectAsState()
+    val lib = remember(videosMap) { app.master.sync.library() }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val narrow = maxWidth < 1000.dp
         val left: @Composable (Modifier) -> Unit = { mod ->
@@ -383,7 +394,18 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                 val eps = episodes
                 if (eps == null) Muted("Loading episodes…", 18)
                 else Column(Modifier.then(if (narrow) Modifier else Modifier.verticalScroll(rememberScrollState())), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    eps.forEach { e -> EpisodeRow(e, jf, highlight = e.id == target?.id && e.inProgress) { play(e, false) } }
+                    val todo = eps.filter { e -> !JellyfinDownloads.onTablet(e, lib) && dl[e.id]?.active != true }
+                    if (todo.isNotEmpty()) NickButton(
+                        "Save season", { downloads.saveAll(todo) }, Modifier.widthIn(max = 320.dp), leading = Lucide.Download,
+                        sub = "${todo.size} episode${if (todo.size == 1) "" else "s"} to this tablet",
+                    )
+                    eps.forEach { e ->
+                        EpisodeRow(
+                            e, jf, highlight = e.id == target?.id && e.inProgress,
+                            dl = dl[e.id], onTablet = JellyfinDownloads.onTablet(e, lib),
+                            save = { downloads.save(e) }, cancel = { downloads.cancel(e.id) },
+                        ) { play(e, false) }
+                    }
                     Spacer(Modifier.height(24.dp))
                 }
             }
@@ -401,7 +423,9 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
 }
 
 @Composable
-private fun EpisodeRow(e: JfItem, jf: Jellyfin, highlight: Boolean, onClick: () -> Unit) {
+private fun EpisodeRow(
+    e: JfItem, jf: Jellyfin, highlight: Boolean, dl: Progress?, onTablet: Boolean, save: () -> Unit, cancel: () -> Unit, onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 96.dp).clip(RoundedCornerShape(20.dp)).background(if (highlight) C.surface2 else Color.Transparent)
             .clickable(onClick = onClick).padding(start = 10.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
@@ -417,6 +441,21 @@ private fun EpisodeRow(e: JfItem, jf: Jellyfin, highlight: Boolean, onClick: () 
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("${e.index?.let { "$it. " } ?: ""}${e.name}", style = body(19.sp, 700), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Muted(if (e.inProgress) "${minutesText(e.runMin)} · ${minutesText(e.leftMin)} left" else minutesText(e.runMin), 15)
+        }
+        when {
+            dl?.active == true -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (dl.total > 0) "${(dl.fraction * 100).toInt()}%" else "Saving", style = body(15.sp, 700), color = C.muted)
+                Box(Modifier.size(44.dp).clip(CircleShape).background(C.surface2).clickable(onClick = cancel), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.X, "Cancel saving", tint = C.text, modifier = Modifier.size(18.dp))
+                }
+            }
+            onTablet || dl?.state == DlState.DONE -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(18.dp))
+                Text("On this tablet", style = body(15.sp, 600), color = C.muted)
+            }
+            else -> Box(Modifier.size(44.dp).clip(CircleShape).background(C.surface2).clickable(onClick = save), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Download, "Save to this tablet", tint = C.text, modifier = Modifier.size(18.dp))
+            }
         }
         when {
             e.inProgress -> Chip(height = 40.dp, bg = C.accent) {
@@ -448,6 +487,11 @@ private fun LibraryChip(onBack: () -> Unit) {
 private fun MovieDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onBack: () -> Unit, play: (JfItem, Boolean) -> Unit) {
     val movie by produceState<JfItem?>(null, id) { value = try { jf.item(uid, id) } catch (e: Exception) { null } }
     val m = movie
+    val app = App.get(LocalContext.current)
+    val downloads = app.master.jfDownloads
+    val dl by downloads.progress.collectAsState()
+    val videosMap by app.master.sync.videos.collectAsState()
+    val lib = remember(videosMap) { app.master.sync.library() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         m?.let { jf.backdrop(it) }?.let { AsyncImage(it, null, Modifier.fillMaxSize().alpha(0.45f), contentScale = ContentScale.Crop) }
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.3f to C.bg, 1f to C.bg.copy(alpha = 0.6f))))
@@ -474,6 +518,12 @@ private fun MovieDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onBa
                         big = true, leading = Solid.Play, sub = if (m.inProgress) "from ${fmtTicks(m.posTicks)}" else null,
                     )
                     if (m.inProgress) NickButton("Play from start", { play(m, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.RotateCcw)
+                    SaveActions(
+                        v.node.name, dl[m.id], JellyfinDownloads.saved(m, lib) != null,
+                        save = { downloads.save(m) }, saveSend = { downloads.save(m, setOf(v.node.id)) },
+                        cancel = { downloads.cancel(m.id) },
+                        send = { JellyfinDownloads.saved(m, lib)?.let { app.master.transfer.send(it.fid, setOf(v.node.id)) } },
+                    )
                 }
             }
         }
@@ -484,6 +534,46 @@ private fun MovieDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onBa
         } else {
             Row(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, top = 28.dp, bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(44.dp)) {
                 posterCol(); info(Modifier.padding(top = 64.dp).widthIn(max = 560.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Save a Jellyfin movie onto the parent's tablet, and send it on. Shows the two save buttons, the
+ * progress while it downloads, or "On this tablet" with a Send button once it is here.
+ */
+@Composable
+internal fun SaveActions(
+    tablet: String,
+    progress: Progress?,
+    onTablet: Boolean,
+    save: () -> Unit,
+    saveSend: () -> Unit,
+    cancel: () -> Unit,
+    send: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        when {
+            progress?.active == true -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProgressBar(progress.fraction, height = 8.dp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val pct = if (progress.total > 0) "${(progress.fraction * 100).toInt()}%" else if (progress.state == DlState.QUEUED) "Waiting" else "Saving"
+                    Muted(if (progress.state == DlState.QUEUED) "Waiting to save · $pct" else "Saving to this tablet · $pct", 16, Modifier.weight(1f), weight = 600)
+                    NickButton("Cancel", cancel, leading = Lucide.X)
+                }
+            }
+            onTablet || progress?.state == DlState.DONE -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
+                    Text("On this tablet", style = body(17.sp, 700), color = C.text)
+                }
+                NickButton("Send to $tablet", send, Modifier.fillMaxWidth(), big = true, leading = Lucide.Send)
+            }
+            else -> {
+                if (progress?.state == DlState.FAILED) Muted(progress.err ?: "Couldn't save it", 15, weight = 600)
+                NickButton("Save to this tablet", save, Modifier.fillMaxWidth(), big = true, leading = Lucide.Download)
+                NickButton("Save and send to $tablet", saveSend, Modifier.fillMaxWidth(), big = true, leading = Lucide.Send)
             }
         }
     }

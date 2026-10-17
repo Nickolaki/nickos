@@ -202,6 +202,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Sending movies between tablets. This tablet hands out its own through [server]. */
     val server = MediaServer.of(videos, WifiHold(ctx))
     val transfer = TransferController(this, store)
+    /** Jellyfin movies and episodes saved onto this tablet, optionally sent on to the kids. */
+    val jfDownloads = JellyfinDownloads(
+        com.nbaltas.nickos.node.AndroidJobIo(ctx, videos, WifiHold(ctx)), JellyfinSource { jellyfin() }, scope,
+        rescan = { sync.rescanSelf() }, library = { sync.library() }, send = { fid, to -> transfer.send(fid, to) },
+        say = { say(it) },
+    )
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
 
