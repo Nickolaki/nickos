@@ -676,7 +676,7 @@ internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.Pow
         Text("$battery%", style = disp(88.sp, 800, 1f), color = if (low) C.danger else C.text)
         ProgressBar(battery / 100f, height = 14.dp, fill = if (low) C.danger else C.online)
         Muted(if (charging) "Charging" else "Not charging", 17, weight = 600)
-    } else Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("$battery%", style = disp(40.sp, 800, 1f), color = if (low) C.danger else C.text)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

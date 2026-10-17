@@ -227,6 +227,20 @@ class DesignScreensTest {
         ))
         shot("Control-Device-Ring") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
     }
+    /** A 0.10 Node reports power: the real Device tab (not BatteryBody alone) must compose, with no scroll nested in a scrolling card. */
+    private fun deviceTabWithPower() {
+        set(app.master, "_status", mapOf(
+            "aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1"))
+                .copy(power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION)),
+        ))
+        shot("Control-Device-Power-${if (app.resources.configuration.screenWidthDp >= 1000) "1280x800" else "Portrait"}") {
+            ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {})
+        }
+    }
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDevicePowerGrid() = deviceTabWithPower()
+    @Config(qualifiers = "w800dp-h1280dp-port-mdpi")
+    @Test fun controlDevicePowerPortrait() = deviceTabWithPower()
     @Test fun settingsTablets() = shot("Settings-Tablets") { SettingsScreen(0, {}, {}, {}) }
     @Test fun settingsJellyfin() = shot("Settings-Jellyfin") { SettingsScreen(1, {}, {}, {}) }
     @Test fun settingsPin() = shot("Settings-PIN") { SettingsScreen(3, {}, {}, {}) }
