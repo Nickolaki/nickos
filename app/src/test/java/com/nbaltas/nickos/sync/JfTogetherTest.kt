@@ -9,16 +9,35 @@ class JfTogetherTest {
     private val kids = setOf("a", "b")
 
     @Test fun everywhereAlreadyStartsNow() {
-        assertEquals(JfTogether.Plan.START_NOW, JfTogether.plan(kids, setOf("a", "b", Library.SELF)))
+        assertEquals(JfTogether.Plan.START_NOW, JfTogether.plan(kids, setOf("a", "b", Library.SELF), kids))
     }
 
     @Test fun onTheParentOrSomeTabletsSends() {
-        assertEquals(JfTogether.Plan.SEND, JfTogether.plan(kids, setOf(Library.SELF)))
-        assertEquals(JfTogether.Plan.SEND, JfTogether.plan(kids, setOf("a")))
+        assertEquals(JfTogether.Plan.SEND, JfTogether.plan(kids, setOf(Library.SELF), emptySet()))
+        assertEquals(JfTogether.Plan.SEND, JfTogether.plan(kids, setOf("a"), kids))
     }
 
     @Test fun savedNowhereSavesFirst() {
-        assertEquals(JfTogether.Plan.SAVE, JfTogether.plan(kids, emptySet()))
+        assertEquals(JfTogether.Plan.SAVE, JfTogether.plan(kids, emptySet(), kids))
+    }
+
+    @Test fun anOfflineOnlyOwnerSavesInsteadOfSending() {
+        assertEquals(JfTogether.Plan.SAVE, JfTogether.plan(setOf("b"), setOf("a"), setOf("b")))
+    }
+
+    @Test fun stuckSaysWhyAndNeverWhileSomethingCanStillHappen() {
+        val kid = setOf("b")
+        assertEquals("No tablet has this movie right now", JfTogether.stuck(kid, emptySet(), kid, false, false, false))
+        assertEquals("Saving was cancelled", JfTogether.stuck(kid, emptySet(), kid, false, false, true))
+        assertEquals("The tablet that has this movie is offline", JfTogether.stuck(kid, setOf("a"), kid, false, false, false))
+        assertNull(JfTogether.stuck(kid, emptySet(), kid, true, false, false))
+        assertNull(JfTogether.stuck(kid, setOf("a"), kid + "a", false, false, false))
+        assertNull(JfTogether.stuck(kid, setOf("b"), kid, false, false, false))
+    }
+
+    @Test fun stallNamesWhoIsAwaited() {
+        assertEquals("Still waiting for Leo", JfTogether.stallText(listOf("Leo")))
+        assertEquals(60_000L, JfTogether.STALL_MS)
     }
 
     @Test fun startsTheMomentEveryoneOwnsIt() {

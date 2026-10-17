@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -395,7 +396,7 @@ internal fun PickPanel(
 internal class JfRow(val id: String, val text: String, val fraction: Float?, val ready: Boolean, val failed: Boolean, val error: String? = null)
 
 /** What the Getting ready panel shows. [saveFraction] is the parent's save progress, null when it is not saving. */
-internal class JfPrep(val saveFraction: Float?, val saveError: String?, val rows: List<JfRow>)
+internal class JfPrep(val saveFraction: Float?, val saveError: String?, val rows: List<JfRow>, val stuck: String? = null)
 
 /** Pick a Jellyfin movie or episode, choose the tablets, save it, send it, and start it on all of them in sync. */
 @Composable
@@ -414,6 +415,14 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
     var preparing by remember(item.id) { mutableStateOf(false) }
     var started by remember(item.id) { mutableStateOf(false) }
     var note by remember(item.id) { mutableStateOf<String?>(null) }
+    var stalled by remember(item.id) { mutableStateOf(false) }
+
+    // Any change in what is saving, sending or owned resets the 60 s clock. Nothing for that long: say who is still awaited.
+    val progressSig = listOf(dl?.state, dl?.bytes, dl?.fid, owners, selected.map { id -> lib?.let { transfer.jobFor(id, it.fid)?.done } })
+    LaunchedEffect(preparing, started, progressSig) {
+        stalled = false
+        if (preparing && !started) { delay(JfTogether.STALL_MS); stalled = true }
+    }
 
     // Start the moment every tablet still online owns the file. Only once per tap, and never wait for an offline tablet.
     LaunchedEffect(preparing, started, selected, owners, online) {
@@ -432,9 +441,17 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
         }
     }
 
+    val usable = JfTogether.usable(owners, online)
+    val resolving = dl?.state == DlState.DONE && lib == null
+    val stuck = JfTogether.stuck(
+        selected, owners, online,
+        saving = dl?.active == true || resolving,
+        saveFailed = dl?.state == DlState.FAILED, saveCancelled = dl?.state == DlState.CANCELLED,
+    ) ?: if (stalled) JfTogether.stallText(nodes.filter { it.node.id in selected && it.node.id !in owners }.map { it.node.name }) else null
     val prep = if (!preparing) null else JfPrep(
         saveFraction = dl?.takeIf { it.active }?.fraction,
-        saveError = dl?.takeIf { it.state == DlState.FAILED }?.err,
+        saveError = dl?.takeIf { it.state == DlState.FAILED && usable.isEmpty() }?.err,
+        stuck = stuck,
         rows = nodes.filter { it.node.id in selected }.map { n ->
             val job = lib?.let { transfer.jobFor(n.node.id, it.fid) }
             val failed = job != null && JobState.of(job.state) == JobState.FAILED
@@ -450,18 +467,31 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
         prep = prep, note = note, onBack = onBack,
         onPrimary = {
             note = null
-            when (JfTogether.plan(selected, owners)) {
-                JfTogether.Plan.START_NOW -> preparing = true
-                JfTogether.Plan.SEND -> { preparing = true; transfer.send(lib!!.fid, selected) }
-                JfTogether.Plan.SAVE -> { preparing = true; downloads.save(item, selected) }
+            downloads.clear(item.id)
+            preparing = true
+            when (JfTogether.plan(selected, owners, online)) {
+                JfTogether.Plan.START_NOW -> {}
+                JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, selected) } ?: downloads.save(item, selected)
+                JfTogether.Plan.SAVE -> downloads.save(item, selected)
             }
         },
         onRetryRow = { id -> lib?.let { transfer.retry(it.fid, id) } },
-        onRetrySave = { downloads.save(item, selected) },
+        onRetrySave = {
+            // Plan again from what is true now: send from an owner that is online, else save to this tablet.
+            note = null
+            stalled = false
+            downloads.clear(item.id)
+            when (JfTogether.plan(selected, owners, online)) {
+                JfTogether.Plan.START_NOW -> {}
+                JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, selected) } ?: downloads.save(item, selected)
+                JfTogether.Plan.SAVE -> downloads.save(item, selected)
+            }
+        },
         onCancel = {
             preparing = false
-            if (dl?.active == true) downloads.cancel(item.id)
-            lib?.let { l -> selected.forEach { transfer.cancel(l.fid, it) } }
+            // Also after the save reports DONE: this stops the send that is waiting for the copy to show up.
+            downloads.cancel(item.id)
+            (lib?.fid ?: dl?.fid)?.let { fid -> selected.forEach { transfer.cancel(fid, it) } }
         },
     )
 }
@@ -521,9 +551,9 @@ internal fun JfPickContent(
                     Muted("${(prep.saveFraction * 100).toInt()}%", 15)
                 }
             }
-            prep.saveError?.let {
+            (prep.saveError ?: prep.stuck)?.let {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(it, style = body(15.sp, 500, 1.3f), color = C.danger)
+                    Text(it, style = body(15.sp, 500, 1.3f), color = if (prep.saveError != null) C.danger else C.text)
                     NickButton("Try again", onRetrySave, style = BtnStyle.SECONDARY)
                 }
             }

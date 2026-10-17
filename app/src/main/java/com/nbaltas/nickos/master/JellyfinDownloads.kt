@@ -86,6 +86,8 @@ class JellyfinDownloads(
     private val waitStepMs: Long = 500,
     private val waitSteps: Int = 60,
     private val retries: Int = 3,
+    /** How many times a copy that has not shown up yet is looked for: [waitSteps] polls, then a fresh rescan. */
+    private val rescanRounds: Int = 6,
     private val ledger: PendingLedger? = null,
 ) {
     private class Entry(val item: JfItem, val sendTo: MutableSet<String>, val sub: String?) {
@@ -104,6 +106,8 @@ class JellyfinDownloads(
     private val queue = ArrayDeque<Entry>()
     private var current: Entry? = null
     private var running = false
+    /** Saved copies whose send is still waiting for the library to show them, by item id. Cancel reaches them here. */
+    private val finishing = HashMap<String, Entry>()
 
     private val _progress = MutableStateFlow<Map<String, Progress>>(emptyMap())
     /** Progress by Jellyfin item id. An id is absent until it is first queued. */
@@ -137,9 +141,11 @@ class JellyfinDownloads(
         todo.take(MAX_SEASON).forEach { save(it, sendTo) }
     }
 
+    /** Stops a save, a queued save, and a send still waiting for the saved copy to show up. Nothing is sent for this item after it. */
     fun cancel(itemId: String) {
         val live: Entry?
         synchronized(lock) {
+            finishing[itemId]?.let { it.cancelled = true; it.sendTo.clear() }
             val cur = current
             if (cur != null && cur.item.id == itemId) { cur.cancelled = true; live = cur }
             else {
@@ -312,23 +318,31 @@ class JellyfinDownloads(
      */
     private suspend fun finish(e: Entry, name: String, bytes: Long) {
         rescan()
-        // Nobody to send to: look for the copy's fid beside the queue, so the next download is not held up.
-        if (e.sendTo.isEmpty()) scope.launch { resolve(e, name, bytes) } else resolve(e, name, bytes)
+        // Beside the queue, so a slow rescan never holds up the next download. Cancel reaches it through [finishing].
+        synchronized(lock) { finishing[e.item.id] = e }
+        scope.launch {
+            try { resolve(e, name, bytes) } finally { synchronized(lock) { if (finishing[e.item.id] === e) finishing.remove(e.item.id) } }
+        }
     }
 
+    /** Looks for the saved copy until it is found or the pick is cancelled, rescanning again after each [waitSteps] polls, up to [rescanRounds] times. */
     private suspend fun resolve(e: Entry, name: String, bytes: Long) {
         val id = e.item.id
-        repeat(waitSteps) {
-            val hits = library().filter { Library.SELF in it.owners && it.name == name && it.size == bytes }
-            if (hits.size == 1) {
-                val fid = hits[0].fid
-                _progress.update { m -> m[id]?.let { m + (id to it.copy(fid = fid)) } ?: m }
-                val to = synchronized(lock) { e.sendTo.toSet() }
-                if (to.isNotEmpty()) send(fid, to)
-                return
+        for (round in 0 until rescanRounds) {
+            if (round > 0) rescan()
+            repeat(waitSteps) {
+                if (e.cancelled) return
+                val hits = library().filter { Library.SELF in it.owners && it.name == name && it.size == bytes }
+                if (hits.size == 1) {
+                    val fid = hits[0].fid
+                    _progress.update { m -> m[id]?.let { m + (id to it.copy(fid = fid)) } ?: m }
+                    val to = synchronized(lock) { if (e.cancelled) emptySet() else e.sendTo.toSet() }
+                    if (to.isNotEmpty()) send(fid, to)
+                    return
+                }
+                if (hits.size > 1) { if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together"); return }
+                delay(waitStepMs)
             }
-            if (hits.size > 1) { if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together"); return }
-            delay(waitStepMs)
         }
         if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together")
     }

@@ -7,12 +7,40 @@ object JfTogether {
     /**
      * What one tap on the main button does. [owners] are the tablets (and [Library.SELF]) that have the
      * movie, or empty when no copy is known anywhere. Everywhere already: start. On the parent or on
-     * some tablets: send. Nowhere yet: save to the parent first, which then sends.
+     * some tablets: send, if one of those owners can serve it ([online], or the parent). Nowhere yet,
+     * or only on a tablet that is offline: save to the parent first, which then sends.
      */
-    fun plan(selected: Set<String>, owners: Set<String>): Plan = when {
+    fun plan(selected: Set<String>, owners: Set<String>, online: Set<String>): Plan = when {
         owners.isNotEmpty() && selected.all { it in owners } -> Plan.START_NOW
-        owners.isNotEmpty() -> Plan.SEND
+        usable(owners, online).isNotEmpty() -> Plan.SEND
         else -> Plan.SAVE
+    }
+
+    /** The owners that can hand the file over right now: the parent, or a tablet that is online. */
+    fun usable(owners: Set<String>, online: Set<String>): Set<String> = owners.filter { it == Library.SELF || it in online }.toSet()
+
+    /** No progress at all for this long while getting ready: say who is still being waited for. */
+    const val STALL_MS = 60_000L
+
+    fun stallText(waiting: List<String>): String = "Still waiting for ${TogetherText.join(waiting)}"
+
+    /**
+     * Why getting ready cannot go on by itself, or null while it can. Only when a selected tablet still
+     * lacks the file and nothing is saving it, or looking for it, on the parent. [saveFailed] is shown
+     * on its own with its own message, so it gives null here. [saveCancelled]: the parent's save was stopped.
+     */
+    fun stuck(
+        selected: Set<String>, owners: Set<String>, online: Set<String>,
+        saving: Boolean, saveFailed: Boolean, saveCancelled: Boolean,
+    ): String? {
+        if (selected.all { it in owners }) return null
+        if (saving || saveFailed) return null
+        if (usable(owners, online).isNotEmpty()) return null
+        return when {
+            saveCancelled -> "Saving was cancelled"
+            owners.isEmpty() -> "No tablet has this movie right now"
+            else -> "The tablet that has this movie is offline"
+        }
     }
 
     /** [start] is the set to start on right now, or null to keep waiting. [dropped] went offline and left the selection. */

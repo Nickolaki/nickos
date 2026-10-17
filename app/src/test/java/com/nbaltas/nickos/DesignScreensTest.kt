@@ -445,7 +445,7 @@ class DesignScreensTest {
     }
 
     private fun jfMovie() = com.nbaltas.nickos.jellyfin.JfItem(
-        "m1", "Captain Comet", "Movie", null, null, null, null, null, 90L * 60 * 600_000_000, 0, false, null, 2021, null, null, false, false, false, null, null,
+        "m1", "Captain Comet", "Movie", null, null, null, null, null, 90L * JfItem.TICKS_PER_MIN, 0, false, null, 2021, null, null, false, false, false, null, null,
         container = "mkv", size = 1_000_000_000L,
     )
 

@@ -347,6 +347,31 @@ class JellyfinDownloadsTest {
         assertFalse(said.first().isEmpty())
     }
 
+    @Test fun aSlowRescanStillSendsOnceTheFileShowsUp() {
+        // The file appears only after the third rescan, well past the first round of polls.
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans >= 3) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 2, waitSteps = 3, rescanRounds = 6,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1")), sent)
+        assertTrue(rescans >= 3)
+        assertTrue(said.isEmpty())
+    }
+
+    @Test fun cancelAfterDoneStopsThePendingSend() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans >= 3) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 20, waitSteps = 3, rescanRounds = 6,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("done") { lib.state("m1") == DlState.DONE }
+        lib.cancel("m1")
+        Thread.sleep(600)
+        assertTrue(sent.isEmpty())
+    }
+
     @Test fun onTabletMatchesByFileNameOnThisTabletOnly() {
         val m = item()
         val name = Jellyfin.fileName(m)
