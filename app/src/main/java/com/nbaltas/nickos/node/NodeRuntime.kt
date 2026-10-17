@@ -408,55 +408,59 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     }
 
     // ---- ring a lost tablet ----
-    private val ringMachine = RingMachine()
     private val _ringing = MutableStateFlow(false)
     /** True while the alarm sounds; the overlay shows "Found me!" for it and the status reports it. */
     val ringing: StateFlow<Boolean> = _ringing
-    private var ringJob: Job? = null
 
-    private fun startRing() = synchronized(ringMachine) {
-        if (!ringMachine.start(System.currentTimeMillis(), device.alarmVolume())) return@synchronized
-        device.wake()
-        device.startAlarm()
-        _ringing.value = true
-        ringJob = scope.launch {
-            while (isActive) {
+    /** Start, stop and timeout all go through this one lock, device effects included (see [RingController]). */
+    private val ring = RingController(object : RingPort {
+        override fun alarmVolume() = device.alarmVolume()
+        override fun setAlarmVolume(v: Int) = device.setAlarmVolume(v)
+        override fun saveVolumeBackup(v: Int) { if (!store.setSavedAlarmVolume(v)) Log.w(TAG, "could not save the alarm volume") }
+        override fun clearVolumeBackup() { store.setSavedAlarmVolume(null) }
+        override fun wake() = device.wake()
+        override fun startAlarm() = device.startAlarm()
+        override fun stopAlarm() = device.stopAlarm()
+        override fun shown(ringing: Boolean) { _ringing.value = ringing; overlay.refresh() }
+    }, clock = { android.os.SystemClock.elapsedRealtime() }) // monotonic: a clock correction cannot stretch the 60 seconds
+
+    private fun startRing() {
+        val id = ring.start()
+        if (id == 0L) return
+        scope.launch {
+            while (isActive && ring.isCurrent(id)) {
                 delay(1000)
-                val restore = synchronized(ringMachine) { ringMachine.tick(System.currentTimeMillis()) } ?: continue
-                finishRing(restore)
-                break
+                if (ring.tick()) { pushStatus(); break }
             }
         }
-        overlay.refresh()
     }
 
     /** The kid tapped the overlay, the parent tapped Stop, or the link dropped. Safe to call when not ringing. */
     fun stopRing(reason: RingMachine.Stop) {
-        val restore = synchronized(ringMachine) { ringMachine.stop(reason) } ?: return
-        ringJob?.cancel()
-        finishRing(restore)
-        if (reason != RingMachine.Stop.LINK) pushStatus()
-    }
-
-    private fun finishRing(restore: Int) {
-        device.stopAlarm()
-        device.setAlarmVolume(restore)
-        _ringing.value = false
-        overlay.refresh()
+        if (ring.stop(reason) && reason != RingMachine.Stop.LINK) pushStatus()
     }
 
     // ---- pause everyone ----
-    private fun applyPause(p: NetMessages.PauseAll, parentName: String) {
+    private fun applyPause(p: NetMessages.PauseAll, masterId: String, parentName: String) {
         if (p.on) {
             // A Master re-sends this on every connect: pause the video only when the wall is new.
             if (store.pausedMsg.value == null) device.mediaKey("pause")
+            store.setPausedOwner(masterId)
             store.setPausedBy(parentName)
             store.setPausedMsg(PauseAll.wallText(p.msg))
-        } else {
-            store.setPausedMsg(null)
-            store.setPausedBy(null)
-        }
+        } else if (PauseAll.mayClear(store.pausedOwner(), masterId, p.force)) {
+            clearPause()
+        } else Log.i(TAG, "pause belongs to another parent: resume ignored")
         overlay.refresh()
+    }
+
+    /** Lifts the wall on this tablet only: a right PIN on the wall, unlinking the last parent tablet, or a Master allowed to. */
+    fun clearPause() {
+        store.setPausedMsg(null)
+        store.setPausedBy(null)
+        store.setPausedOwner(null)
+        overlay.refresh()
+        pushStatus()
     }
 
     /** A fresh kid tablet starts with Jellyfin on its home screen, if it has it. */
@@ -497,7 +501,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
-            NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, master?.name ?: "Parent's Tablet") }
+            NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, masterId, master?.name ?: "Parent's Tablet") }
             NetMessages.RING -> NetMessages.decodeRing(m)?.let { if (it) startRing() else stopRing(RingMachine.Stop.PARENT) }
             "media" -> device.mediaKey(m.getString("key"))
             "volume" -> device.setVolume(m.getInt("v"))
@@ -554,7 +558,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
+            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) { releaseLandscape(); clearPause() } }
             NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }

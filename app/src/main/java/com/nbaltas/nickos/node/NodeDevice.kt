@@ -134,7 +134,7 @@ class NodeDevice(private val ctx: Context) {
     }
 
     // ---- ring a lost tablet ----
-    private var ringtone: android.media.Ringtone? = null
+    private var player: android.media.MediaPlayer? = null
 
     fun alarmVolume(): Int = audio.getStreamVolume(AudioManager.STREAM_ALARM)
 
@@ -146,23 +146,34 @@ class NodeDevice(private val ctx: Context) {
     /** Alarm volume to the top and the default alarm sound looping. USAGE_ALARM keeps it loud with the media volume muted. */
     fun startAlarm() {
         setAlarmVolume(audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))
+        // MediaPlayer on every version: Ringtone.isLooping only exists from API 28, and the app supports 24.
+        val mp = android.media.MediaPlayer()
         try {
             val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
                 ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
-            val r = android.media.RingtoneManager.getRingtone(ctx, uri) ?: return
-            r.audioAttributes = android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_ALARM)
-                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-            if (Build.VERSION.SDK_INT >= 28) r.isLooping = true
-            r.play()
-            ringtone = r
-        } catch (e: Exception) { Log.w(TAG, "alarm sound", e) }
+            mp.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            mp.setDataSource(ctx, uri)
+            mp.isLooping = true
+            mp.prepare()
+            mp.start()
+            player = mp
+        } catch (e: Exception) {
+            Log.w(TAG, "alarm sound", e)
+            try { mp.release() } catch (_: Exception) {}
+        }
     }
 
     fun stopAlarm() {
-        try { ringtone?.stop() } catch (e: Exception) { Log.w(TAG, "alarm stop", e) }
-        ringtone = null
+        player?.let {
+            try { it.stop() } catch (e: Exception) { Log.w(TAG, "alarm stop", e) }
+            try { it.release() } catch (_: Exception) {}
+        }
+        player = null
     }
 
     fun brightness(): Int = try {

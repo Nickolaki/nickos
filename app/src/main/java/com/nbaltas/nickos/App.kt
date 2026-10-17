@@ -27,6 +27,12 @@ class App : Application() {
         // An update does not run the provisioning callbacks: a Device Owner kid tablet puts its HOME choice back here, parent mode or not.
         if (store.role.value == Role.NODE) NodeDevice.makeHome(this)
         com.nbaltas.nickos.node.RotationRecovery.retry(this, store)
+        // A process killed while the tablet was ringing leaves the alarm volume at maximum: put it back, then drop the copy.
+        com.nbaltas.nickos.node.AlarmRecovery.recover(
+            store.savedAlarmVolume(),
+            { NodeDevice(this).setAlarmVolume(it) },
+            { store.setSavedAlarmVolume(null) },
+        )
     }
 
     companion object {

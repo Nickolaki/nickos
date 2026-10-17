@@ -336,6 +336,18 @@ class Store(context: Context) {
     val pausedBy: StateFlow<String?> = _pausedBy
     fun setPausedBy(v: String?) { p.edit().putString("pausedBy", v).apply(); _pausedBy.value = v }
 
+    /** Node only: the id of the Master that paused everyone. Only that Master (or the PIN, or a forced resume) lifts the pause. */
+    fun pausedOwner(): String? = p.getString("pausedOwner", null)
+    fun setPausedOwner(v: String?) { p.edit().putString("pausedOwner", v).apply() }
+
+    /** The alarm volume as it was before Ring raised it, or null when nothing is waiting to be put back. Written to disk before the volume is raised. */
+    fun savedAlarmVolume(): Int? = if (p.contains("alarmVolSaved")) p.getInt("alarmVolSaved", 0) else null
+    fun setSavedAlarmVolume(v: Int?): Boolean {
+        val e = p.edit()
+        if (v == null) e.remove("alarmVolSaved") else e.putInt("alarmVolSaved", v)
+        return e.commit()
+    }
+
     private val _bedtime = MutableStateFlow(p.getLong("bedtimeAt", 0))
     /** Wall-clock millis when the bedtime timer turns the screen off, 0 when unset. */
     val bedtimeAt: StateFlow<Long> = _bedtime
@@ -388,10 +400,12 @@ class Store(context: Context) {
         val carnet = p.getString(KEY_CARNET, null)
         // A rotation restore that has not finished is the tablet's own setting, not NickOS data: it survives a reset and is retried.
         val rotation = savedRotation()
+        val alarmVolume = savedAlarmVolume() // likewise the tablet's own alarm volume
         val migration = p.getInt(KEY_MIGRATION, 0)
         p.edit().clear().putString("deviceId", deviceId).apply {
             if (migration > 0) putInt(KEY_MIGRATION, migration)
             if (carnet != null) putString(KEY_CARNET, carnet)
+            if (alarmVolume != null) putInt("alarmVolSaved", alarmVolume)
             if (rotation != null) putInt("rotSavedAccel", rotation.accelerometer).putInt("rotSavedUser", rotation.user)
         }.apply()
         _masterHomeOptIn.value = false; _landscape.value = false; _kidLockDone.value = false

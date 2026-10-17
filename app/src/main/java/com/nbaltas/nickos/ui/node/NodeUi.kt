@@ -386,10 +386,17 @@ fun LockedScreen(store: Store, by: String?) {
     }
 }
 
-/** "Look out the window!" and the parent's name under it. Nothing on it can be tapped away: only the parent's Resume removes it. */
+/**
+ * "Look out the window!" and the parent's name under it. Nothing on it can be tapped away: the parent's Resume removes
+ * it, or a hidden 3s hold on the top left corner + the parent PIN clears it on this tablet only.
+ */
 @Composable
 fun PausedScreen(msg: String, by: String?) {
+    val ctx = LocalContext.current
+    val store = App.get(ctx).store
+    val pin by store.pin.collectAsState()
     val now = rememberNow(1000)
+    var showPin by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(NodePalette.lockedBg).tap {}, contentAlignment = Alignment.Center) {
         Column(
             Modifier.fillMaxSize().padding(horizontal = 80.dp),
@@ -399,6 +406,12 @@ fun PausedScreen(msg: String, by: String?) {
             Text(parentName(by), style = body(30.sp, 600), color = NodePalette.soft)
             Text(clockText(now), style = disp(44.sp), color = NodePalette.soft, modifier = Modifier.padding(top = 20.dp))
         }
+        Box(Modifier.align(Alignment.TopStart).size(140.dp).hiddenHold { showPin = true })
+        // Last child: above the wall's text, inside the same window.
+        if (showPin) PinPad(pin, onOk = {
+            showPin = false
+            App.get(ctx).node.clearPause()
+        }, onCancel = { showPin = false }, subtitle = "Enter the parent PIN to end the pause")
     }
 }
 

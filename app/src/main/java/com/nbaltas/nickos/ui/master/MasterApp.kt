@@ -226,8 +226,9 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
         }
     }
     if (pauseSheet) PauseAllSheet(
-        paused = pausedMsg != null,
-        onSubmit = { on, msg -> app.master.pauseAll(on, msg); pauseSheet = false },
+        // Also when another parent tablet paused: this one can then lift it with the explicit button.
+        paused = pausedMsg != null || views.any { it.status?.paused == true },
+        onSubmit = { on, msg -> app.master.pauseAll(on, msg, force = !on); pauseSheet = false },
         onClose = { pauseSheet = false },
     )
     }

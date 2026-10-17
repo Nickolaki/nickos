@@ -102,7 +102,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val jellyfin = apps.firstOrNull { it.pkg == jfPkg }
     val others = apps.filterNot { it.pkg == jfPkg }
 
-    val canOverlay = remember(lockedBy, warn) { rt.device.canOverlay() }
+    val ringingNow by rt.ringing.collectAsState()
+    val pausedNow by store.pausedMsg.collectAsState()
+    val canOverlay = remember(lockedBy, warn, ringingNow, pausedNow) { rt.device.canOverlay() }
 
     // One-time OKs the Master's brightness slider and Off button need on this tablet. Re-read after each page returns.
     var permTick by remember { mutableIntStateOf(0) }

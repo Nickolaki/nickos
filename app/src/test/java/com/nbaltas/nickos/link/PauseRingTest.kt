@@ -54,11 +54,23 @@ class PauseRingTest {
         assertNull(PauseAll.intent(null))
     }
 
-    @Test fun `a wall left up after resume is lifted`() {
-        val off = PauseAll.staleWall(nodeSaysPaused = true, pausedMsg = null)
-        assertEquals(false, NetMessages.decodePauseAll(wire(off!!))!!.on)
-        assertNull(PauseAll.staleWall(nodeSaysPaused = true, pausedMsg = "Time to eat"))
-        assertNull(PauseAll.staleWall(nodeSaysPaused = false, pausedMsg = null))
+    @Test fun `only the pausing Master or a forced resume lifts a pause`() {
+        assertTrue(PauseAll.mayClear(owner = "A", sender = "A", force = false))
+        assertFalse("a second parent must not cancel it", PauseAll.mayClear(owner = "A", sender = "B", force = false))
+        assertTrue("the explicit Resume everyone button may", PauseAll.mayClear(owner = "A", sender = "B", force = true))
+        assertTrue("a wall without an owner is open", PauseAll.mayClear(owner = null, sender = "B", force = false))
+    }
+
+    @Test fun `the force flag only travels when set`() {
+        assertFalse(wire(NetMessages.pauseAllCmd(false, "")).has("force"))
+        assertFalse(NetMessages.decodePauseAll(wire(NetMessages.pauseAllCmd(false, "")))!!.force)
+        assertTrue(NetMessages.decodePauseAll(wire(NetMessages.pauseAllCmd(false, "", force = true)))!!.force)
+        assertFalse(NetMessages.decodePauseAll(JSONObject("""{"t":"cmd","c":"pauseAll","on":false,"force":"yes"}"""))!!.force)
+    }
+
+    @Test fun `the connect intent only ever pauses`() {
+        assertTrue(NetMessages.decodePauseAll(wire(PauseAll.intent("Time to eat")!!))!!.on)
+        assertFalse(NetMessages.decodePauseAll(wire(PauseAll.intent("Time to eat")!!))!!.force)
     }
 
     @Test fun `the wall has words even when the parent typed none`() {

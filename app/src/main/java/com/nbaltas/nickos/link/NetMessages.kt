@@ -93,15 +93,16 @@ object NetMessages {
     const val PAUSE_ALL = "pauseAll"
     const val PAUSE_CAP = "pause1"
     const val MAX_PAUSE_MSG = 120
-    data class PauseAll(val on: Boolean, val msg: String)
-    fun pauseAllCmd(on: Boolean, msg: String): JSONObject =
-        JSONObject().put("t", "cmd").put("c", PAUSE_ALL).put("on", on).put("msg", msg.trim().take(MAX_PAUSE_MSG))
+    /** [force]: only the explicit "Resume everyone" button sets it; it lifts a pause another Master started. */
+    data class PauseAll(val on: Boolean, val msg: String, val force: Boolean = false)
+    fun pauseAllCmd(on: Boolean, msg: String, force: Boolean = false): JSONObject =
+        JSONObject().put("t", "cmd").put("c", PAUSE_ALL).put("on", on).put("msg", msg.trim().take(MAX_PAUSE_MSG)).apply { if (force) put("force", true) }
 
     /** Null unless this is a pauseAll with a real boolean "on" (a missing one must not pause or resume by accident). */
     fun decodePauseAll(m: JSONObject?): PauseAll? {
         if (m == null || m.optString("t") != "cmd" || m.optString("c") != PAUSE_ALL) return null
         if (m.opt("on") !is Boolean) return null
-        return PauseAll(m.getBoolean("on"), m.optString("msg").trim().take(MAX_PAUSE_MSG))
+        return PauseAll(m.getBoolean("on"), m.optString("msg").trim().take(MAX_PAUSE_MSG), m.opt("force") == true)
     }
 
     /**

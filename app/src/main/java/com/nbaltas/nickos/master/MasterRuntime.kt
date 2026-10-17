@@ -499,11 +499,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         PauseAll.intent(store.pausedMsg.value)?.let { send(id, it) }
     }
 
-    /** Pause (or resume) every linked tablet that is online. The state is kept, so a tablet that connects later gets it too. */
-    fun pauseAll(on: Boolean, msg: String) {
+    /**
+     * Pause (or resume) every linked tablet that is online. The state is kept, so a tablet that connects later gets the
+     * pause too. [force] is true only for the explicit "Resume everyone" button: it lifts a pause another Master started.
+     */
+    fun pauseAll(on: Boolean, msg: String, force: Boolean = false) {
         val text = if (on) PauseAll.wallText(msg.trim().take(NetMessages.MAX_PAUSE_MSG)) else null
         store.setPausedMsg(text)
-        _online.value.forEach { id -> sendControl(id, NetMessages.pauseAllCmd(on, text ?: "")) }
+        _online.value.forEach { id -> sendControl(id, NetMessages.pauseAllCmd(on, text ?: "", force && !on)) }
     }
 
     fun ring(id: String, on: Boolean) {
@@ -540,7 +543,6 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (m.optJSONArray("caps")?.let { a -> (0 until a.length()).any { a.optString(it) == Handshake.CAP } } == true) linkFlags.setSec2Capable(id, true)
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
-        PauseAll.staleWall(st.paused, store.pausedMsg.value)?.let { send(id, it) }
         val net = NodeNet.from(m)
         _net.update { it + (id to net) }
         val n = store.nodes.value.firstOrNull { it.id == id } ?: return
