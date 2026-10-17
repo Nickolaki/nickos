@@ -125,6 +125,38 @@ class TalkPlayerTest {
         }
     }
 
+    @Test fun `the indicator waits for a concurrent cutoff to finish closing the speaker`() {
+        val writing = CountDownLatch(1)
+        val cut = CountDownLatch(1)
+        val closing = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val ind = Indicator()
+        val sp = object : Speaker {
+            override fun open() {}
+            override fun write(pcm: ByteArray, off: Int, len: Int): Int {
+                writing.countDown()
+                cut.await(3, TimeUnit.SECONDS)
+                return -1
+            }
+            override fun close(flush: Boolean) {
+                closing.countDown()
+                cut.countDown()
+                closed.await(3, TimeUnit.SECONDS)
+            }
+        }
+        val p = TalkPlayer({ sp }, ind, { "Dad" }, {})
+        assertTrue(p.begin("s1", "m"))
+        p.play(frame)
+        assertTrue(writing.await(3, TimeUnit.SECONDS))
+        p.end(flush = true)
+        assertTrue(closing.await(3, TimeUnit.SECONDS))
+        try {
+            Thread.sleep(30)
+            assertEquals("close still in progress", "Dad", ind.text)
+        } finally { closed.countDown() }
+        until("indicator cleared after close") { ind.text == null }
+    }
+
     @Test fun `a cut during the drain wins over the tail that is playing`() {
         val gate = CountDownLatch(1)
         val sp = FakeSpeaker(holdWrites = gate)

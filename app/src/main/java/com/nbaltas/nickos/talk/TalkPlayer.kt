@@ -141,10 +141,12 @@ class TalkPlayer(
     private inner class Playing(val sid: String, private val speaker: Speaker) {
         private val queue = LinkedBlockingQueue<ByteArray>(MAX_WAITING)
         @Volatile private var mode = Mode.OPEN
-        private val speakerClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val closeLock = Any()
+        private var speakerClosed = false
 
-        private fun closeSpeaker(flush: Boolean) {
-            if (speakerClosed.compareAndSet(false, true)) speaker.close(flush)
+        private fun closeSpeaker(flush: Boolean) = synchronized(closeLock) {
+            // The writer must wait for a concurrent cutoff to finish closing before clearing the indicator.
+            if (!speakerClosed) { speakerClosed = true; speaker.close(flush) }
         }
 
         /** Speaker and writer thread, or neither. */
