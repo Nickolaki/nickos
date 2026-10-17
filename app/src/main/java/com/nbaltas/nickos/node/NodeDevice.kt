@@ -180,6 +180,22 @@ class NodeDevice(private val ctx: Context) {
         return try { ctx.startActivity(i); true } catch (e: Exception) { Log.w(TAG, "launch $pkg", e); false }
     }
 
+    /**
+     * Opens Android's accessibility settings, where a grown-up switches on NickOS remote control once. A Device Owner tablet
+     * first lets the service through when it limits accessibility services (the limit stays as it was otherwise). The switch
+     * itself is still a tap in Settings: Android lets no app turn an accessibility service on for itself.
+     * On Android 13 and up an APK that was sideloaded (not installed over adb or by NickOS's own updater) has the switch
+     * greyed out until "Allow restricted settings" is chosen in the app's info page.
+     */
+    fun remoteInputIntent(): Intent {
+        if (isDeviceOwner) try {
+            val permitted = dpm.getPermittedAccessibilityServices(admin)
+            // null means every service is allowed already.
+            if (permitted != null && ctx.packageName !in permitted) dpm.setPermittedAccessibilityServices(admin, permitted + ctx.packageName)
+        } catch (e: Exception) { Log.w(TAG, "accessibility allow list", e) }
+        return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
     fun goHome() {
         lastLaunched = null
         ctx.startActivity(

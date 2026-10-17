@@ -449,6 +449,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // The screen answers with its own screenState too.
             "screenStart" -> { screen.start(masterId); return }
             "screenStop" -> { screen.stop(masterId); return }
+            // Strict decode: a bad touch is dropped here, a good one is checked again by the streamer (live, this Master, 20 a second).
+            "touch" -> { RemoteMessages.decodeTouch(m)?.let { screen.touch(masterId, it) }; return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
             "media" -> device.mediaKey(m.getString("key"))

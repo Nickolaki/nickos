@@ -488,6 +488,9 @@ fun ParentMenu(
     /** Non-null: shows the "Let parents see this screen" row. [screenShared] flips it to the turn off wording. */
     onScreenShare: (() -> Unit)? = null,
     screenShared: Boolean = false,
+    /** Non-null: shows "Let parents control this tablet", which opens Android's accessibility settings. [remoteControlOn] once it is switched on. */
+    onRemoteControl: (() -> Unit)? = null,
+    remoteControlOn: Boolean = false,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -521,6 +524,7 @@ fun ParentMenu(
             if (onAllowScreenOff != null) MenuButton("Allow screen off", onClick = onAllowScreenOff)
             if (onTalkNotifications != null) MenuButton("Talk notifications", onClick = onTalkNotifications)
             if (onScreenShare != null) MenuButton(if (screenShared) "Stop letting parents see this screen" else "Let parents see this screen", onClick = onScreenShare)
+            if (onRemoteControl != null) MenuButton(if (remoteControlOn) "Parents can control this tablet" else "Let parents control this tablet", onClick = onRemoteControl)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {

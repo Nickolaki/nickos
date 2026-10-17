@@ -227,6 +227,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onAllowBrightness = if (brightnessOk) null else guarded { ask(rt.device.writeSettingsIntent()) },
             onAllowScreenOff = if (screenOffOk) null else guarded { ask(rt.device.deviceAdminIntent()) },
             onTalkNotifications = guarded { ask(rt.device.talkChannelSettingsIntent()) },
+            remoteControlOn = remember(screen, permTick) { com.nbaltas.nickos.node.RemoteInputService.running },
+            onRemoteControl = guarded { ask(rt.device.remoteInputIntent()) },
             screenShared = screenShared,
             onScreenShare = guarded {
                 if (screenShared) rt.screen.release()

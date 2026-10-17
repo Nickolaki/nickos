@@ -819,6 +819,40 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun nodeParentMenu1024() = nodeMenu()
 
+    // ---- see and control a kid tablet's screen ----
+    private fun remoteMenu(shared: Boolean, control: Boolean) =
+        shot("Node-ParentMenu-Remote-${if (shared) "Shared" else "Off"}-${if (control) "Control" else "NoControl"}-${sizeTag()}") {
+            com.nbaltas.nickos.ui.node.ParentMenu(
+                onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {},
+                onScreenShare = {}, screenShared = shared, onRemoteControl = {}, remoteControlOn = control,
+            )
+        }
+
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeParentMenuRemoteOff960() = remoteMenu(shared = false, control = false)
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun nodeParentMenuRemoteOn960() = remoteMenu(shared = true, control = true)
+
+    /** A stand-in for the kid tablet's screen: a portrait picture with a few blocks on it. */
+    private fun kidScreen(): android.graphics.Bitmap {
+        val b = android.graphics.Bitmap.createBitmap(600, 960, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(b)
+        c.drawColor(0xFF1E2A44.toInt())
+        val p = android.graphics.Paint().apply { color = 0xFFF2A65A.toInt() }
+        for (i in 0 until 3) c.drawRect(60f, 80f + i * 260f, 540f, 280f + i * 260f, p)
+        return b
+    }
+
+    private fun viewer(name: String, control: Boolean, frame: android.graphics.Bitmap? = kidScreen(), state: String = "live", lost: Boolean = false) =
+        shot(name) {
+            com.nbaltas.nickos.ui.master.ScreenViewer(frame, state, control, lost, {}, {}, {}, {}, { _, _ -> }, { _, _, _, _, _ -> })
+        }
+
+    @Test fun screenViewerViewOnly() = viewer("Screen-Viewer-ViewOnly", control = false)
+    @Test fun screenViewerWithControl() = viewer("Screen-Viewer-Control", control = true)
+    @Test fun screenViewerNeedsConsent() = viewer("Screen-Viewer-NeedsConsent", control = false, frame = null, state = "needs_consent")
+    @Test fun screenViewerLost() = viewer("Screen-Viewer-Lost", control = false, lost = true)
+
     // ---- Tapo camera on the car network ----
     private fun tapo(id: String, name: String, host: String) =
         app.store.saveCamera(Camera(id, name, host = host, user = "nick", pass = "x"))

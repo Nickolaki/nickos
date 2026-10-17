@@ -30,6 +30,7 @@ import com.nbaltas.nickos.remote.FrameGate
 import com.nbaltas.nickos.remote.RemoteMessages
 import com.nbaltas.nickos.remote.ScreenConsent
 import com.nbaltas.nickos.remote.ScreenSize
+import com.nbaltas.nickos.remote.TouchLimiter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
@@ -104,7 +105,7 @@ class ScreenStreamer(
     fun statusWire(): String = wire
 
     /** The `control` field of the status. */
-    fun controlWire(): String = RemoteMessages.CONTROL_OFF
+    fun controlWire(): String = if (RemoteInputService.running) RemoteMessages.CONTROL_READY else RemoteMessages.CONTROL_OFF
 
     fun stateJson(): JSONObject = RemoteMessages.encodeState(RemoteMessages.State(wire, controlWire(), port, key))
 
@@ -293,6 +294,26 @@ class ScreenStreamer(
             d.setSurface(r.surface)
             old?.close()
         } catch (e: Exception) { Log.w(TAG, "resize", e) }
+    }
+
+    // ---- touches ----
+
+    private val limiter = TouchLimiter(clock = clock)
+
+    /**
+     * A Master's touch. Taken only while this tablet is sharing with that Master, at most 20 a second, and (for taps and
+     * swipes) only when the remote input service is switched on. Anything else is dropped without a word. A touch is an
+     * ordinary touch: the kid lock and NickOS's own watch still apply to wherever it lands.
+     */
+    fun touch(masterId: String, t: RemoteMessages.Touch) {
+        if (wire != RemoteMessages.LIVE || masterId !in viewers) return
+        if (!limiter.allow()) return
+        when (t) {
+            RemoteMessages.Touch.Home -> rt.device.goHome() // NickOS's home, not whatever launcher the system would pick
+            is RemoteMessages.Touch.Tap -> RemoteInputService.instance?.tap(t.x, t.y)
+            is RemoteMessages.Touch.Swipe -> RemoteInputService.instance?.swipe(t.x1, t.y1, t.x2, t.y2, t.ms)
+            RemoteMessages.Touch.Back -> RemoteInputService.instance?.back()
+        }
     }
 
     // ---- the pill ----
