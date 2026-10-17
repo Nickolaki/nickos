@@ -15,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.RoborazziOptions
@@ -936,6 +938,42 @@ class DesignScreensTest {
     @Test fun controlDeviceTouchLandscape1024() = deviceTouchLandscape("1024x768")
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun controlDeviceTouchLandscape960() = deviceTouchLandscape("960x600")
+
+    /** A real 0.12 tablet: ring1, touch1, landscape, power and screen together. Every control must be visible at 1024 and 1280. */
+    private fun deviceAllFeatures(size: String) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        shot("Control-Device-AllFeatures-$size") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1024() = deviceAllFeatures("1024x768")
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280() = deviceAllFeatures("1280x800")
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures960() = deviceAllFeatures("960x600")
+
+    /** The same page scrolled to the bottom: the last row of cards is complete, none is clipped inside. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1024Scrolled() {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } }
+            waitForIdle()
+            repeat(3) { onRoot().performTouchInput { swipeUp() } }
+            waitForIdle()
+            onRoot().captureRoboImage(
+                "../design/screens/Control-Device-AllFeatures-1024x768-Scrolled.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            )
+        }
+    }
 
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
         com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {}, onTalkNotifications = {})
