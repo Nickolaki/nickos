@@ -1204,7 +1204,7 @@ private fun PhoneJfPickContent(
 @Composable
 internal fun PhoneGroupRemote(
     nodeId: String?, scroll: ScrollState, onBack: (() -> Unit)? = null,
-    onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit = {},
+    onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit,
 ) {
     val app = App.get(LocalContext.current)
     val master = app.master
@@ -1254,7 +1254,7 @@ internal fun PhoneGroupRemote(
                     PhoneTimes("--:--", "--:--")
                 }
             }
-            streamFails.values.filter { it.fid == s.fid }.forEach { f ->
+            streamFails.values.filter { it.fid == s.fid && (nodeId == null || it.id == nodeId) }.forEach { f ->
                 StreamFailRow(f, sync.kid(f.id)) { onSaveInstead(f) }
             }
             PhoneTransport(playing = s.playing, backSecs = 10, fwdSecs = 10, onBack = { sync.skip(-10_000) }, onToggle = { sync.toggle() }, onForward = { sync.skip(10_000) })

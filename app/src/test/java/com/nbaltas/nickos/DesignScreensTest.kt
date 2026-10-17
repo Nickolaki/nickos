@@ -292,6 +292,20 @@ class DesignScreensTest {
             }
         }
     }
+    /** A phone-only picture at the normal font, written to design/screens/phone/<name>.png. */
+    private fun phoneOnly(name: String, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/phone/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { content() } } } }
+    }
+    /** The phone settings list itself (no section open). */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun settingsPhoneList() = phoneOnly("Settings-Phone-List") { SettingsScreen(null, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun settingsTabletsPhoneFont200() = phoneFont200("Settings-Tablets-font200") { SettingsScreen(0, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun setupRolePhoneFont200() = phoneFont200("Setup-Role-font200") { RoleScreen({}, {}, {}) }
     @Config(qualifiers = PHONE_QUALIFIERS)
     @Test fun controlDevicePhoneFont200() = phoneFont200("Control-Device-font200") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
     @Config(qualifiers = PHONE_QUALIFIERS)

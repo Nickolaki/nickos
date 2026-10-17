@@ -79,6 +79,7 @@ import com.composables.icons.lucide.Wifi
 import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.jellyfin.JfItem
+import kotlinx.coroutines.launch
 import com.nbaltas.nickos.ui.node.kidName
 import com.nbaltas.nickos.ui.node.rememberNow
 import com.nbaltas.nickos.ui.setup.rotate90
@@ -197,6 +198,20 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
     LaunchedEffect(tab, staticBody) { if (fade.value < 1f) fade.animateTo(1f, tween(150)) }
     // Phone: the Watch tab's saveable state (library segment, open movie or show, scroll) survives a visit to another tab.
     val saveable = rememberSaveableStateHolder()
+    // "Save to tablets instead" on a stream failure: the same flow as the Together screen, for the one tablet that failed.
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var saveInstead by remember { mutableStateOf<Pair<JfItem, String>?>(null) }
+    val onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit = { f ->
+        val jfc = app.master.jellyfin()
+        if (jfc != null && app.store.jellyfin.value != null) scope.launch {
+            app.master.sync.dismissFailure(f.id)
+            runCatching { jfc.item(app.store.jellyfin.value!!.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+        }
+    }
+    saveInstead?.let { (item, id) ->
+        JfPickPanel(item, rememberNodeViews(), remember { app.master.sync.library() }, app.master, onBack = { saveInstead = null }, saveFor = id)
+        return
+    }
 
     Column(Modifier.fillMaxSize()) {
         // The screen viewer takes the whole window.
@@ -206,7 +221,7 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
                 tab == TAB_WATCH ->
                     if (phone) saveable.SaveableStateProvider("watch") { TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) }) }
                     else TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
-                tab == TAB_NOW && inTogether -> if (phone) PhoneGroupRemote(nodeId, nowScroll) else TabletRemote(nodeId)
+                tab == TAB_NOW && inTogether -> if (phone) PhoneGroupRemote(nodeId, nowScroll, onSaveInstead = onSaveInstead) else TabletRemote(nodeId)
                 !v.online -> OfflineBody(v, onBack, offlineScroll)
                 tab == TAB_NOW -> if (v.playback?.item != null) NowPlaying(v, nowScroll) else NothingPlaying(v, nowScroll) { onTab(TAB_WATCH) }
                 tab == TAB_APPS -> AppsTab(v, appsGrid)

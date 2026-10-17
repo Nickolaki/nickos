@@ -89,6 +89,10 @@ import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Dot
 import com.nbaltas.nickos.ui.theme.FieldLabel
 import com.nbaltas.nickos.ui.theme.Keypad
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
@@ -155,6 +159,20 @@ fun SetupFlow() {
 
 @Composable
 internal fun Welcome(onStart: () -> Unit) {
+    if (LocalPhone.current) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(PhoneMetrics.gutter),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+        ) {
+            NickLogo(80.dp)
+            Text("NickOS", style = disp(40.sp, 800, 1f).copy(letterSpacing = (-0.03).em), color = C.text)
+            Text("One home screen for every tablet in the family.", style = body(24.sp, 600, 1.25f), color = C.text, textAlign = TextAlign.Center)
+            Muted("Tablets talk to each other over your home or car WiFi. No internet needed.", 16, Modifier.fillMaxWidth(), maxLines = Int.MAX_VALUE)
+            NickButton("Get started", onStart, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
+        }
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
     // A short landscape tablet (~600dp tall) must show "Get started" without scrolling.
     val short = maxHeight < 700.dp
@@ -179,6 +197,20 @@ internal fun Welcome(onStart: () -> Unit) {
 internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit, nodeAllowed: Boolean = NodeSupport.ok()) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Step 1 of 3", onBack)
+        if (LocalPhone.current) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = PhoneMetrics.gutter).padding(bottom = PhoneMetrics.gutter),
+                verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap),
+            ) {
+                Title("How will you use this device?", 28)
+                RoleCard(Modifier.fillMaxWidth(), Lucide.Tablet, true, C.accent, "Master", "I control", C.accent,
+                    "For the parent. Sees and controls every linked tablet. Great mounted at the front of the car.", "Choose Master", onMaster)
+                RoleCard(Modifier.fillMaxWidth(), Lucide.Smartphone, false, Color(0xFFFF7A59), "Node", "Kid's tablet", Color(0xFFFF9B80),
+                    "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode,
+                    enabled = nodeAllowed, note = if (nodeAllowed) null else NodeSupport.REFUSAL_COPY)
+            }
+            return@Column
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrow = maxWidth < 800.dp
             Column(
@@ -207,6 +239,28 @@ private fun RoleCard(
     title: String, sub: String, subColor: Color, desc: String, cta: String, onClick: () -> Unit,
     enabled: Boolean = true, note: String? = null,
 ) {
+    if (LocalPhone.current) {
+        val phoneShape = RoundedCornerShape(PhoneMetrics.cardRadius)
+        Column(
+            modifier.clip(phoneShape).background(C.surface).border(2.dp, C.line, phoneShape).padding(PhoneMetrics.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap + 4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tile).alpha(if (enabled) 1f else 0.5f), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = OnAvatar, modifier = Modifier.size(24.dp).then(if (rotate) Modifier.rotate90() else Modifier))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = disp(24.sp, 800, 1.15f), color = if (enabled) C.text else C.muted)
+                    Text(sub, style = body(16.sp, 700), color = subColor.copy(alpha = if (enabled) 1f else 0.6f))
+                }
+            }
+            // The reason a role is unavailable comes straight under its heading, never below the fold.
+            if (note != null) Text(note, style = body(16.sp, 700, 1.4f), color = C.danger)
+            Muted(desc, 16, maxLines = Int.MAX_VALUE)
+            if (enabled) NickButton(cta, onClick, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, trailing = Lucide.ChevronRight)
+        }
+        return
+    }
     val shape = RoundedCornerShape(32.dp)
     Column(
         modifier.heightIn(min = 440.dp).alpha(if (enabled) 1f else 0.5f).clip(shape).background(C.surface).border(2.dp, C.line, shape)
@@ -439,6 +493,25 @@ internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
     LaunchedEffect(Unit) { if (app.master.carNet.permissionToRequest().isEmpty()) onNext() }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · Car network", onBack)
+        if (LocalPhone.current) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(PhoneMetrics.gutter),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(C.accent), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(32.dp))
+                }
+                Title(MASTER_NET_TITLE, 52)
+                Text(MASTER_NET_BODY.replace("from this tablet", "from this device"), style = body(16.sp, 500, 1.4f), color = C.text)
+                Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(14.sp, 500, 1.4f), color = C.muted)
+                NickButton("Allow", {
+                    val p = app.master.carNet.permissionToRequest()
+                    if (p.isEmpty()) { app.master.carNet.recheck(); onNext() } else ask.launch(p.toTypedArray())
+                }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY)
+                NickButton("Not now", onNext, Modifier.fillMaxWidth(), BtnStyle.GHOST)
+            }
+            return@Column
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -485,6 +558,47 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
 
     Column(Modifier.fillMaxSize()) {
         SetupHeader(step, back)
+        if (LocalPhone.current) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(PhoneMetrics.gutter),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Title("Add tablet", 56)
+                Muted("Enter the 6-digit code showing on the kid's tablet. Both tablets need to be on the same WiFi.", 16)
+                if (onQr != null) Box(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.minTarget).clickable(onClick = onQr), contentAlignment = Alignment.CenterStart) {
+                    Text("Brand-new or reset tablet? Set it up with a QR code", style = body(16.sp, 700), color = C.accent)
+                }
+                // Six equal slots across the width, 56dp high, never circles.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    (0 until 6).forEach { i ->
+                        val active = i == digits.length && !busy
+                        val slot = RoundedCornerShape(PhoneMetrics.fieldRadius)
+                        Box(
+                            Modifier.weight(1f).height(56.dp).clip(slot).background(C.surface).border(2.dp, if (active) C.accent else C.line, slot),
+                            contentAlignment = Alignment.Center,
+                        ) { Text(digits.getOrNull(i)?.toString() ?: "", style = disp(28.sp), color = C.text) }
+                    }
+                }
+                Box(Modifier.fillMaxWidth().heightIn(min = 24.dp), contentAlignment = Alignment.CenterStart) {
+                    when {
+                        busy -> Text("Looking for the tablet…", style = body(14.sp, 600), color = C.muted)
+                        error != null -> Text(error!!, style = body(14.sp, 600, 1.3f), color = C.danger)
+                    }
+                }
+                Keypad(
+                    onDigit = { d -> if (!busy && digits.length < 6) { digits += d; error = null; if (digits.length == 6) submit(digits) } },
+                    onDelete = { if (!busy) digits = digits.dropLast(1) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (typing) Column {
+                    FieldLabel("Kid's tablet address (shown under its code)")
+                    NickField(address, { address = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri, placeholder = "192.168.1.23")
+                } else Box(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.minTarget).clickable { typing = true }, contentAlignment = Alignment.CenterStart) {
+                    Text("Tablet not found? Type its address", style = body(16.sp, 700), color = C.accent)
+                }
+            }
+            return@Column
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // Landscape tablets (~960x600) are wide but short: put the pad beside the text and shrink it, instead of
             // stacking it below the fold.
@@ -567,6 +681,22 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
 fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue: () -> Unit, continueLabel: String = "Continue") {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · Add tablet", null)
+        if (LocalPhone.current) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(PhoneMetrics.gutter),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(Modifier.size(64.dp).clip(CircleShape).background(C.online), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Check, null, tint = Color(0xFF0B2616), modifier = Modifier.size(32.dp))
+                }
+                // The whole sentence, however long the name.
+                Title("${r.node.name} is linked", 56, maxLines = Int.MAX_VALUE)
+                TabletSummaryRow(r.node.name, r.node.color, r.node.avatar, r.status)
+                NickButton(continueLabel, onContinue, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, trailing = Lucide.ChevronRight)
+                NickButton("Add another tablet", onAnother, Modifier.fillMaxWidth(), BtnStyle.GHOST, leading = Lucide.Plus)
+            }
+            return@Column
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 72.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -592,6 +722,23 @@ fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue:
 
 @Composable
 private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeStatus) {
+    if (LocalPhone.current) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Avatar(name, color, avatar, 40.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(name, style = body(18.sp, 800, 1.2f), color = C.text)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Dot(C.online)
+                    Text("Online · Screen ${if (st.screenOn) "on" else "off"}", style = body(14.sp), color = C.muted)
+                }
+            }
+            Text("${st.battery}%", style = body(14.sp, 700), color = C.text, maxLines = 1, softWrap = false)
+        }
+        return
+    }
     Row(
         Modifier.widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -612,6 +759,29 @@ private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeS
 internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · Step 3 of 3", onBack)
+        if (LocalPhone.current) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(PhoneMetrics.gutter),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(C.surface2), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Server, null, tint = C.accent, modifier = Modifier.size(24.dp))
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Title("Connect Jellyfin", 52)
+                    // Its own small label, so the heading never has to carry (and lose) the word.
+                    Text("Optional · legacy", style = body(14.sp, 700), color = C.muted)
+                }
+                Muted("Browse your family's shows and movies from here, and play them on any tablet.", 16)
+                JellyfinForm(onSaved = onDone, footer = { save, saving ->
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+                        NickButton(if (saving) "Saving…" else "Save & finish", save, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, enabled = !saving)
+                        NickButton("Skip for now", onDone, Modifier.fillMaxWidth(), BtnStyle.GHOST)
+                    }
+                })
+            }
+            return@Column
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val narrow = maxWidth < 1000.dp
             val intro: @Composable (Modifier) -> Unit = { m ->
@@ -675,13 +845,25 @@ fun JellyfinForm(
         acc
     } catch (e: Exception) { result = false to (e.message?.takeIf { it.length < 60 } ?: "Couldn't connect"); null }
 
-    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+    val phone = LocalPhone.current
+    Column(verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp)) {
         Column { FieldLabel("Server address"); NickField(url, { url = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri) }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (phone) {
+            // Stacked: every credential gets the full width.
+            Column { FieldLabel("Username"); NickField(user, { user = it }) }
+            Column { FieldLabel("Password"); NickField(pass, { pass = it }, password = true, placeholder = if (initial != null) "••••••••" else "") }
+            NickButton(if (busy == 1) "Testing…" else "Test connection", { busy = 1; scope.launch { login(); busy = 0 } }, Modifier.fillMaxWidth(), leading = Lucide.RefreshCw, enabled = busy == 0)
+            result?.let { (ok, msg) ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (ok) Icon(Lucide.Check, null, tint = C.online, modifier = Modifier.size(20.dp))
+                    Text(msg, style = body(16.sp, 700, 1.3f), color = if (ok) C.online else C.danger, modifier = Modifier.weight(1f, fill = false))
+                }
+            }
+        } else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f)) { FieldLabel("Username"); NickField(user, { user = it }) }
             Column(Modifier.weight(1f)) { FieldLabel("Password"); NickField(pass, { pass = it }, password = true, placeholder = if (initial != null) "••••••••" else "") }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        if (!phone) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             NickButton(if (busy == 1) "Testing…" else "Test connection", { busy = 1; scope.launch { login(); busy = 0 } }, leading = Lucide.RefreshCw, enabled = busy == 0)
             result?.let { (ok, msg) ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

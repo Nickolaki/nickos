@@ -116,7 +116,8 @@ sealed interface MScreen {
     data object AddTablet : MScreen
     data class Linked(val r: MasterRuntime.PairResult) : MScreen
     data class Control(val nodeId: String, val tab: Int = 0) : MScreen
-    data class Settings(val section: Int = 0) : MScreen
+    /** [section] null: the first section on a tablet, the settings list on a phone. */
+    data class Settings(val section: Int? = null) : MScreen
     data object Drawer : MScreen
     data object Cameras : MScreen
     data object QrSetup : MScreen

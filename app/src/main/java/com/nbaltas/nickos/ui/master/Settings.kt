@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -101,6 +102,16 @@ import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.Keypad
 import com.nbaltas.nickos.ui.theme.LightColors
 import com.nbaltas.nickos.ui.theme.Muted
+import com.nbaltas.nickos.ui.theme.IconCircle
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneHeader
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickLogo
 import com.nbaltas.nickos.ui.theme.NickSwitch
@@ -117,8 +128,31 @@ private val sections = listOf<Pair<String, ImageVector>>(
     "Parent PIN" to Lucide.KeyRound, "Theme" to Lucide.Contrast, "About" to Lucide.Info,
 )
 
+/** Phone: what Back in a section page does (return to the list). Null on tablets, where the sidebar is always there. */
+private val LocalSectionBack = staticCompositionLocalOf<(() -> Unit)?> { null }
+
+private fun sectionPage(i: Int, onAdd: () -> Unit): @Composable () -> Unit = {
+    when (i) {
+        0 -> TabletsSection(onAdd)
+        1 -> JellyfinSection()
+        2 -> CamerasSection()
+        3 -> PinSection()
+        4 -> ThemeSection()
+        else -> AboutSection()
+    }
+}
+
+/**
+ * [section] is the section to open. On a tablet null means the first one. On a phone null means the settings list,
+ * and a number opens that page directly; Back then returns to the list, and Back from the list calls [onBack].
+ */
 @Composable
-fun SettingsScreen(section: Int, onSection: (Int) -> Unit, onBack: () -> Unit, onAdd: () -> Unit) {
+fun SettingsScreen(section: Int?, onSection: (Int) -> Unit, onBack: () -> Unit, onAdd: () -> Unit) {
+    if (LocalPhone.current) {
+        PhoneSettings(section, onBack, onAdd)
+        return
+    }
+    val current = section ?: 0
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val panelW = if (maxWidth < 1000.dp) 250.dp else 320.dp
         Row(Modifier.fillMaxSize()) {
@@ -128,7 +162,7 @@ fun SettingsScreen(section: Int, onSection: (Int) -> Unit, onBack: () -> Unit, o
                     Title("Settings", 34, maxLines = 1)
                 }
                 sections.forEachIndexed { i, (label, icon) ->
-                    val on = i == section
+                    val on = i == current
                     Row(
                         Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(18.dp)).background(if (on) C.surface2 else Color.Transparent)
                             .clickable { onSection(i) }.padding(horizontal = 18.dp),
@@ -141,22 +175,89 @@ fun SettingsScreen(section: Int, onSection: (Int) -> Unit, onBack: () -> Unit, o
                 Spacer(Modifier.weight(1f))
                 Text("NickOS ${BuildConfig.VERSION_NAME}", style = body(15.sp), color = C.muted, modifier = Modifier.padding(horizontal = 18.dp))
             }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                when (section) {
-                    0 -> TabletsSection(onAdd)
-                    1 -> JellyfinSection()
-                    2 -> CamerasSection()
-                    3 -> PinSection()
-                    4 -> ThemeSection()
-                    else -> AboutSection()
-                }
-            }
+            Box(Modifier.weight(1f).fillMaxHeight()) { sectionPage(current, onAdd)() }
         }
     }
 }
 
+private val phoneSummaries = listOf(
+    "Add, rename, unlink; the car network", "Optional movie library", "Picture quality and automatic off",
+    "Change the PIN that leaves kid mode", "Dark, light or match the system", "Version, updates and reset",
+)
+
+/** The phone settings: a single list of sections, each opening a full page with its own header. */
+@Composable
+private fun PhoneSettings(direct: Int?, onBack: () -> Unit, onAdd: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    // Survives rotation. The direct argument is only the starting point.
+    var open by rememberSaveable(direct) { mutableStateOf(direct) }
+    BackHandler { if (open != null) open = null else onBack() }
+    val sel = open
+    if (sel != null) {
+        CompositionLocalProvider(LocalSectionBack provides { open = null }) { sectionPage(sel, onAdd)() }
+        return
+    }
+    val nodes by app.store.nodes.collectAsState()
+    val jf by app.store.jellyfin.collectAsState()
+    val theme by app.store.theme.collectAsState()
+    val update by Updater.state.collectAsState()
+    Column(Modifier.fillMaxSize()) {
+        PhoneHeader("Settings", onBack)
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = PhoneMetrics.gutter),
+            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+        ) {
+            sections.forEachIndexed { i, (label, icon) ->
+                val summary = when (i) {
+                    0 -> if (nodes.isEmpty()) "No tablets linked yet" else "${nodes.size} linked · ${phoneSummaries[0]}"
+                    1 -> if (jf != null) "Connected" else "Not connected · ${phoneSummaries[1]}"
+                    4 -> when (theme) { "LIGHT" -> "Light"; "SYSTEM" -> "Match system"; else -> "Dark" }
+                    5 -> if (update is UpdateState.Available) "Update ready · version ${BuildConfig.VERSION_NAME}" else "Version ${BuildConfig.VERSION_NAME} · ${phoneSummaries[5]}"
+                    else -> phoneSummaries[i]
+                }
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button) { open = i }.padding(horizontal = PhoneMetrics.cardPadding, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(icon, null, tint = C.accent, modifier = Modifier.size(24.dp).then(if (i == 0) Modifier.rotate90() else Modifier))
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = body(18.sp, 700, 1.25f), color = C.text)
+                        Text(summary, style = body(14.sp, 500, 1.3f), color = C.muted)
+                    }
+                    Icon(Lucide.ChevronRight, null, tint = C.muted, modifier = Modifier.size(20.dp))
+                }
+            }
+            Text("NickOS ${BuildConfig.VERSION_NAME}", style = body(14.sp), color = C.muted, modifier = Modifier.padding(vertical = PhoneMetrics.cardPadding))
+        }
+    }
+}
+
+/** A card body. Tablets keep their own radius and padding; phones get 20dp radius and 16dp padding. */
+@Composable
+private fun Modifier.panel(radius: Dp = 28.dp, h: Dp = 28.dp, v: Dp = 28.dp): Modifier =
+    if (LocalPhone.current) clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+    else clip(RoundedCornerShape(radius)).background(C.surface).padding(horizontal = h, vertical = v)
+
+/** Phone buttons are full width and grow with the font; tablet buttons keep their fixed height. */
+@Composable
+private fun btnMod(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else Modifier.height(52.dp)
+
 @Composable
 private fun SectionPage(title: String, action: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
+    if (LocalPhone.current) {
+        Column(Modifier.fillMaxSize()) {
+            PhoneHeader(title, LocalSectionBack.current)
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = PhoneMetrics.gutter, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardPadding),
+            ) {
+                action()
+                content()
+            }
+        }
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 48.dp, vertical = 40.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Title(title, 46, Modifier.weight(1f), maxLines = 1)
@@ -177,20 +278,23 @@ private fun TabletsSection(onAdd: () -> Unit) {
     val hotspot by app.store.hotspot.collectAsState()
     var renaming by remember { mutableStateOf<String?>(null) } // node id, or "" for this tablet
     var confirmUnlink by remember { mutableStateOf<String?>(null) }
-    SectionPage("Linked tablets", { NickButton("Add tablet", onAdd, style = BtnStyle.PRIMARY, leading = Lucide.Plus) }) {
+    val phone = LocalPhone.current
+    SectionPage("Linked tablets", { NickButton("Add tablet", onAdd, if (phone) Modifier.fillMaxWidth() else Modifier, style = BtnStyle.PRIMARY, leading = Lucide.Plus) }) {
         Column(
-            Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            if (phone) Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(PhoneMetrics.cardRadius)).padding(PhoneMetrics.cardPadding)
+            else Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.size(60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
-                    Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(26.dp).rotate90())
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp)) {
+                Box(Modifier.size(if (phone) 32.dp else 60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(if (phone) 18.dp else 26.dp).rotate90())
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(name.ifBlank { "Parent's Tablet" }, style = body(20.sp, 800), color = C.text)
+                    Text(name.ifBlank { "Parent's Tablet" }, style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.2f else 1.3f), color = C.text)
                     Muted("This tablet · Master", 16)
                 }
-                NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
+                if (phone) IconCircle(Lucide.Pencil, { renaming = "" }, label = "Rename this tablet")
+                else NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
             }
             val ctx = LocalContext.current
             val wake by app.store.powerWakeOnCharge.collectAsState()
@@ -222,31 +326,34 @@ private fun TabletsSection(onAdd: () -> Unit) {
         CarNetCard()
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             views.forEach { v ->
-                val buttons: @Composable () -> Unit = {
-                    NickButton("Rename", { renaming = v.node.id }, Modifier.height(52.dp), leading = Lucide.Pencil)
+                val buttons: @Composable RowScope.() -> Unit = {
+                    val bm = if (phone) Modifier.weight(1f) else Modifier.height(52.dp)
+                    NickButton("Rename", { renaming = v.node.id }, bm, leading = Lucide.Pencil)
                     NickButton(if (confirmUnlink == v.node.id) "Sure?" else "Unlink", {
                         if (confirmUnlink == v.node.id) { app.master.unlink(v.node.id); confirmUnlink = null } else confirmUnlink = v.node.id
-                    }, Modifier.height(52.dp), BtnStyle.DANGER, leading = Lucide.Unlink)
+                    }, bm, BtnStyle.DANGER, leading = Lucide.Unlink)
                 }
                 // Portrait tablets/phones: the buttons go on their own line, or they squeeze the name to nothing.
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     val narrow = maxWidth < 680.dp
                     Column(
                         // Design: min-height 96 on the content box, plus 16 padding top and bottom.
-                        Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+                        if (phone) Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+                        else Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 14.dp, Alignment.CenterVertically),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                            Avatar(v.node.name, v.node.color, v.node.avatar, 60.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 18.dp)) {
+                            Avatar(v.node.name, v.node.color, v.node.avatar, if (phone) 40.dp else 60.dp)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(v.node.name, style = body(22.sp, 800), color = C.text, maxLines = 1)
-                                StatusLine(v, 16, 10.dp, if (v.online) "Online" else statusText(v))
+                                Text(v.node.name, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.2f else 1.3f), color = C.text, maxLines = if (phone) 2 else 1)
+                                StatusLine(v, if (phone) 14 else 16, 10.dp, if (v.online) "Online" else statusText(v))
                                 Muted(tabletNetLine(v.online, net[v.node.id], v.node.wifiSaved, hotspot), 15)
                             }
-                            Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                            if (phone) Text(v.battery?.let { "$it%" } ?: "", style = body(14.sp, 700), color = if (v.online) C.text else C.muted, maxLines = 1, softWrap = false)
+                            else Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                             if (!narrow) buttons()
                         }
-                        if (narrow) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+                        if (narrow) Row(if (phone) Modifier.fillMaxWidth() else Modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
                     }
                 }
             }
@@ -384,38 +491,45 @@ private fun CarNetCard() {
         }
     }
     val up = state is CarNetState.On
+    val phone = LocalPhone.current
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 22.dp, vertical = 20.dp),
+        Modifier.fillMaxWidth().panel(24.dp, 22.dp, 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.heightIn(min = if (phone) 52.dp else 0.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("Car network", style = body(20.sp, 800), color = C.text)
+                Text("Car network", style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
                 Muted(CARNET_SWITCH_HELP, 15)
             }
             NickSwitch(switchedOn) { app.store.setCarNetOn(it) }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(26.dp))
-            Text(copy.title, style = body(22.sp, 800), color = C.text, maxLines = 2, modifier = Modifier.weight(1f))
-            if (showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 14.dp)) {
+            Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(if (phone) 22.dp else 26.dp))
+            Text(copy.title, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.25f else 1.3f), color = C.text, maxLines = if (phone) Int.MAX_VALUE else 2, modifier = Modifier.weight(1f))
+            if (!phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
         }
+        if (phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.fillMaxWidth())
         (state as? CarNetState.On)?.let { on ->
             // The password: this tablet's own record of it, never logged and never part of the state's toString.
             if (showSecret) CarNetSecret(on.ssid, on.pass ?: hotspot?.takeIf { it.direct && it.ssid == on.ssid }?.pass ?: app.store.carNetPass())
         }
         copy.line?.let { Muted(it, 16) }
-        if (copy.primary != null || copy.ghost != null || (up && !showSecret)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            copy.primary?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.PRIMARY) }
-            if (up && !showSecret) NickButton(CARNET_SHOW, { showSecret = true }, Modifier.height(52.dp), BtnStyle.PRIMARY)
-            copy.ghost?.let { b -> NickButton(b.label, { act(b.action) }, Modifier.height(52.dp), BtnStyle.GHOST) }
+        val buttons: @Composable () -> Unit = {
+            copy.primary?.let { b -> NickButton(b.label, { act(b.action) }, btnMod(), BtnStyle.PRIMARY) }
+            if (up && !showSecret) NickButton(CARNET_SHOW, { showSecret = true }, btnMod(), BtnStyle.PRIMARY)
+            copy.ghost?.let { b -> NickButton(b.label, { act(b.action) }, btnMod(), BtnStyle.GHOST) }
+        }
+        if (copy.primary != null || copy.ghost != null || (up && !showSecret)) {
+            // Phone: the actions stack, each the full width and at least 48dp; tablets keep one row.
+            if (phone) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { buttons() }
+            else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
         }
         if (copy.fields || reveal) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column { FieldLabel("Hotspot name"); NickField(name, { name = it }, Modifier.widthIn(max = 460.dp), placeholder = "e.g. Dad's phone") }
             Column { FieldLabel("Password"); NickField(pass, { pass = it }, Modifier.widthIn(max = 460.dp), placeholder = "8 to 63 characters") }
             NickButton("Save", {
                 app.store.setHotspot(Hotspot(name.trim(), pass, direct = false)); reveal = false
-            }, Modifier.height(52.dp), BtnStyle.PRIMARY, enabled = hotspotFieldsOk(name.trim(), pass))
+            }, btnMod(), BtnStyle.PRIMARY, enabled = hotspotFieldsOk(name.trim(), pass))
             Muted(HOTSPOT_SAVE_NOTE, 15)
         }
     }
@@ -429,6 +543,22 @@ internal var carNetStartRevealed = false
 @Composable
 private fun CarNetSecret(ssid: String, pass: String) {
     val qr = remember(ssid, pass) { wifiQrBitmap(wifiQrPayload(ssid, pass), 500) }
+    if (LocalPhone.current) {
+        // Phone: name, password and QR code each get the full width, one under the other. Selectable, never squeezed.
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column { FieldLabel("Network name"); Text(ssid, style = body(20.sp, 800, 1.25f), color = C.text) }
+                    Column { FieldLabel("Password"); Text(pass, style = body(20.sp, 800, 1.25f), color = C.text) }
+                }
+            }
+            Box(Modifier.align(Alignment.CenterHorizontally).size(200.dp).clip(RoundedCornerShape(PhoneMetrics.mediaRadius)).background(Color.White).padding(10.dp), contentAlignment = Alignment.Center) {
+                Image(qr.asImageBitmap(), "Car network QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None)
+            }
+            Muted(CARNET_SHARE_HELP, 15)
+        }
+        return
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SelectionContainer {
@@ -454,30 +584,42 @@ private fun JellyfinSection() {
     val nodes by app.store.nodes.collectAsState()
     var picking by remember { mutableStateOf<LinkedNode?>(null) }
     var formKey by remember { mutableStateOf(0) }
+    val phone = LocalPhone.current
     SectionPage("Jellyfin", {
-        if (account != null) NickButton("Disconnect", { app.store.setJellyfin(null); formKey++ }, style = BtnStyle.DANGER)
+        if (account != null) NickButton("Disconnect", { app.store.setJellyfin(null); formKey++ }, if (phone) Modifier.fillMaxWidth() else Modifier, style = BtnStyle.DANGER)
     }) {
         Muted("Optional. The NickOS library works without it.", 15)
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        Column(Modifier.fillMaxWidth().panel(28.dp, 28.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Dot(if (account != null) C.online else C.offline)
                 Text(if (account != null) "Connected" else "Not connected", style = body(18.sp, 700), color = if (account != null) C.online else C.muted)
             }
             androidx.compose.runtime.key(formKey, account?.token) {
                 JellyfinForm(onSaved = {}, initial = account, footer = { save, saving ->
-                    if (account == null) NickButton(if (saving) "Saving…" else "Save", save, style = BtnStyle.PRIMARY, enabled = !saving)
-                    else NickButton(if (saving) "Saving…" else "Save changes", save, enabled = !saving)
+                    val fm = if (phone) Modifier.fillMaxWidth() else Modifier
+                    if (account == null) NickButton(if (saving) "Saving…" else "Save", save, fm, style = BtnStyle.PRIMARY, enabled = !saving)
+                    else NickButton(if (saving) "Saving…" else "Save changes", save, fm, enabled = !saving)
                 })
             }
         }
         if (account != null && nodes.isNotEmpty()) {
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(28.dp)) {
-                Text("Whose library each tablet shows", style = body(20.sp, 800), color = C.text)
+            Column(Modifier.fillMaxWidth().panel(28.dp, 28.dp, 28.dp)) {
+                Text("Whose library each tablet shows", style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
                 Muted("Watch browses this Jellyfin user's library on each tablet.", 16)
                 Spacer(Modifier.height(10.dp))
                 nodes.forEach { n ->
                     Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
-                    Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (phone) Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Avatar(n.name, n.color, n.avatar, 40.dp)
+                            Text(n.name, style = body(16.sp, 700, 1.25f), color = C.text, modifier = Modifier.weight(1f))
+                        }
+                        // The choice is its own 48dp action under the name.
+                        Chip(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).clickable { picking = n }, height = 48.dp) {
+                            Text("Jellyfin user: ${n.jfUserName ?: "Choose"}", style = body(14.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                            Icon(Lucide.ChevronRight, null, tint = C.text, modifier = Modifier.size(18.dp))
+                        }
+                    } else Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Avatar(n.name, n.color, n.avatar, 44.dp)
                         Text(n.name, style = body(20.sp, 700), color = C.text, modifier = Modifier.weight(1f), maxLines = 1)
                         Chip(Modifier.clip(RoundedCornerShape(26.dp)).clickable { picking = n }, height = 52.dp) {
@@ -494,7 +636,7 @@ private fun JellyfinSection() {
         val users by produceState<List<JfUser>?>(null, jf) { value = try { jf?.users() } catch (e: Exception) { emptyList() } }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap { picking = null }, contentAlignment = Alignment.Center) {
             Column(
-                Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}.padding(28.dp),
+                Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(if (phone) 16.dp else 24.dp).clip(RoundedCornerShape(if (phone) 20.dp else 30.dp)).background(C.surface).tap {}.padding(if (phone) 16.dp else 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Title("${n.name} shows…", 32)
@@ -533,20 +675,22 @@ private fun PinSection() {
     SectionPage("Parent PIN") {
         BoxWithConstraints {
             val narrow = maxWidth < 800.dp
+            val phone = LocalPhone.current
             val text: @Composable (Modifier) -> Unit = { mod ->
                 Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Used to leave kid mode on every Node tablet.", style = body(21.sp, 500, 1.45f), color = C.text)
+                    Text("Used to leave kid mode on every Node tablet.", style = body(if (phone) 16.sp else 21.sp, 500, 1.45f), color = C.text)
                     Muted("Changing it here updates all linked tablets.", 17)
-                    if (com.nbaltas.nickos.node.PinPolicy.isWeak(currentPin)) Text("This is still the starting PIN. Anyone who knows NickOS knows it.", style = body(18.sp, 700), color = C.danger)
-                    message?.let { (ok, m) -> Text(m, style = body(18.sp, 700), color = if (ok) C.online else C.danger) }
+                    if (com.nbaltas.nickos.node.PinPolicy.isWeak(currentPin)) Text("This is still the starting PIN. Anyone who knows NickOS knows it.", style = body(if (phone) 16.sp else 18.sp, 700, if (phone) 1.35f else 1.3f), color = C.danger)
+                    message?.let { (ok, m) -> Text(m, style = body(if (phone) 16.sp else 18.sp, 700, if (phone) 1.35f else 1.3f), color = if (ok) C.online else C.danger) }
                 }
             }
             val pad: @Composable () -> Unit = {
                 Column(
-                    Modifier.widthIn(max = 484.dp).fillMaxWidth().clip(RoundedCornerShape(36.dp)).background(C.surface).padding(horizontal = 32.dp, vertical = 30.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp),
+                    (if (phone) Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+                    else Modifier.widthIn(max = 484.dp).fillMaxWidth().clip(RoundedCornerShape(36.dp)).background(C.surface).padding(horizontal = 32.dp, vertical = 30.dp)),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp),
                 ) {
-                    Text(if (first == null) "Enter a new 4-digit PIN" else "Enter it again", style = body(20.sp, 700), color = C.text)
+                    Text(if (first == null) "Enter a new 4-digit PIN" else "Enter it again", style = body(if (phone) 18.sp else 20.sp, 700), color = C.text)
                     PinDots(entered.length)
                     Keypad(
                         onDigit = { d ->
@@ -560,7 +704,7 @@ private fun PinSection() {
                             }
                         },
                         onDelete = { entered = entered.dropLast(1) },
-                        modifier = Modifier.width(356.dp),
+                        modifier = if (phone) Modifier.fillMaxWidth() else Modifier.width(356.dp),
                         keyHeight = 72.dp,
                     )
                 }
@@ -578,7 +722,26 @@ private fun ThemeSection() {
     val app = App.get(LocalContext.current)
     val theme by app.store.theme.collectAsState()
     SectionPage("Theme") {
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        if (LocalPhone.current) {
+            // One row per theme: a 120x80 preview, the name, and a selected mark. The whole row is the 48dp+ target.
+            Column(verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+                listOf("DARK" to "Dark", "LIGHT" to "Light", "SYSTEM" to "Match system").forEach { (key, label) ->
+                    val on = theme == key
+                    val shape = RoundedCornerShape(PhoneMetrics.cardRadius)
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 96.dp).clip(shape).background(C.surface).border(3.dp, if (on) C.accent else C.line, shape)
+                            .selectable(selected = on, role = androidx.compose.ui.semantics.Role.RadioButton) { app.store.setTheme(key) }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        ThemePreview(key, Modifier.size(120.dp, 80.dp))
+                        Text(label, style = body(16.sp, 800, 1.25f), color = C.text, modifier = Modifier.weight(1f))
+                        if (on) Box(Modifier.size(28.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                            Icon(Lucide.Check, null, tint = C.onAccent, modifier = Modifier.size(16.dp))
+                        } else Box(Modifier.size(28.dp).border(3.dp, C.line, CircleShape))
+                    }
+                }
+            }
+        } else Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             listOf("DARK" to "Dark", "LIGHT" to "Light", "SYSTEM" to "Match system").forEach { (key, label) ->
                 val on = theme == key
                 Column(
@@ -601,15 +764,16 @@ private fun ThemeSection() {
 }
 
 @Composable
-private fun ThemePreview(key: String) {
-    Box(Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(18.dp))) {
+private fun ThemePreview(key: String, modifier: Modifier = Modifier.fillMaxWidth().height(180.dp)) {
+    val small = LocalPhone.current
+    Box(modifier.clip(RoundedCornerShape(if (small) 12.dp else 18.dp))) {
         Row(Modifier.fillMaxSize()) {
             if (key != "LIGHT") Box(Modifier.weight(1f).fillMaxHeight().background(DarkColors.bg))
             if (key != "DARK") Box(Modifier.weight(1f).fillMaxHeight().background(LightColors.bg))
         }
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.fillMaxSize().padding(if (small) 8.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(if (small) 6.dp else 10.dp)) {
             repeat(2) { r ->
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(if (small) 6.dp else 10.dp)) {
                     repeat(2) { c ->
                         val light = key == "LIGHT" || (key == "SYSTEM" && c == 1)
                         val tile = when {
@@ -664,7 +828,7 @@ private fun <T> CamPrefRow(label: String, help: String, options: List<Pair<Strin
         val narrow = maxWidth < 760.dp
         val text: @Composable (Modifier) -> Unit = { mod ->
             Column(mod, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(label, style = body(19.sp, 700), color = C.text)
+                Text(label, style = body(if (LocalPhone.current) 18.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
                 Muted(help, 15)
             }
         }
@@ -688,13 +852,26 @@ private fun AboutSection() {
     val update by Updater.state.collectAsState()
     val views = rememberNodeViews()
     var confirmReset by remember { mutableStateOf(false) }
+    val phone = LocalPhone.current
     SectionPage("About") {
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(32.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            NickLogo(96.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Phone: the app summary is a column (mark, name, version, status, then the action on its own row).
+        val summary: @Composable (@Composable () -> Unit, @Composable () -> Unit) -> Unit = { info, act ->
+            if (phone) Column(Modifier.fillMaxWidth().panel(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NickLogo(48.dp)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) { info() }
+                }
+                act()
+            } else Row(
+                Modifier.fillMaxWidth().panel(28.dp, 32.dp, 32.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                NickLogo(96.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) { info() }
+                act()
+            }
+        }
+        summary({
                 Title("NickOS", 40)
                 Muted("Version ${BuildConfig.VERSION_NAME}", 18)
                 when (val u = update) {
@@ -706,30 +883,44 @@ private fun AboutSection() {
                     is UpdateState.Failed -> Text(u.message, style = body(16.sp, 700), color = C.danger)
                     UpdateState.Idle -> {}
                 }
-            }
+        }, {
             val available = update as? UpdateState.Available
-            if (available != null) NickButton("Install ${available.info.versionName}", { scope.launch { Updater.install(ctx, available.info) } }, style = BtnStyle.PRIMARY, leading = Lucide.Download)
-            else NickButton("Check for updates", { scope.launch { Updater.check() } }, leading = Lucide.RefreshCw, enabled = update !is UpdateState.Checking && update !is UpdateState.Downloading)
-        }
+            val am = if (phone) Modifier.fillMaxWidth() else Modifier
+            if (available != null) NickButton("Install ${available.info.versionName}", { scope.launch { Updater.install(ctx, available.info) } }, am, style = BtnStyle.PRIMARY, leading = Lucide.Download)
+            else NickButton("Check for updates", { scope.launch { Updater.check() } }, am, leading = Lucide.RefreshCw, enabled = update !is UpdateState.Checking && update !is UpdateState.Downloading)
+        })
         if (views.isNotEmpty()) {
             val latest = (update as? UpdateState.Available)?.info?.versionName ?: if (update == UpdateState.UpToDate) BuildConfig.VERSION_NAME else null
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 12.dp)) {
+            Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 12.dp))) {
                 views.forEachIndexed { i, v ->
                     if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
-                    Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    val behind = v.status?.version != null && latest != null && v.status.version != latest
+                    val updateButton: @Composable (Modifier) -> Unit = { m ->
+                        if (v.online && behind) NickButton("Update", { app.master.updateNode(v.node.id); app.master.say("Updating ${v.node.name}…") }, m, leading = Lucide.Download)
+                        else if (v.online && latest != null) Muted("Up to date", 15)
+                    }
+                    if (phone) Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Avatar(v.node.name, v.node.color, v.node.avatar, 32.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(v.node.name, style = body(18.sp, 700, 1.25f), color = C.text)
+                                Muted(v.status?.version?.let { "Version $it" } ?: if (v.online) "Version unknown" else statusText(v), 15)
+                            }
+                        }
+                        // The update action is its own row under the tablet.
+                        updateButton(Modifier.fillMaxWidth())
+                    } else Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Avatar(v.node.name, v.node.color, v.node.avatar, 44.dp)
                         Column(Modifier.weight(1f)) {
                             Text(v.node.name, style = body(19.sp, 700), color = C.text, maxLines = 1)
                             Muted(v.status?.version?.let { "Version $it" } ?: if (v.online) "Version unknown" else statusText(v), 15)
                         }
-                        val behind = v.status?.version != null && latest != null && v.status.version != latest
-                        if (v.online && behind) NickButton("Update", { app.master.updateNode(v.node.id); app.master.say("Updating ${v.node.name}…") }, Modifier.height(52.dp), leading = Lucide.Download)
-                        else if (v.online && latest != null) Muted("Up to date", 15)
+                        updateButton(Modifier.height(52.dp))
                     }
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp))) {
             InfoRow("This tablet", "${name.ifBlank { "Parent's Tablet" }} · Master")
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
             InfoRow("Linked tablets", nodes.size.toString())
@@ -741,7 +932,7 @@ private fun AboutSection() {
             if (confirmReset) {
                 if (EntrySwitch.enableMain(ctx)) com.nbaltas.nickos.RoleReset.run(ctx, app)
             } else confirmReset = true
-        }, style = BtnStyle.DANGER)
+        }, if (phone) Modifier.fillMaxWidth() else Modifier, style = BtnStyle.DANGER)
     }
 }
 
@@ -779,11 +970,11 @@ private fun HomeScreenRow() {
         onDispose { lifecycle?.removeObserver(obs) }
     }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 16.dp),
+        Modifier.fillMaxWidth().panel(28.dp, 28.dp, 16.dp).heightIn(min = if (LocalPhone.current) 52.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Use NickOS as this tablet's home screen", style = body(19.sp, 700), color = C.text)
+            Text("Use NickOS as this tablet's home screen", style = body(if (LocalPhone.current) 16.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
             Muted(homeStateLine(isHome), 15)
         }
         NickSwitch(optIn) { on ->
@@ -805,6 +996,14 @@ private fun HomeScreenRow() {
 
 @Composable
 private fun InfoRow(k: String, v: String, h: Dp = 64.dp) {
+    if (LocalPhone.current) {
+        // Label over value, so a long value never squeezes the label.
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(k, style = body(14.sp, 500, 1.3f), color = C.muted)
+            Text(v, style = body(16.sp, 700, 1.3f), color = C.text)
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().height(h), verticalAlignment = Alignment.CenterVertically) {
         Text(k, style = body(19.sp), color = C.muted, modifier = Modifier.weight(1f))
         Text(v, style = body(19.sp, 700), color = C.text)

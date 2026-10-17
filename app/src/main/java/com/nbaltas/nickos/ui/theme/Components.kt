@@ -22,6 +22,11 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -255,6 +260,21 @@ fun NickLogo(size: Dp) {
 /** Setup/secondary header: back button, small mark + "NickOS", right-aligned step label. */
 @Composable
 fun SetupHeader(step: String?, onBack: (() -> Unit)?) {
+    if (LocalPhone.current) {
+        // Phone: one 64dp row, back + a small mark and name, the step label small on the right. Nothing competes with the title below.
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight).padding(horizontal = PhoneMetrics.gutter),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+        ) {
+            if (onBack != null) BackButton(onBack)
+            NickLogo(28.dp)
+            Text("NickOS", style = disp(18.sp), color = C.text)
+            Spacer(Modifier.weight(1f))
+            if (step != null) Text(step, style = body(14.sp, 600), color = C.muted, textAlign = TextAlign.End, modifier = Modifier.weight(2f, fill = false))
+        }
+        return
+    }
     Row(
         Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -346,6 +366,8 @@ fun NickField(
     var focused by remember { mutableStateOf(false) }
     val phone = LocalPhone.current
     val shape = RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 18.dp)
+    val bringIntoView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     BasicTextField(
         value = value,
         onValueChange = onChange,
@@ -354,7 +376,11 @@ fun NickField(
         cursorBrush = SolidColor(c.accent),
         visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboard),
-        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+        // Phone: when the field gains focus (and the keyboard resizes the page) it scrolls itself into view above the keyboard.
+        modifier = modifier.fillMaxWidth().bringIntoViewRequester(bringIntoView).onFocusChanged {
+            focused = it.isFocused
+            if (it.isFocused && phone) scope.launch { delay(250); bringIntoView.bringIntoView() }
+        },
         decorationBox = { inner ->
             Box(
                 Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.fieldHeight) else Modifier.height(68.dp)).clip(shape).background(c.surface2)
