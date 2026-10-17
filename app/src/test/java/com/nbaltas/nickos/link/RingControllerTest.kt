@@ -24,16 +24,19 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class RingControllerTest {
     private class FakePort(var volume: Int = 3) : RingPort {
+        var saveSucceeds = true
+        var restoreSucceeds = true
         val log = CopyOnWriteArrayList<String>()
         @Volatile var backup: Int? = null
         @Volatile var holdStop: CountDownLatch? = null
         @Volatile var stopEntered = CountDownLatch(0)
         override fun alarmVolume(): Int { log += "read $volume"; return volume }
-        override fun setAlarmVolume(v: Int) { log += "set $v"; volume = v }
-        override fun saveVolumeBackup(v: Int) { log += "save $v"; backup = v }
+        override fun setAlarmVolume(v: Int): Boolean { log += "set $v"; if (restoreSucceeds) volume = v; return volume == v }
+        override fun saveVolumeBackup(v: Int): Boolean { log += "save $v"; if (saveSucceeds) backup = v; return saveSucceeds }
+        override fun volumeBackup() = backup
         override fun clearVolumeBackup() { log += "clear"; backup = null }
         override fun wake() { log += "wake" }
-        override fun startAlarm() { log += "start"; volume = 15 }
+        override fun startAlarm(raiseVolume: Boolean) { log += "start"; if (raiseVolume) volume = 15 }
         override fun stopAlarm() { log += "stop"; stopEntered.countDown(); holdStop?.await(5, TimeUnit.SECONDS) }
         override fun shown(ringing: Boolean) { log += "shown $ringing" }
     }
@@ -44,6 +47,43 @@ class RingControllerTest {
         assertTrue(port.log.indexOf("save 4") in 0 until port.log.indexOf("start"))
         assertEquals(4, port.backup)
         assertEquals(15, port.volume)
+    }
+
+    @Test fun `a failed backup rings without raising the volume`() {
+        val port = FakePort(volume = 4).apply { saveSucceeds = false }
+        val c = RingController(port, { 0L })
+        c.start()
+        assertTrue(c.ringing)
+        assertTrue(port.log.contains("start"))
+        assertEquals(4, port.volume)
+        assertNull(port.backup)
+    }
+
+    @Test fun `failed restoration keeps the original through another ring and retries at ring end`() {
+        val port = FakePort(volume = 4)
+        val c = RingController(port, { 0L })
+        c.start()
+        port.restoreSucceeds = false
+        c.stop(RingMachine.Stop.TAP)
+        assertEquals(4, port.backup)
+        assertEquals(15, port.volume)
+        c.start()
+        assertEquals(1, port.log.count { it.startsWith("save ") })
+        assertEquals(4, port.backup)
+        port.restoreSucceeds = true
+        c.stop(RingMachine.Stop.PARENT)
+        assertEquals(4, port.volume)
+        assertNull(port.backup)
+    }
+
+    @Test fun `startup retains a failed restoration for the next start`() {
+        var backup: Int? = 6
+        assertFalse(AlarmRecovery.recover(backup, { false }, { backup = null }))
+        assertEquals(6, backup)
+        var restored: Int? = null
+        assertTrue(AlarmRecovery.recover(backup, { restored = it; true }, { backup = null }))
+        assertEquals(6, restored)
+        assertNull(backup)
     }
 
     @Test fun `stopping puts the volume back and drops the copy`() {
@@ -59,10 +99,10 @@ class RingControllerTest {
     @Test fun `a volume left behind by a killed process is put back once`() {
         var set: Int? = null
         var cleared = false
-        assertTrue(AlarmRecovery.recover(6, { set = it }, { cleared = true }))
+        assertTrue(AlarmRecovery.recover(6, { set = it; true }, { cleared = true }))
         assertEquals(6, set); assertTrue(cleared)
         set = null; cleared = false
-        assertFalse(AlarmRecovery.recover(null, { set = it }, { cleared = true }))
+        assertFalse(AlarmRecovery.recover(null, { set = it; true }, { cleared = true }))
         assertNull(set); assertFalse(cleared)
     }
 

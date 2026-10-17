@@ -54,6 +54,16 @@ class PauseRingTest {
         assertNull(PauseAll.intent(null))
     }
 
+    @Test fun `an owner that resumed while the tablet was offline clears its wall on reconnect`() {
+        val off = PauseAll.resumeIntent(null, nodePaused = true, owner = "A", masterId = "A")!!
+        assertEquals(NetMessages.PauseAll(false, ""), NetMessages.decodePauseAll(wire(off)))
+        assertFalse(off.has("force"))
+        assertNull(PauseAll.resumeIntent(null, true, "A", "B"))
+        assertNull(PauseAll.resumeIntent(null, true, null, "B"))
+        assertNull(PauseAll.resumeIntent("Still paused", true, "A", "A"))
+        assertNull(PauseAll.resumeIntent(null, false, "A", "A"))
+    }
+
     @Test fun `only the pausing Master or a forced resume lifts a pause`() {
         assertTrue(PauseAll.mayClear(owner = "A", sender = "A", force = false))
         assertFalse("a second parent must not cancel it", PauseAll.mayClear(owner = "A", sender = "B", force = false))

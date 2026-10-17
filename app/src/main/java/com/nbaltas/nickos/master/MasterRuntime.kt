@@ -541,6 +541,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private fun onStatus(id: String, m: JSONObject) {
         // Positive evidence this Node speaks sec2 (a legacy link that reported it): never fall back to the clear hello.
         if (m.optJSONArray("caps")?.let { a -> (0 until a.length()).any { a.optString(it) == Handshake.CAP } } == true) linkFlags.setSec2Capable(id, true)
+        PauseAll.resumeIntent(store.pausedMsg.value, m.optBoolean("paused"), m.optStr("pausedOwner"), store.deviceId)
+            ?.let { send(id, it) }
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
         val net = NodeNet.from(m)

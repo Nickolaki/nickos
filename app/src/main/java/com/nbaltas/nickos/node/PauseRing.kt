@@ -6,11 +6,15 @@ import org.json.JSONObject
 /**
  * Pause everyone, the pure part. The Master keeps the message while it is the one that paused everyone ([pausedMsg]
  * non-null) and sends it again on every connect, so a tablet that was off or out of range gets the wall when it comes
- * back. A Master never sends the "off" command by itself: only the parent's Resume button does.
+ * back. An unpaused Master clears a reported pause only when it owns that pause.
  */
 object PauseAll {
     /** What a Master sends a tablet that has just connected: the wall again, or nothing when this Master did not pause. */
     fun intent(pausedMsg: String?): JSONObject? = pausedMsg?.let { NetMessages.pauseAllCmd(true, it) }
+
+    /** Reconcile a reported wall after reconnect, without clearing another parent's pause. */
+    fun resumeIntent(pausedMsg: String?, nodePaused: Boolean, owner: String?, masterId: String): JSONObject? =
+        if (pausedMsg == null && nodePaused && owner == masterId) NetMessages.pauseAllCmd(false, "") else null
 
     /**
      * Whether an "off" command lifts the wall. The Master that paused may; so may a forced one (the parent tapped
@@ -63,13 +67,15 @@ class RingMachine(private val capMs: Long = CAP_MS) {
 /** What [RingController] does to the tablet. The Node's real one is in NodeRuntime; tests use a fake. */
 interface RingPort {
     fun alarmVolume(): Int
-    fun setAlarmVolume(v: Int)
+    /** True only after the written volume has been read back and matches. */
+    fun setAlarmVolume(v: Int): Boolean
     /** Written to disk before the volume is raised, so a crash cannot lose it. */
-    fun saveVolumeBackup(v: Int)
+    fun saveVolumeBackup(v: Int): Boolean
+    fun volumeBackup(): Int?
     fun clearVolumeBackup()
     fun wake()
-    /** Raises the alarm volume and starts the looping sound. */
-    fun startAlarm()
+    /** Starts the looping sound; raises the volume only with a durable backup. */
+    fun startAlarm(raiseVolume: Boolean)
     fun stopAlarm()
     /** The overlay and the status follow this. */
     fun shown(ringing: Boolean)
@@ -88,12 +94,13 @@ class RingController(private val port: RingPort, private val clock: () -> Long, 
 
     /** The id of the ring that began, or 0 when it was already ringing. */
     fun start(): Long = synchronized(lock) {
-        val vol = port.alarmVolume()
+        val backup = port.volumeBackup()
+        val vol = backup ?: port.alarmVolume()
         if (!machine.start(clock(), vol)) return 0L
         gen++
-        port.saveVolumeBackup(vol)
+        val mayRaise = backup != null || port.saveVolumeBackup(vol)
         port.wake()
-        port.startAlarm()
+        port.startAlarm(mayRaise)
         port.shown(true)
         gen
     }
@@ -117,17 +124,16 @@ class RingController(private val port: RingPort, private val clock: () -> Long, 
 
     private fun finish(restore: Int) {
         port.stopAlarm()
-        port.setAlarmVolume(restore)
-        port.clearVolumeBackup()
+        if (port.setAlarmVolume(restore)) port.clearVolumeBackup()
         port.shown(false)
     }
 }
 
 /** At app start: a volume still waiting to be put back (the process died while ringing) goes back, then the copy is cleared. */
 object AlarmRecovery {
-    fun recover(backup: Int?, setVolume: (Int) -> Unit, clear: () -> Unit): Boolean {
+    fun recover(backup: Int?, setVolume: (Int) -> Boolean, clear: () -> Unit): Boolean {
         if (backup == null) return false
-        setVolume(backup)
+        if (!setVolume(backup)) return false
         clear()
         return true
     }

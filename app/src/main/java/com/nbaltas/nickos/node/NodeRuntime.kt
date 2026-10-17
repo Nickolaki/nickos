@@ -416,10 +416,13 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private val ring = RingController(object : RingPort {
         override fun alarmVolume() = device.alarmVolume()
         override fun setAlarmVolume(v: Int) = device.setAlarmVolume(v)
-        override fun saveVolumeBackup(v: Int) { if (!store.setSavedAlarmVolume(v)) Log.w(TAG, "could not save the alarm volume") }
+        override fun saveVolumeBackup(v: Int): Boolean = store.setSavedAlarmVolume(v).also {
+            if (!it) Log.w(TAG, "could not save the alarm volume; ringing at current volume")
+        }
+        override fun volumeBackup() = store.savedAlarmVolume()
         override fun clearVolumeBackup() { store.setSavedAlarmVolume(null) }
         override fun wake() = device.wake()
-        override fun startAlarm() = device.startAlarm()
+        override fun startAlarm(raiseVolume: Boolean) = device.startAlarm(raiseVolume)
         override fun stopAlarm() = device.stopAlarm()
         override fun shown(ringing: Boolean) { _ringing.value = ringing; overlay.refresh() }
     }, clock = { android.os.SystemClock.elapsedRealtime() }) // monotonic: a clock correction cannot stretch the 60 seconds
@@ -597,6 +600,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("talk", talkStatus())
             .put("ringing", _ringing.value).put("paused", store.pausedMsg.value != null)
+            .put("pausedOwner", store.pausedOwner())
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)

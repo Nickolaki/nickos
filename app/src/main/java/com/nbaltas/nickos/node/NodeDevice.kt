@@ -138,14 +138,16 @@ class NodeDevice(private val ctx: Context) {
 
     fun alarmVolume(): Int = audio.getStreamVolume(AudioManager.STREAM_ALARM)
 
-    fun setAlarmVolume(v: Int) {
-        try { audio.setStreamVolume(AudioManager.STREAM_ALARM, v.coerceIn(0, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0) }
-        catch (e: Exception) { Log.w(TAG, "alarm volume", e) }
+    fun setAlarmVolume(v: Int): Boolean {
+        return try {
+            audio.setStreamVolume(AudioManager.STREAM_ALARM, v.coerceIn(0, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0)
+            (alarmVolume() == v).also { if (!it) Log.w(TAG, "alarm volume restoration not confirmed") }
+        } catch (e: Exception) { Log.w(TAG, "alarm volume", e); false }
     }
 
     /** Alarm volume to the top and the default alarm sound looping. USAGE_ALARM keeps it loud with the media volume muted. */
-    fun startAlarm() {
-        setAlarmVolume(audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))
+    fun startAlarm(raiseVolume: Boolean = true) {
+        if (raiseVolume) setAlarmVolume(audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))
         // MediaPlayer on every version: Ringtone.isLooping only exists from API 28, and the app supports 24.
         val mp = android.media.MediaPlayer()
         try {
