@@ -9,7 +9,6 @@ import android.content.IntentFilter
 import android.content.pm.Signature
 import androidx.test.core.app.ApplicationProvider
 import com.nbaltas.nickos.BuildConfig
-import com.nbaltas.nickos.MainActivity
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -113,7 +112,7 @@ class ProvisioningTest {
         val a = Robolectric.buildActivity(PolicyComplianceActivity::class.java, Intent()).create()
         assertEquals(Activity.RESULT_OK, shadowOf(a.get()).resultCode)
         assertTrue(a.get().isFinishing)
-        assertTrue("NickOS was not set as the persistent home screen", preferredHome().contains(ComponentName(ctx, MainActivity::class.java)))
+        assertTrue("NickOS was not set as the persistent home screen", preferredHome().contains(ComponentName(ctx, "com.nbaltas.nickos.MainActivity")))
     }
 
     @Test fun lastWizardStepDoesNotThrowOrSetHomeWhenNotOwner() {

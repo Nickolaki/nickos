@@ -1,0 +1,191 @@
+package com.nbaltas.nickos.node
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.nbaltas.nickos.R
+import com.nbaltas.nickos.talk.Speaker
+import com.nbaltas.nickos.talk.TalkBudget
+import com.nbaltas.nickos.talk.TalkMessages
+
+/**
+ * The speaker for push to talk: one AudioTrack and one audio focus request per session (see [TalkPlayerFactory]).
+ *
+ * Voice communication usage, not sonification: the parent's volume slider moves the media volume and the kid may have
+ * system sounds turned right down, while the voice stream has its own level that is not muted by the usual quiet
+ * settings. Focus is asked for as "transient, may duck" so the movie gets quieter while the parent speaks and
+ * comes back when focus is given up at the end.
+ *
+ * [open] is all or nothing: if the track, the focus or play() fails, everything already taken is given back before the
+ * error goes out.
+ */
+class AndroidSpeaker(ctx: Context) : Speaker {
+    private val audio = ctx.getSystemService(AudioManager::class.java)
+    private val attrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+    private var track: AudioTrack? = null
+    private var request: AudioFocusRequest? = null
+    private var tookFocus = false
+    private var closed = false
+    private var framesWritten = 0L
+
+    @Synchronized
+    override fun open() {
+        try {
+            val fmt = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(TalkMessages.SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()
+            val min = AudioTrack.getMinBufferSize(TalkMessages.SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val t = AudioTrack.Builder()
+                .setAudioAttributes(attrs).setAudioFormat(fmt)
+                .setBufferSizeInBytes(maxOf(min, TalkMessages.FRAME_BYTES * TalkBudget.TRACK_FRAMES))
+                .setTransferMode(AudioTrack.MODE_STREAM).build()
+            track = t
+            t.play()
+            takeFocus()
+        } catch (e: Throwable) {
+            close(false)
+            throw e
+        }
+    }
+
+    override fun write(pcm: ByteArray, off: Int, len: Int): Int {
+        val t = synchronized(this) { if (closed) return -1 else track } ?: return -1
+        val n = t.write(pcm, off, len)
+        if (n > 0) synchronized(this) { framesWritten += n / 2 }
+        return n
+    }
+
+    override fun closeUntil(deadlineNanos: Long) {
+        val t = synchronized(this) { if (closed) return else track }
+        if (t != null) {
+            try {
+                while (System.nanoTime() < deadlineNanos) {
+                    val done = synchronized(this) { closed || t.playbackHeadPosition.toLong() >= framesWritten }
+                    if (done) break
+                    val remaining = deadlineNanos - System.nanoTime()
+                    if (remaining > 0) java.util.concurrent.TimeUnit.NANOSECONDS.sleep(minOf(remaining, 5_000_000L))
+                }
+            } catch (_: Exception) {}
+        }
+        close(false)
+    }
+
+    override fun close(flush: Boolean) {
+        if (flush) {
+            closeUntil(System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(DRAIN_MS))
+            return
+        }
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            val t = track
+            track = null
+            if (t != null) {
+                try { t.pause(); t.flush() } catch (_: Exception) {}
+                try { t.release() } catch (_: Exception) {}
+            }
+            giveFocus()
+        }
+    }
+
+    private fun takeFocus() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            val r = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attrs).setOnAudioFocusChangeListener { }.build()
+            request = r
+            tookFocus = true
+            audio.requestAudioFocus(r)
+        } else {
+            tookFocus = true
+            @Suppress("DEPRECATION")
+            audio.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        }
+    }
+
+    private fun giveFocus() {
+        if (!tookFocus) return
+        tookFocus = false
+        try {
+            if (Build.VERSION.SDK_INT >= 26) request?.let { audio.abandonAudioFocusRequest(it) }
+            else @Suppress("DEPRECATION") audio.abandonAudioFocus(null)
+        } catch (e: Exception) { Log.w("NickOS.Talk", "audio focus", e) }
+    }
+
+    private companion object {
+        /** The longest wait for the end of a sentence to play out. */
+        const val DRAIN_MS = TalkBudget.DRAIN_MS
+    }
+}
+
+/**
+ * The fallback for "Parent is talking" when the banner cannot be drawn over the app the kid is in (the display over
+ * other apps permission is missing): a loud notification for as long as the audio plays.
+ */
+class TalkNotice(private val ctx: Context) {
+    private val nm = ctx.getSystemService(NotificationManager::class.java)
+
+    /** True when a notification posted now would really be seen: permission given (Android 13+), notifications on, channel not switched off. */
+    fun ready(): Boolean = try {
+        when {
+            Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> false
+            !nm.areNotificationsEnabled() -> false
+            Build.VERSION.SDK_INT >= 26 -> {
+                ensureChannel()
+                (nm.getNotificationChannel(CHANNEL)?.importance ?: NotificationManager.IMPORTANCE_NONE) != NotificationManager.IMPORTANCE_NONE
+            }
+            else -> true
+        }
+    } catch (e: Exception) { false }
+
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent talking", NotificationManager.IMPORTANCE_HIGH))
+    }
+
+    /**
+     * True only when the channel is on and Android took the notification without an exception. False means nobody
+     * can see it.
+     */
+    fun show(text: String): Boolean {
+        return try {
+            if (!ready()) return false
+            nm.notify(ID, NotificationCompat.Builder(ctx, CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle(text)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setTimeoutAfter(125_000)
+                .build())
+            true
+        } catch (e: Exception) { Log.w("NickOS.Talk", "notice", e); false }
+    }
+
+    fun clear() { try { nm.cancel(ID) } catch (_: Exception) {} }
+
+    companion object {
+        private const val CHANNEL = "talk"
+        private const val ID = 2
+
+        /** The page where the grown-up switches the talk notifications back on: the channel's own page, else the app's. */
+        fun channelSettingsIntent(ctx: Context): Intent =
+            if (Build.VERSION.SDK_INT >= 26) Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            else Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+}

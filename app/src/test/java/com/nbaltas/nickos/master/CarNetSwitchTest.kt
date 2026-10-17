@@ -10,7 +10,6 @@ import com.nbaltas.nickos.ui.master.CARNET_SWITCH_HELP
 import com.nbaltas.nickos.ui.master.carNetBannerWhy
 import com.nbaltas.nickos.ui.master.carNetCopy
 import com.nbaltas.nickos.ui.master.carNetWhy
-import com.nbaltas.nickos.ui.master.homeScreenLine
 import com.nbaltas.nickos.ui.master.offlineTips
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -238,12 +237,6 @@ class CarNetSwitchTest {
         val tip = offlineTips(Reason.CarNetDown(Why.TURNED_OFF), null).single().second
         assertTrue(tip, "switched off" in tip && "Settings, Tablets" in tip)
         assertEquals("Turning this off can save battery. Kid tablets then need your home WiFi or a hotspot.", CARNET_SWITCH_HELP)
-    }
-
-    @Test fun `home screen line`() {
-        assertEquals("NickOS is this tablet's home screen", homeScreenLine(true))
-        assertEquals("NickOS opens like a normal app", homeScreenLine(false))
-        assertEquals("NickOS opens like a normal app", homeScreenLine(null))
     }
 
     // ---- Back ----

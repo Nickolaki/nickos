@@ -28,8 +28,11 @@ data class LinkedNode(
     val jfUserName: String? = null,
     /** The Node's last report of whether it has the car hotspot saved; null until it reports. */
     val wifiSaved: Boolean? = null,
+    /** The landscape lock the parent last chose for this tablet; null if never chosen. Sent again on every connect, so a lost command cannot undo it. */
+    val landscape: Boolean? = null,
 ) {
     fun toJson() = JSONObject().apply {
+        put("landscape", landscape ?: JSONObject.NULL)
         put("id", id); put("name", name); put("color", color); put("avatar", avatar); put("token", token)
         put("host", host); put("port", port); put("lastSeen", lastSeen); put("lastBattery", lastBattery)
         put("jfUserId", jfUserId); put("jfUserName", jfUserName)
@@ -44,6 +47,7 @@ data class LinkedNode(
             lastBattery = if (o.isNull("lastBattery") || !o.has("lastBattery")) null else o.optInt("lastBattery"),
             jfUserId = o.optStr("jfUserId"), jfUserName = o.optStr("jfUserName"),
             wifiSaved = if (!o.has("wifiSaved") || o.isNull("wifiSaved")) null else o.optBoolean("wifiSaved"),
+            landscape = if (!o.has("landscape") || o.isNull("landscape")) null else o.optBoolean("landscape"),
         )
     }
 }
@@ -121,6 +125,11 @@ class Store(context: Context) {
     private val _role = MutableStateFlow(Role.valueOf(p.getString("role", Role.NONE.name)!!))
     val role: StateFlow<Role> = _role
     fun setRole(r: Role) { p.edit().putString("role", r.name).apply(); _role.value = r }
+
+    private val _masterHomeOptIn = MutableStateFlow(p.getBoolean("masterHomeOptIn", false))
+    /** The parent asked for NickOS to be this tablet's home screen. Separate from whether Android really made it so. */
+    val masterHomeOptIn: StateFlow<Boolean> = _masterHomeOptIn
+    fun setMasterHomeOptIn(v: Boolean) { p.edit().putBoolean("masterHomeOptIn", v).commit(); _masterHomeOptIn.value = v }
 
     // ---- this tablet ----
     private val _name = MutableStateFlow(p.getString("name", "") ?: "")
@@ -322,6 +331,44 @@ class Store(context: Context) {
     val bedtimeAt: StateFlow<Long> = _bedtime
     fun setBedtimeAt(v: Long) { p.edit().putLong("bedtimeAt", v).apply(); _bedtime.value = v }
 
+    private val _kidLockDone = MutableStateFlow(p.getBoolean("kidLockDone", false))
+    /** Start kid mode worked once on this tablet. From then on the kid lock repair screen needs the parent PIN. */
+    val kidLockDone: StateFlow<Boolean> = _kidLockDone
+    fun setKidLockDone(v: Boolean) { p.edit().putBoolean("kidLockDone", v).commit(); _kidLockDone.value = v }
+
+    /**
+     * First start of the version that added the kid lock PIN gate: a tablet that is already a Node was set up before the
+     * gate existed, so it counts as locked. Keyed by a stored number, not by the flag being absent. Returns true if it ran.
+     */
+    fun migrateKidLock(): Boolean {
+        if (p.getInt(KEY_MIGRATION, 0) >= MIGRATION_KID_LOCK) return false
+        val e = p.edit()
+        if (_role.value == Role.NODE) { e.putBoolean("kidLockDone", true) }
+        e.putInt(KEY_MIGRATION, MIGRATION_KID_LOCK).commit()
+        if (_role.value == Role.NODE) _kidLockDone.value = true
+        return true
+    }
+
+    private val _landscape = MutableStateFlow(p.getBoolean("landscapeLock", false))
+    /** The parent locked this kid tablet to landscape. Kept across reboots. */
+    val landscapeLock: StateFlow<Boolean> = _landscape
+    /** True when the choice reached the disk; only then does the app act on it. */
+    fun setLandscapeLock(v: Boolean): Boolean {
+        val ok = p.edit().putBoolean("landscapeLock", v).commit()
+        if (ok) _landscape.value = v
+        return ok
+    }
+
+    /** The system rotation settings as they were before the landscape lock changed them, or null when it has not. */
+    fun savedRotation(): com.nbaltas.nickos.node.Rotation? =
+        if (p.contains("rotSavedAccel")) com.nbaltas.nickos.node.Rotation(p.getInt("rotSavedAccel", 1), p.getInt("rotSavedUser", 0)) else null
+    /** True only when the change reached the disk: the landscape lock changes nothing on the tablet without that. */
+    fun setSavedRotation(r: com.nbaltas.nickos.node.Rotation?): Boolean {
+        val e = p.edit()
+        if (r == null) e.remove("rotSavedAccel").remove("rotSavedUser") else e.putInt("rotSavedAccel", r.accelerometer).putInt("rotSavedUser", r.user)
+        return e.commit()
+    }
+
     private val _resume = MutableStateFlow(readList("resume") { ResumeCard.from(it) })
     val resume: StateFlow<List<ResumeCard>> = _resume
     fun setResume(v: List<ResumeCard>) { writeList("resume", v) { it.toJson() }; _resume.value = v }
@@ -329,7 +376,15 @@ class Store(context: Context) {
     @Synchronized
     fun resetAll() {
         val carnet = p.getString(KEY_CARNET, null)
-        p.edit().clear().putString("deviceId", deviceId).apply { if (carnet != null) putString(KEY_CARNET, carnet) }.apply()
+        // A rotation restore that has not finished is the tablet's own setting, not NickOS data: it survives a reset and is retried.
+        val rotation = savedRotation()
+        val migration = p.getInt(KEY_MIGRATION, 0)
+        p.edit().clear().putString("deviceId", deviceId).apply {
+            if (migration > 0) putInt(KEY_MIGRATION, migration)
+            if (carnet != null) putString(KEY_CARNET, carnet)
+            if (rotation != null) putInt("rotSavedAccel", rotation.accelerometer).putInt("rotSavedUser", rotation.user)
+        }.apply()
+        _masterHomeOptIn.value = false; _landscape.value = false; _kidLockDone.value = false
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null
@@ -358,6 +413,8 @@ class Store(context: Context) {
     companion object {
         const val DEFAULT_PIN = "0000"
         private const val KEY_CARNET = "carnet"
+        private const val KEY_MIGRATION = "migration"
+        const val MIGRATION_KID_LOCK = 1
         const val CARNET_PASS_LEN = 16
         private const val CARNET_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
         private val rnd = SecureRandom()

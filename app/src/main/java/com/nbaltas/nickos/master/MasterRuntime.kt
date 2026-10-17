@@ -21,11 +21,16 @@ import com.nbaltas.nickos.link.LinkFlags
 import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
+import com.nbaltas.nickos.link.SendLanes
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
+import com.nbaltas.nickos.talk.TalkMessages
+import com.nbaltas.nickos.talk.TalkStop
+import com.nbaltas.nickos.talk.TalkStopPolicy
+import com.nbaltas.nickos.talk.TalkText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,13 +74,22 @@ data class NodeStatus(
     val brightnessOk: Boolean = true,
     /** False when the Node cannot turn its screen off yet (no device admin). Old Nodes omit it: assumed fine. */
     val screenOffOk: Boolean = true,
+    /** The landscape lock as the Node reports it. Null for an old Node: the Master hides the switch. */
+    val landscape: NetMessages.LandscapeStatus? = null,
+    /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
+    val talk: String = TalkMessages.STATUS_OK,
 ) {
+    /** The Node refuses talk audio until a grown-up allows notifications on it. */
+    val talkNeedsPermission: Boolean get() = talk == TalkMessages.STATUS_NEEDS_PERMISSION
+
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
     /** "del1": the Node deletes a movie when the Master asks. */
     val supportsDelete: Boolean get() = "del1" in caps
     /** Tablet cameras need the Node's "cam1" capability. */
     val supportsCam: Boolean get() = "cam1" in caps
+    /** Push to talk needs the Node's "talk1" capability. */
+    val supportsTalk: Boolean get() = TalkMessages.CAP in caps
 
     companion object {
         fun from(o: JSONObject): NodeStatus {
@@ -91,6 +105,8 @@ data class NodeStatus(
                 jf = o.optStr("jf"), names = o.optJSONArray("names").strings(), version = o.optString("version"),
                 caps = o.optJSONArray("caps").strings(),
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
+                landscape = NetMessages.decodeLandscape(o),
+                talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
             )
         }
 
@@ -188,6 +204,36 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     val transfer = TransferController(this, store)
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
+
+    /**
+     * Push to talk. Audio frames never go through [send] (one ordered queue for every command to every tablet):
+     * each recipient's own coroutine writes them straight to its link and drops what the link cannot take at once.
+     */
+    val talk = TalkController(
+        scope, openMic = { AndroidMic() }, wireFor = { id -> talkWire(id) },
+        permission = { ctx.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED },
+        onStopped = { why -> if (TalkStopPolicy.worthSaying(why)) say(talkStopText(why)) },
+    )
+
+    private fun talkWire(id: String): TalkWire? = links[id]?.let { c ->
+        object : TalkWire {
+            override fun control(o: JSONObject) = c.send(o)
+            override fun frame(o: JSONObject): Sent = when (c.sendLossy(o)) {
+                Conn.Lossy.WRITTEN -> Sent.OK
+                // Busy: another line is on the wire. Stuck or failed: the write passed its deadline or broke, the link
+                // is closed, and this tablet's talk ends. Gone: also when a newer link replaced this one.
+                Conn.Lossy.BUSY -> if (c.isOpen && links[id] === c) Sent.BUSY else Sent.GONE
+                Conn.Lossy.STALLED, Conn.Lossy.FAILED -> Sent.GONE
+            }
+        }
+    }
+
+    private fun talkStopText(why: TalkStop) = when (why) {
+        TalkStop.PERMISSION_LOST -> "The microphone is not allowed any more, so talking stopped"
+        TalkStop.AUDIO_ERROR -> TalkText.MIC_FAILED
+        TalkStop.ALL_GONE -> "The tablets went offline, so talking stopped"
+        else -> "Talking stopped after two minutes"
+    }
 
     fun lanAddress(): String? = LanAddress.own(ctx)
     /** Every address this tablet has: the home WiFi and the car network it hosts can be up at the same time. */
@@ -418,6 +464,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 transfer.onDisconnected(n.id)
                 cam.onDisconnected(n.id)
             }
+            delivery(c, n.id).close()
             c.close()
         }
     }
@@ -431,11 +478,22 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         send(id, NetMessages.hotspotCmd(h, gw))
     }
 
+    /**
+     * On every (re)connect: the per tablet settings this Master stores itself, sent again. Today that is the landscape lock.
+     * The PIN and the car network are sent separately. What the Node keeps itself (lock, bedtime, allowed apps, locked app)
+     * is not stored here and not re-sent. Transient commands (media keys, volume, brightness, screen) are not either:
+     * a lost one is lost.
+     */
+    internal fun sendIntent(id: String) {
+        store.nodes.value.firstOrNull { it.id == id }?.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+    }
+
     private fun runLink(n: LinkedNode, c: Conn) {
         _online.update { it + n.id }
         send(n.id, cmd("pin").put("pin", store.pin.value))
         // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
         sendHotspot(n.id)
+        sendIntent(n.id)
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         sync.onConnected(n.id)
@@ -483,11 +541,38 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         _apps.update { it + (id to list) }
     }
 
-    // One sender thread keeps commands in order (volume 40 then 60 must arrive as 40, 60).
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val sendDispatcher = Dispatchers.IO.limitedParallelism(1)
+    // One sender lane per tablet keeps its commands in order (volume 40 then 60 must arrive as 40, 60). The lanes are
+    // separate so a tablet with a stuck link (audio included) never holds up a command to another tablet.
+    private val sendLanes = SendLanes(scope)
 
-    fun send(id: String, o: JSONObject): Boolean = links[id]?.let { c -> scope.launch(sendDispatcher) { c.send(o) }; true } ?: false
+    private val deliveries = java.util.WeakHashMap<Conn, com.nbaltas.nickos.link.CommandDelivery>()
+    private fun delivery(c: Conn, id: String): com.nbaltas.nickos.link.CommandDelivery = synchronized(deliveries) {
+        deliveries.getOrPut(c) { com.nbaltas.nickos.link.CommandDelivery { commandFailed(id) } }
+    }
+
+    private fun commandFailed(id: String) {
+        val name = store.nodes.value.firstOrNull { it.id == id }?.name ?: "tablet"
+        say("Didn't reach $name, try again")
+    }
+
+    fun send(id: String, o: JSONObject, trackDelivery: Boolean = false): Boolean {
+        val c = links[id] ?: run { if (trackDelivery) commandFailed(id); return false }
+        if (!trackDelivery) {
+            sendLanes.launch(id) { try { c.send(o) } catch (_: Exception) {} }
+            return true
+        }
+        val d = delivery(c, id)
+        val ticket = d.enqueue() ?: return false
+        sendLanes.launch(id) {
+            if (d.maySend(ticket)) {
+                val written = try { c.send(o) } catch (_: Exception) { false }
+                d.complete(ticket, written)
+            }
+        }
+        return true
+    }
+
+    private fun sendControl(id: String, o: JSONObject) = send(id, o, trackDelivery = true)
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 
@@ -508,40 +593,47 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     // ---- device actions ----
-    fun setVolume(id: String, v: Int) { send(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
-    fun setBrightness(id: String, v: Int) { send(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }
-    fun screen(id: String, on: Boolean) { send(id, cmd("screen").put("on", on)); patch(id) { it.copy(screenOn = on) } }
+    /** Lock or free the kid tablet's rotation. Nothing is guessed: the switch follows what the Node reports back. */
+    fun setLandscape(id: String, on: Boolean) {
+        // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
+        store.updateNode(id) { it.copy(landscape = on) }
+        sendControl(id, NetMessages.orientationCmd(on))
+    }
+
+    fun setVolume(id: String, v: Int) { sendControl(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
+    fun setBrightness(id: String, v: Int) { sendControl(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }
+    fun screen(id: String, on: Boolean) { sendControl(id, cmd("screen").put("on", on)); patch(id) { it.copy(screenOn = on) } }
     fun bedtime(id: String, minutes: Int) {
-        send(id, cmd("bedtime").put("minutes", minutes))
+        sendControl(id, cmd("bedtime").put("minutes", minutes))
         patch(id) { it.copy(bedtimeAt = if (minutes > 0) System.currentTimeMillis() + minutes * 60_000L else 0) }
     }
-    fun open(id: String, pkg: String) = send(id, cmd("open").put("pkg", pkg))
-    fun home(id: String) = send(id, cmd("home"))
+    fun open(id: String, pkg: String) = sendControl(id, cmd("open").put("pkg", pkg))
+    fun home(id: String) = sendControl(id, cmd("home"))
     fun allow(id: String, pkg: String, on: Boolean) {
-        send(id, cmd("allow").put("pkg", pkg).put("on", on))
+        sendControl(id, cmd("allow").put("pkg", pkg).put("on", on))
         patch(id) { it.copy(allowed = if (on) (it.allowed - pkg) + pkg else it.allowed - pkg) }
     }
-    fun lockToApp(id: String, pkg: String?) { send(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
+    fun lockToApp(id: String, pkg: String?) { sendControl(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
     /** A greyed Brightness or Off was tapped: make the Node pop up its own "Allow" card. An old Node ignores it. */
     fun askPermission(id: String): Boolean {
-        val sent = send(id, NetMessages.askPermissionCmd())
+        val sent = sendControl(id, NetMessages.askPermissionCmd())
         if (sent) _asked.update { it + (id to System.currentTimeMillis()) }
         return sent
     }
     fun requestApps(id: String) = send(id, cmd("apps"))
     /** The Node checks the update track itself and installs (silently when it has the kid lock). */
-    fun updateNode(id: String) = send(id, cmd("update"))
-    fun restartJellyfin(id: String) = send(id, cmd("restart"))
+    fun updateNode(id: String) = sendControl(id, cmd("update"))
+    fun restartJellyfin(id: String) = sendControl(id, cmd("restart"))
 
     /** Lock also pauses whatever is playing, so the show doesn't carry on behind the wall. */
     fun lock(id: String, on: Boolean) {
-        send(id, cmd("lock").put("on", on))
+        sendControl(id, cmd("lock").put("on", on))
         patch(id) { it.copy(lockedBy = if (on) displayName else null) }
         if (on) _playback.value[id]?.let { pb -> if (!pb.session.paused) control(id, "Pause") }
     }
 
     fun rename(id: String, name: String) {
-        send(id, cmd("rename").put("name", name))
+        sendControl(id, cmd("rename").put("name", name))
         store.updateNode(id) { it.copy(name = name) }
     }
 
@@ -666,7 +758,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "Seek" -> if ((seekTicks ?: 0) < pb.positionTicks()) "rewind" else "forward"
                 else -> null
             }
-            if (key != null) send(id, this@MasterRuntime.cmd("media").put("key", key))
+            if (key != null) sendControl(id, this@MasterRuntime.cmd("media").put("key", key))
         }
         jf { it.playstate(pb.remoteSessionId, cmd, seekTicks) }
         // Reflect immediately; the next poll corrects it.

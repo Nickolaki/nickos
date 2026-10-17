@@ -73,6 +73,26 @@ class PermissionAskTest {
         }
     }
 
+    @Test fun notificationsAreAskedLastAndOnlyOnceAndNeverOfAnOwner() {
+        val tried = mutableSetOf<PermStep>()
+        assertEquals(PermStep.BRIGHTNESS, PermissionAsk.nextStep(false, false, false, tried, notificationsOk = false))
+        tried += PermStep.BRIGHTNESS
+        assertEquals(PermStep.SCREEN_OFF, PermissionAsk.nextStep(false, false, false, tried, notificationsOk = false))
+        tried += PermStep.SCREEN_OFF
+        assertEquals(PermStep.NOTIFICATIONS, PermissionAsk.nextStep(false, false, false, tried, notificationsOk = false))
+        tried += PermStep.NOTIFICATIONS
+        assertNull("a no never loops", PermissionAsk.nextStep(false, false, false, tried, notificationsOk = false))
+        assertEquals(PermStep.NOTIFICATIONS, PermissionAsk.nextStep(false, true, true, emptySet(), notificationsOk = false))
+        assertNull(PermissionAsk.nextStep(false, true, true, emptySet(), notificationsOk = true))
+        assertNull("a Device Owner is granted it by policy", PermissionAsk.nextStep(true, false, false, emptySet(), notificationsOk = false))
+    }
+
+    @Test fun missingNotificationsAloneBringBackTheCard() {
+        assertTrue(PermissionAsk.showCard(false, true, true, declined = false, playing = false, masterAsked = false, notificationsOk = false))
+        assertFalse(PermissionAsk.showCard(false, true, true, declined = false, playing = false, masterAsked = false, notificationsOk = true))
+        assertFalse(PermissionAsk.showCard(true, true, true, declined = false, playing = false, masterAsked = false, notificationsOk = false))
+    }
+
     @Test fun masterLineShowsForTwoMinutesAfterAsking() {
         assertEquals("Asked on Hailey's Tablet. Tap Allow on that tablet.", ControlAccess.askedLine("Hailey's Tablet"))
         assertTrue(ControlAccess.askedActive(1000L, 1000L + 119_000L))

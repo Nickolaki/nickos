@@ -333,6 +333,44 @@ class DesignScreensTest {
         shot("Cameras-Phone") { CamerasScreen({}, {}, live = false) }
     }
 
+    // ---- push to talk on the Cameras screen ----
+    private fun talkCaps(vararg ids: String) {
+        val all = listOf(CH, CL, CM).associateWith { id -> camStatus(true).let { if (id in ids) it.copy(caps = it.caps + "talk1") else it } }
+        set(app.master, "_status", all)
+    }
+
+    /** Two tablets that can hear and one that is too old: the button is ready and names who hears. */
+    @Test fun camerasTalkReady() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(), CM to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camPicture(CM, camPlum.first, camPlum.second)
+        shot("Cameras-Talk-Ready") { CamerasScreen({}, {}, live = false) }
+    }
+
+    /** A press in progress: the button is lit and the line names the frozen recipients. */
+    @Test fun camerasTalking() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL), mapOf(CH to camLive(), CL to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        shot("Cameras-Talk-Talking") {
+            CamerasScreen({}, {}, live = false, talkPreset = com.nbaltas.nickos.master.TalkState("0123456789abcdef", listOf(CH, CL), listOf("Hailey", "Leo")))
+        }
+    }
+
+    /** The only tablet on the stage is an old version: the button is greyed and says to update it. */
+    @Test fun camerasTalkOldTablet() {
+        seedCams()
+        talkCaps()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        shot("Cameras-Talk-Update") { CamerasScreen({}, {}, live = false) }
+    }
+
     @Test fun camerasNothingOn() {
         seedCams()
         cams(emptySet(), emptyMap())
@@ -752,8 +790,28 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun controlDeviceNoPerms1024() = deviceTabNoPerms()
 
+    /** The Screen card's "Lock to landscape" switch: on and working, and on but missing the overlay permission. */
+    private fun deviceTabLandscape(tag: String, l: com.nbaltas.nickos.link.NetMessages.LandscapeStatus) {
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin").copy(landscape = l)))
+        shot("Control-Device-Landscape-$tag-${sizeTag()}") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    private val landscapeOn = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "on")
+    private val landscapeBlocked = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "no_permission")
+
+    // At 960 the Device tab is one scrolling column and the control sits below the first screen. The picture helper
+    // cannot scroll, so the 960 picture is taken on a tall 960 wide screen that shows the whole column, control included.
+    @Config(qualifiers = "w960dp-h1100dp-mdpi")
+    @Test fun controlDeviceLandscapeOnColumn960() = deviceTabLandscape("On", landscapeOn)
+    @Config(qualifiers = "w960dp-h1100dp-mdpi")
+    @Test fun controlDeviceLandscapePendingColumn960() = deviceTabLandscape("Pending", com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "pending"))
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceLandscapeOn1024() = deviceTabLandscape("On", landscapeOn)
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceLandscapeBlocked1024() = deviceTabLandscape("NoPermission", landscapeBlocked)
+
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
-        com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {})
+        com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {}, onTalkNotifications = {})
     }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")

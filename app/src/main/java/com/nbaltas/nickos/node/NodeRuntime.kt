@@ -19,6 +19,13 @@ import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.talk.TalkBannerPolicy
+import com.nbaltas.nickos.talk.TalkGate
+import com.nbaltas.nickos.talk.TalkIndicator
+import com.nbaltas.nickos.talk.TalkMessages
+import com.nbaltas.nickos.talk.TalkPlayer
+import com.nbaltas.nickos.talk.TalkReceiver
+import com.nbaltas.nickos.talk.TalkText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -203,6 +210,61 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     val overlay = NodeOverlay(ctx, store, this)
 
+    /** "Dad is talking" while a parent speaks through push to talk; null otherwise. */
+    private val _talkBanner = MutableStateFlow<String?>(null)
+    val talkBanner: StateFlow<String?> = _talkBanner
+
+    /** Push to talk: the state machine decides, [TalkPlayback] plays. Frames only count from a Master still linked here. */
+    private val talkNotice = TalkNotice(ctx)
+    private val talkIndicator = object : TalkIndicator {
+        @Volatile private var noticeUp = false
+        private fun way() = TalkBannerPolicy.way(device.canOverlay(), talkNotice.ready())
+        override fun available() = way() != TalkBannerPolicy.Way.NONE
+        /** True only when the banner window was really attached (or the home screen draws it), or the notification was posted. */
+        override fun show(text: String): Boolean {
+            _talkBanner.value = text
+            return when (way()) {
+                TalkBannerPolicy.Way.OVERLAY -> overlay.refreshTalkAndWait()
+                // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
+                TalkBannerPolicy.Way.NOTICE -> talkNotice.show(text).also { noticeUp = it }
+                TalkBannerPolicy.Way.NONE -> false
+            }
+        }
+        /** Asked until the audio has drained. Looks at what is really on screen, and puts it back or switches to the notification if it is not. */
+        override fun maintain(): Boolean {
+            val text = _talkBanner.value ?: return false
+            return when (way()) {
+                TalkBannerPolicy.Way.OVERLAY -> overlay.talkOnScreen() || overlay.refreshTalkAndWait() || talkNotice.show(text).also { noticeUp = it }
+                // The overlay was lost mid session: the notification takes over.
+                TalkBannerPolicy.Way.NOTICE -> noticeUp || talkNotice.show(text).also { noticeUp = it }
+                TalkBannerPolicy.Way.NONE -> false
+            }
+        }
+        override fun clear() { _talkBanner.value = null; overlay.refresh(); talkNotice.clear(); noticeUp = false }
+    }
+
+    /** The status field `talk`: "ok", or "needs_permission" when this tablet would refuse talk audio (see [TalkIndicator.available]). */
+    private fun talkStatus() = if (talkIndicator.available()) TalkMessages.STATUS_OK else TalkMessages.STATUS_NEEDS_PERMISSION
+
+    /** The receiver is given the player at once, the player is told a failure through [talk]: see [talkPlayer]. */
+    private val talkPlayer = TalkPlayer(
+        newSpeaker = { AndroidSpeaker(ctx) }, indicator = talkIndicator,
+        nameOf = { id -> TalkText.banner(store.masters.value.firstOrNull { it.id == id }?.name) },
+        onFailed = { sid -> talk.sinkFailed(sid) }, log = { Log.w(TAG, it) },
+    )
+    private val talk: TalkReceiver = TalkReceiver(
+        talkPlayer,
+        linked = { id -> store.masters.value.any { it.id == id } },
+        clock = System::currentTimeMillis,
+    )
+
+    /** The parent's "lock to landscape": see [LandscapeLock]. MainActivity follows the stored choice itself. */
+    val landscape = LandscapeLock(AndroidRotationPort(ctx, store) { overlay.landscapeGuard(it) })
+    fun applyLandscape() = landscape.apply(store.landscapeLock.value)
+
+    /** Turns the lock off and gives the tablet's own rotation settings back (unlink, reset). */
+    fun releaseLandscape() { store.setLandscapeLock(false); landscape.apply(false) }
+
     /** Watch together: the movie library, the synced player and the answers to its commands. */
     val together = NodeTogether(ctx, store, device, scope, { homeVisible }, ::broadcast)
     val videos get() = together.videos
@@ -230,8 +292,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         // back on if it dropped. The ServerSocket binds the wildcard address, so it needs nothing.
         netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh() }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
+        applyLandscape()
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
+        jobs += scope.launch { while (isActive) { delay(200); try { talk.tick(); if (!talkPlayer.indicatorHolds()) { Log.w(TAG, "talk ended: the indicator was lost"); talk.stop() } } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
         jobs += scope.launch { kioskLoop() }
         together.start()
         applyLockdown()
@@ -321,12 +385,20 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             while (true) {
                 val msg = c.read() ?: break
                 if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                // Audio only hands a frame over here; nothing on this thread waits for the speaker.
+                // And only on a sealed link: a legacy clear text session (v1) is refused talk.
+                else if (TalkMessages.isTalk(msg)) {
+                    if (!TalkGate.allows(c.isSealed)) Log.w(TAG, "talk refused on an unsealed link")
+                    else try { talk.onMessage(id, msg) } catch (e: Exception) { Log.w(TAG, "talk failed", e) }
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "connection ended: ${e.message}")
         } finally {
             c.close()
             sessions.removeAll { it.second === c }
+            // Not when the same Master has already reconnected: its new link may be mid talk.
+            masterId?.let { m -> if (sessions.none { it.first == m }) talk.onMasterGone(m) }
             _connected.value = sessions.map { it.first }.toSet()
             if (sessions.isEmpty()) cam.stop(NodeCam.LINK) // no parent tablet left to look
         }
@@ -425,7 +497,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> store.removeMaster(masterId)
+            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
+            NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
         }
@@ -461,11 +534,13 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("bedtimeAt", store.bedtimeAt.value)
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
+            .put("talk", talkStatus())
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
+            .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("now", System.currentTimeMillis())
     }
 
@@ -474,6 +549,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         var lastSent = 0L
         while (scope.isActive) {
             delay(1500)
+            // Also with no parent connected: the lock must hold after a reboot, and a permission may arrive later.
+            applyLandscape()
             if (sessions.isEmpty()) continue
             val s = status()
             val key = s.toString().replace(Regex("\"now\":\\d+"), "")
@@ -540,8 +617,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         approvalReceiver?.let { try { ctx.applicationContext.unregisterReceiver(it) } catch (_: Exception) {} }
         approvalReceiver = null
         together.release()
+        talk.stop()
         cam.destroy()
         overlay.hideAll()
+        overlay.landscapeGuard(false)
     }
 
     companion object { private const val TAG = "NickOS.Node" }

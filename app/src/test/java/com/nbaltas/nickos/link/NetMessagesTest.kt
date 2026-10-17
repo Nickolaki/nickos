@@ -91,4 +91,39 @@ class NetMessagesTest {
         assertFalse(NetMessages.isAskPermission(JSONObject("""{"t":"status","c":"askPerm"}""")))
         assertFalse(NetMessages.isAskPermission(JSONObject("""{"t":"cmd","c":"somethingNewer"}""")))
     }
+
+    @Test
+    fun `orientation command round trips both ways`() {
+        val on = wire(NetMessages.orientationCmd(true))
+        assertEquals("cmd", on.getString("t"))
+        assertEquals("orientation", on.getString("c"))
+        assertEquals(true, NetMessages.decodeOrientation(on))
+        assertEquals(false, NetMessages.decodeOrientation(wire(NetMessages.orientationCmd(false))))
+    }
+
+    @Test
+    fun `orientation command with a missing or odd value is ignored`() {
+        for (s in listOf("""{"t":"cmd","c":"orientation"}""", """{"t":"cmd","c":"orientation","landscape":"yes"}""",
+            """{"t":"cmd","c":"orientation","landscape":1}""", """{"t":"cmd","c":"orientation","landscape":null}""",
+            """{"t":"status","c":"orientation","landscape":true}""", """{"t":"cmd","c":"volume","landscape":true}""")) {
+            assertNull(s, NetMessages.decodeOrientation(JSONObject(s)))
+        }
+        assertNull(NetMessages.decodeOrientation(null))
+    }
+
+    @Test
+    fun `landscape status round trips and an old node reports none`() {
+        for (st in listOf("on", "off", "no_permission", "pending")) {
+            val s = NetMessages.LandscapeStatus(st != "off", st)
+            val status = JSONObject().put("landscape", NetMessages.encodeLandscape(s))
+            assertEquals(s, NetMessages.decodeLandscape(wire(status)))
+        }
+        assertTrue(NetMessages.LandscapeStatus(true, "no_permission").needsPermission)
+        assertFalse(NetMessages.LandscapeStatus(true, "on").needsPermission)
+        assertTrue(NetMessages.LandscapeStatus(true, "pending").pending)
+        assertFalse(NetMessages.LandscapeStatus(true, "on").pending)
+        assertNull("old node", NetMessages.decodeLandscape(JSONObject("""{"t":"status"}""")))
+        assertNull("unknown state", NetMessages.decodeLandscape(JSONObject("""{"landscape":{"lock":true,"state":"sideways"}}""")))
+        assertNull("not an object", NetMessages.decodeLandscape(JSONObject("""{"landscape":true}""")))
+    }
 }

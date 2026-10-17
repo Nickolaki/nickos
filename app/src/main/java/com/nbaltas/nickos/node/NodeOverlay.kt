@@ -36,6 +36,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private var lockView: View? = null
     private var toastView: View? = null
+    private var guardView: View? = null
+    @Volatile private var talkView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -48,17 +50,76 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             if (locked && !rt.homeVisible) rt.device.goHome()
             return
         }
-        if (locked && lockView == null) lockView = add(fullScreen = true) { LockedOverlayContent(store) }
+        if (locked && lockView == null) {
+            lockView = add(fullScreen = true) { LockedOverlayContent(store) }
+            // The talking banner is added after the wall so it stays on top of it.
+            if (talkView != null) { remove(talkView); talkView = null }
+        }
         if (!locked && lockView != null) { remove(lockView); lockView = null }
         // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
         if (!toast && toastView != null) { remove(toastView); toastView = null }
+        // Talk always uses an attached window, including on home, so playback can confirm presentation.
+        val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
+        if (talking && talkView == null) {
+            // Only a banner that was added without an exception counts as shown (see talkOnScreen).
+            talkView = try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+        }
+        if (!talking && talkView != null) { remove(talkView); talkView = null }
+    }
+
+    /**
+     * Brings the overlay up to date on the main thread and waits (a short while) for it. True only when "Parent is
+     * talking" really is on screen afterwards: the banner window is attached.
+     */
+    fun refreshTalkAndWait(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) { update(); return talkOnScreen() }
+        val done = java.util.concurrent.CountDownLatch(1)
+        main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "overlay", e) } finally { done.countDown() } }
+        return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && talkOnScreen() } catch (e: InterruptedException) { false }
+    }
+
+    fun talkOnScreen(): Boolean {
+        return talkView?.isAttachedToWindow == true
+    }
+
+    /**
+     * The landscape lock for other apps: a 1 pixel window nobody can see or touch that asks Android for sensor
+     * landscape (both directions). The foreground app inherits the request. Safe to call again with the same value.
+     * The window is added on the main thread and this waits (a short while) for the answer: true only when the window
+     * is really there (on) or gone (off).
+     */
+    fun landscapeGuard(on: Boolean): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) return guard(on)
+        val done = java.util.concurrent.CountDownLatch(1)
+        var ok = false
+        main.post { try { ok = guard(on) } finally { done.countDown() } }
+        return try { done.await(GUARD_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && ok } catch (e: InterruptedException) { false }
+    }
+
+    private fun guard(on: Boolean): Boolean {
+        if (on && guardView == null) {
+            val v = View(ctx)
+            val lp = WindowManager.LayoutParams(
+                1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
+            try { wm.addView(v, lp); guardView = v } catch (e: Exception) { android.util.Log.w("NickOS.Rotation", "landscape guard", e) }
+        }
+        if (!on && guardView != null) { remove(guardView); guardView = null }
+        return (guardView != null) == on
     }
 
     fun hideAll() = main.post {
         remove(lockView); lockView = null
         remove(toastView); toastView = null
+        remove(talkView); talkView = null
     }
 
     private fun add(fullScreen: Boolean, content: @androidx.compose.runtime.Composable () -> Unit): View {
@@ -87,6 +148,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         return view
     }
 
+    private companion object { const val GUARD_WAIT_MS = 1500L; const val TALK_WAIT_MS = 500L }
+
     private fun remove(v: View?) {
         if (v != null) try { wm.removeView(v) } catch (_: Exception) {}
     }
@@ -107,6 +170,18 @@ private fun ToastOverlayContent(rt: NodeRuntime) {
                 .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
                 .padding(bottom = 28.dp),
         ) { BedtimeToast(it) }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun TalkOverlayContent(rt: NodeRuntime) {
+    val text by rt.talkBanner.collectAsStateWithLifecycle()
+    text?.let {
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier
+                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                .padding(bottom = 28.dp),
+        ) { com.nbaltas.nickos.ui.node.TalkBanner(it) }
     }
 }
 

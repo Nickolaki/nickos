@@ -80,6 +80,9 @@ object Provisioning {
     /** Set when this tablet was provisioned from a NickOS QR: setup skips straight to the Node steps. */
     fun provisionedAsNode(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("node", false)
 
+    /** A reset puts the tablet back to normal: it is no longer a QR kid tablet in the making, so it is not offered as a home screen. */
+    fun forget(ctx: Context) { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("node").commit() }
+
     internal fun remember(ctx: Context, extras: PersistableBundle?) {
         if (extras?.getString(EXTRA_ROLE) == "node") ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("node", true).apply()
     }
@@ -105,6 +108,7 @@ class PolicyComplianceActivity : Activity() {
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
         Provisioning.remember(this, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        com.nbaltas.nickos.EntrySwitch.applyStored(this)
         NodeDevice.makeHome(this)
         setResult(RESULT_OK)
         finish()

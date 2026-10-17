@@ -36,6 +36,9 @@
     <!-- Tablet cameras: a Node streams its front camera to the Master. Video only, never the microphone. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Push to talk on the parent tablet only. Asked for the first time the parent holds the talk button, never at setup. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -70,7 +73,8 @@
         android:theme="@style/Theme.NickOS"
         android:usesCleartextTraffic="true">
 
-        <!-- The home screen. HOME + DEFAULT makes it choosable as the tablet's launcher. -->
+        <!-- The home screen. HOME + DEFAULT makes it choosable as the tablet's launcher. Kid tablets always use this
+             one, exactly as before. A parent tablet that is not the home screen swaps it for ParentActivity: see EntryPolicy. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -88,6 +92,25 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- The same app for a parent tablet: launcher icon only, never offered as a home screen. Off until the
+             parent role is saved. -->
+        <activity
+            android:name=".ParentActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:taskAffinity="com.nbaltas.nickos.parent"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:resumeWhilePausing="true"
+            android:excludeFromRecents="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 

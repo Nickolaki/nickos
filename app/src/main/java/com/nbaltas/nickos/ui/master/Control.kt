@@ -93,6 +93,7 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.node.ControlAccess
+import com.nbaltas.nickos.node.LandscapePolicy
 import com.nbaltas.nickos.ui.theme.NickSlider
 import com.nbaltas.nickos.ui.theme.NickSwitch
 import com.nbaltas.nickos.ui.theme.ProgressBar
@@ -612,12 +613,25 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     }
                     // The cards are about 217dp tall on a 1024x768 or 960x600 tablet: three full buttons did not fit and
                     // Unlink was cut off. Short cards put Restart and Rename side by side.
-                    if (tabletCompact(cardH)) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // The landscape switch makes the card one row taller, so it uses the short layout too.
+                    if (tabletCompact(cardH) || st?.landscape != null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StartButton(Lucide.RefreshCw, "Restart", Modifier.weight(1f), height = 48.dp) { m.restartJellyfin(v.node.id) }
                             StartButton(Lucide.Pencil, "Rename", Modifier.weight(1f), height = 48.dp) { renaming = true }
                         }
                         unlink(48.dp)
+                        // An old Node does not report it, so there is nothing to switch.
+                        st?.landscape?.let { l ->
+                            Row(
+                                Modifier.fillMaxWidth().toggleable(l.lock, role = androidx.compose.ui.semantics.Role.Switch) { m.setLandscape(v.node.id, it) },
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                Text("Lock to landscape", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                                NickSwitch(l.lock) { m.setLandscape(v.node.id, it) }
+                            }
+                            if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700), color = C.danger)
+                            if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700), color = C.danger)
+                        }
                     } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
                         StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }

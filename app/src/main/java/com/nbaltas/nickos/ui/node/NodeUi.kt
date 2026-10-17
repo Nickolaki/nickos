@@ -57,6 +57,7 @@ import androidx.core.graphics.drawable.toBitmap
 import com.composables.icons.lucide.Link
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Mic
 import com.composables.icons.lucide.Moon
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.ResumeCard
@@ -418,6 +419,32 @@ fun BedtimeToast(secondsLeft: Int) {
     }
 }
 
+// ---------------- Parent talking ----------------
+
+/** In-app placement, same spot as the bedtime pill. */
+@Composable
+fun TalkBannerAtBottom(text: String) {
+    Box(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 28.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) { TalkBanner(text) }
+}
+
+/** "Dad is talking": the pill shown while a grown-up speaks through push to talk. */
+@Composable
+fun TalkBanner(text: String) {
+    Row(
+        Modifier.padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(32.dp))
+            .clip(RoundedCornerShape(32.dp)).background(NodePalette.toastBg).padding(horizontal = 26.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Box(Modifier.size(56.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+            Icon(Lucide.Mic, null, tint = C.onAccent, modifier = Modifier.size(28.dp))
+        }
+        Text(text, style = disp(30.sp), color = C.onAccent, maxLines = 1)
+    }
+}
+
 // ---------------- Parent menu (after the PIN) ----------------
 
 /** Not in the design handoff; built from the same PIN-card language. */
@@ -442,6 +469,8 @@ fun ParentMenu(
     onAllowBrightness: (() -> Unit)? = null,
     /** Non-null while the parent tablet cannot turn this screen off yet. */
     onAllowScreenOff: (() -> Unit)? = null,
+    /** Non-null: shows "Talk notifications", which opens this tablet's notification settings for the parent talking banner. */
+    onTalkNotifications: (() -> Unit)? = null,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -473,6 +502,7 @@ fun ParentMenu(
             if (!videosAllowed) MenuButton("Allow videos", onClick = onAllowVideos)
             if (onAllowBrightness != null) MenuButton("Allow brightness control", onClick = onAllowBrightness)
             if (onAllowScreenOff != null) MenuButton("Allow screen off", onClick = onAllowScreenOff)
+            if (onTalkNotifications != null) MenuButton("Talk notifications", onClick = onTalkNotifications)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {

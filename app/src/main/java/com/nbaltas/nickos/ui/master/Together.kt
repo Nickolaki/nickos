@@ -445,7 +445,7 @@ internal fun TogetherRemote(onBack: () -> Unit) {
             Column(Modifier.width(360.dp).padding(end = 40.dp, top = 40.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 val statuses = master.status.collectAsState().value
                 val avgVol = nodes.mapNotNull { statuses[it.node.id]?.volume }.let { if (it.isEmpty()) 50 else it.average().toInt() }
-                VolumeCard(if (nodes.size <= 1) "Volume" else "Everyone's volume", avgVol) { v -> nodes.forEach { master.setVolume(it.node.id, v) } }
+                VolumeCard(if (nodes.size <= 1) "Volume" else "Everyone's volume", avgVol) { v -> nodes.filter { it.online }.forEach { master.setVolume(it.node.id, v) } }
                 if (nodes.size > 1) {
                     EyebrowText("Tablets")
                     nodes.forEach { n ->
