@@ -390,12 +390,18 @@ class Store(context: Context) {
     }
 
     /** The tablet's own screen off timeout (milliseconds) as it was before the battery timer changed it, or null when it has not. */
-    fun savedScreenTimeout(): Int? = if (p.contains("powerSavedTimeout")) p.getInt("powerSavedTimeout", 0) else null
-    /** True only when the change reached the disk: the timer changes nothing on the tablet without that. */
+    fun savedScreenTimeout(): Int? = durableTimeout
+    // SharedPreferences updates its memory even when commit() fails, so what counts is only what a commit confirmed.
+    @Volatile private var durableTimeout: Int? = if (p.contains("powerSavedTimeout")) p.getInt("powerSavedTimeout", 0) else null
+    /** True only when the change reached the disk: the timer changes nothing on the tablet without that. A failed removal leaves the copy present. */
+    @Synchronized
     fun setSavedScreenTimeout(ms: Int?): Boolean {
         val e = p.edit()
         if (ms == null) e.remove("powerSavedTimeout") else e.putInt("powerSavedTimeout", ms)
-        return e.commit()
+        val ok = e.commit()
+        if (ok) durableTimeout = ms
+        else durableTimeout.let { d -> p.edit().apply { if (d == null) remove("powerSavedTimeout") else putInt("powerSavedTimeout", d) }.apply() }
+        return ok
     }
 
     private val _resume = MutableStateFlow(readList("resume") { ResumeCard.from(it) })

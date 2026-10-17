@@ -145,6 +145,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** This tablet's own power settings (wake on charge, screen off on battery): see [PowerRunner]. */
     val powerRunner = com.nbaltas.nickos.power.PowerRunner(ctx, store)
 
+    /** Applies the stored choice again, which also retries a restore that was waiting for permission. Only while this is the Master. */
+    fun refreshOwnPower() {
+        if (store.role.value == Role.MASTER) Thread { powerRunner.refresh() }.start()
+    }
+
     /** Saves the parent tablet's own choice and applies it. False when it could not be saved. */
     fun setOwnPower(wake: Boolean, offMin: Int): Boolean {
         if (!store.setPower(wake, offMin)) return false
@@ -309,9 +314,13 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch {
             // Only a reset (Master to no role) removes the group. Setup runs with no role yet and must keep it.
             var prev = store.role.value
-            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) { carNet.stop(); powerRunner.release() }; prev = r }
+            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) { carNet.stop(); powerRunner.stop(); powerRunner.release() }; prev = r }
         }
-        powerRunner.start()
+        scope.launch {
+            // The power runner lives only while the role is Master, also when this runtime was started by a setup that backs out
+            // and again on re-entry, which the `started` guard above would otherwise skip.
+            store.role.collect { r -> if (r == Role.MASTER) powerRunner.start() else powerRunner.stop() }
+        }
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }

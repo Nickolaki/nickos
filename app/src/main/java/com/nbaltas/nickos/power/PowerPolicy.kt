@@ -27,6 +27,9 @@ data class PowerPlan(
 )
 
 object PowerPolicy {
+    /** One lock for the whole tablet: the Master and Node runners plan, save and write under it, so they never race over the backup. */
+    val LOCK = Any()
+
     /** The minutes the parent can pick; 0 is off. */
     val CHOICES = listOf(0, 2, 5, 10, 15, 30)
 
@@ -73,12 +76,13 @@ class PowerScreenTimer(private val port: ScreenTimeoutPort) {
     @Volatile var state: String = NetMessages.STATE_OFF
         private set
 
-    @Synchronized
-    fun apply(wake: Boolean, offMin: Int, charging: Boolean): String {
+    fun apply(wake: Boolean, offMin: Int, charging: Boolean): String = synchronized(PowerPolicy.LOCK) {
+        // Known behaviour: a timeout the user changes by hand while on battery is overwritten at the next refresh, and
+        // charging gives back the first saved value, not theirs. The backup is saved once and kept until it is restored.
         val plan = PowerPolicy.plan(wake, offMin, charging, port.canChange(), port.saved())
         try {
             // The first copy must be on disk before the tablet's setting changes; otherwise leave it alone.
-            if (plan.saveFirst && !port.save(port.read())) return plan.state.also { state = it }
+            if (plan.saveFirst && !port.save(port.read())) return@synchronized plan.state.also { state = it }
             if (plan.timeoutMs != null && port.read() != plan.timeoutMs) port.write(plan.timeoutMs)
             if (plan.restore) {
                 val s = port.saved()
@@ -89,7 +93,7 @@ class PowerScreenTimer(private val port: ScreenTimeoutPort) {
             Log.w("NickOS.Power", "screen timeout", e)
         }
         state = plan.state
-        return state
+        state
     }
 
     fun status(wake: Boolean, offMin: Int) = NetMessages.PowerStatus(wake, offMin, state)
@@ -99,10 +103,9 @@ class PowerScreenTimer(private val port: ScreenTimeoutPort) {
 class AndroidScreenTimeoutPort(private val ctx: Context, private val store: Store) : ScreenTimeoutPort {
     private val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
     private val admin = ComponentName(ctx, AdminReceiver::class.java)
-    private val owner get() = android.os.Build.VERSION.SDK_INT >= 28 && dpm.isDeviceOwnerApp(ctx.packageName)
     private val writeOk get() = android.os.Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(ctx)
 
-    override fun canChange() = writeOk || owner
+    override fun canChange() = canChange(ctx)
 
     override fun read() = Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 60_000)
 
@@ -116,6 +119,16 @@ class AndroidScreenTimeoutPort(private val ctx: Context, private val store: Stor
 
     override fun saved(): Int? = store.savedScreenTimeout()
     override fun save(ms: Int?) = store.setSavedScreenTimeout(ms)
+
+    companion object {
+        /** Whether this tablet may change the screen timeout: the write settings permission, or a Device Owner on API 28+. */
+        fun canChange(ctx: Context): Boolean {
+            val writeOk = android.os.Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(ctx)
+            val owner = android.os.Build.VERSION.SDK_INT >= 28 &&
+                ctx.getSystemService(DevicePolicyManager::class.java).isDeviceOwnerApp(ctx.packageName)
+            return writeOk || owner
+        }
+    }
 }
 
 /** Wakes the screen. Shared by the Node's Master command and the wake on charge setting. */

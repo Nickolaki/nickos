@@ -93,6 +93,28 @@ class PowerPolicyTest {
         assertEquals(60_000, port.timeout); assertEquals(0, port.writes)
     }
 
+    @Test fun `two timers on one store keep the original timeout`() {
+        val port = FakeScreen(timeout = 60_000)
+        val master = PowerScreenTimer(port)
+        val node = PowerScreenTimer(port)
+        // Interleaved unplug and refresh from both runners, as when a surviving Master races the Node.
+        master.apply(false, 5, charging = false)
+        node.apply(false, 10, charging = false)
+        master.apply(false, 10, charging = false)
+        node.apply(false, 10, charging = false)
+        assertEquals(60_000, port.kept)
+        node.apply(false, 10, charging = true)
+        assertEquals(60_000, port.timeout); assertNull(port.kept)
+    }
+
+    @Test fun `two timers on threads share one backup`() {
+        val port = FakeScreen(timeout = 60_000)
+        val ts = listOf(PowerScreenTimer(port), PowerScreenTimer(port))
+        val threads = ts.map { t -> Thread { repeat(200) { t.apply(false, 5, charging = false) } } }
+        threads.forEach { it.start() }; threads.forEach { it.join() }
+        assertEquals(60_000, port.kept); assertEquals(300_000, port.timeout)
+    }
+
     @Test fun `a restore waits for permission and the copy is kept`() {
         val port = FakeScreen(canChange = false, timeout = 300_000, kept = 60_000)
         val t = PowerScreenTimer(port)
