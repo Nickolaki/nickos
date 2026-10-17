@@ -99,14 +99,7 @@ class NodeDevice(private val ctx: Context) {
         if (isAdmin) try { dpm.lockNow() } catch (e: Exception) { Log.w(TAG, "lockNow", e) }
     }
 
-    @Suppress("DEPRECATION")
-    fun wake() {
-        val wl = power.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-            "nickos:wake",
-        )
-        wl.acquire(3000)
-    }
+    fun wake() = com.nbaltas.nickos.power.ScreenWake.wake(ctx)
 
     // ---- volume / brightness (0-100) ----
     fun volume(): Int {

@@ -82,6 +82,7 @@ import com.nbaltas.nickos.master.OnlinePolicy
 import com.nbaltas.nickos.master.Reason
 import com.nbaltas.nickos.master.Why
 import com.nbaltas.nickos.jellyfin.JfUser
+import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.update.UpdateState
 import com.nbaltas.nickos.update.Updater
 import kotlinx.coroutines.launch
@@ -177,18 +178,46 @@ private fun TabletsSection(onAdd: () -> Unit) {
     var renaming by remember { mutableStateOf<String?>(null) } // node id, or "" for this tablet
     var confirmUnlink by remember { mutableStateOf<String?>(null) }
     SectionPage("Linked tablets", { NickButton("Add tablet", onAdd, style = BtnStyle.PRIMARY, leading = Lucide.Plus) }) {
-        Row(
+        Column(
             Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(Modifier.size(60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
-                Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(26.dp).rotate90())
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(Modifier.size(60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(26.dp).rotate90())
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(name.ifBlank { "Parent's Tablet" }, style = body(20.sp, 800), color = C.text)
+                    Muted("This tablet · Master", 16)
+                }
+                NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
             }
-            Column(Modifier.weight(1f)) {
-                Text(name.ifBlank { "Parent's Tablet" }, style = body(20.sp, 800), color = C.text)
-                Muted("This tablet · Master", 16)
+            val ctx = LocalContext.current
+            val wake by app.store.powerWakeOnCharge.collectAsState()
+            val offMin by app.store.powerBatteryOffMin.collectAsState()
+            // Same check as the tablet's own port, so a Device Owner counts as able. Read again on every resume: coming back from
+            // the permission page applies the parent's choice, retries a pending restore and clears the red line.
+            var canWrite by remember { mutableStateOf(com.nbaltas.nickos.power.AndroidScreenTimeoutPort.canChange(ctx)) }
+            val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            androidx.compose.runtime.DisposableEffect(owner) {
+                val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                    if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        canWrite = com.nbaltas.nickos.power.AndroidScreenTimeoutPort.canChange(ctx)
+                        app.master.refreshOwnPower()
+                    }
+                }
+                owner.lifecycle.addObserver(obs)
+                onDispose { owner.lifecycle.removeObserver(obs) }
             }
-            NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
+            PowerControls(wake, offMin, if (offMin > 0 && !canWrite) PowerPolicy.NEEDS_PERMISSION else null, { w, m ->
+                // Only picking a time opens the permission page, never the wake switch.
+                if (m > 0 && m != offMin && !canWrite) {
+                    try {
+                        ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: Exception) {}
+                }
+                app.master.setOwnPower(w, m)
+            })
         }
         CarNetCard()
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
