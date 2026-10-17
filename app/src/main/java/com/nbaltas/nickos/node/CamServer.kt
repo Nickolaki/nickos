@@ -47,6 +47,10 @@ class CamServer(
 
     private var server: ServerSocket? = null
     private val clients = CopyOnWriteArrayList<Client>()
+    /** Provider keys revoked for this server lifetime; guarded by clients. */
+    private val revokedKeys = HashSet<String>()
+    /** Test seam after authentication, before taking the admission lock. */
+    @Volatile internal var beforeAdmission: ((String) -> Unit)? = null
     /** Connections that have not finished asking yet, with when each connected. */
     private val greeting = ConcurrentHashMap<Socket, Long>()
     private val idleFired = AtomicBoolean(false)
@@ -65,8 +69,13 @@ class CamServer(
 
     val clientCount: Int get() = clients.size
 
-    /** Closes every client that used [k] (its Master stopped watching or was unlinked). */
-    fun dropKey(k: String) { clients.filter { it.key == k }.forEach { it.close() } }
+    /** Closes readers of [k]; provider keys also cannot be admitted again on this server. */
+    fun dropKey(k: String) {
+        synchronized(clients) {
+            if (keys != null) revokedKeys += k
+            clients.filter { it.key == k }.forEach { it.close() }
+        }
+    }
 
     /** The keys that connected clients used. A key leaves this set when its client disconnects. */
     fun connectedKeys(): Set<String> = clients.map { it.key }.toSet()
@@ -153,12 +162,14 @@ class CamServer(
             if (MessageDigest.isEqual(k.toByteArray(Charsets.UTF_8), good.toByteArray(Charsets.UTF_8))) ok = true
         }
         if (!ok || k.isEmpty()) { refuse(s, "403 Forbidden"); return null }
+        beforeAdmission?.invoke(k)
         val c = Client(s, k)
-        val joined = synchronized(clients) {
-            if (closed || clients.size >= MAX_CLIENTS) false
-            else { clients += c; hadClient = true; emptySince = -1L; true }
+        val rejection = synchronized(clients) {
+            if (keys != null && k in revokedKeys) "403 Forbidden"
+            else if (closed || clients.size >= MAX_CLIENTS) "503 Service Unavailable"
+            else { clients += c; hadClient = true; emptySince = -1L; null }
         }
-        if (!joined) { refuse(s, "503 Service Unavailable"); return null }
+        if (rejection != null) { refuse(s, rejection); return null }
         s.soTimeout = 0
         return c
     }

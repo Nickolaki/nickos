@@ -62,6 +62,90 @@ class CamServerTest {
     }
 
     @Test
+    fun `revocation blocks a validated reader before admission while another reader stays live`() {
+        val accepted = java.util.concurrent.CopyOnWriteArrayList(listOf("A", "B"))
+        val validated = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val s = CamServer(
+            key = "", onIdle = {}, preferredPort = 0, firstGraceMs = 60_000,
+            clock = { System.nanoTime() / 1_000_000 }, keys = { accepted.toList() },
+        )
+        server = s
+        s.beforeAdmission = { k ->
+            if (k == "A") {
+                validated.countDown()
+                check(resume.await(5, TimeUnit.SECONDS))
+            }
+        }
+        assertTrue(s.start())
+        val b = get(s, "/cam?k=B")
+        java.net.Socket("127.0.0.1", s.port).use { a ->
+            a.soTimeout = 5_000
+            a.getOutputStream().apply {
+                write("GET /cam?k=A HTTP/1.1\r\nHost: localhost\r\n\r\n".toByteArray())
+                flush()
+            }
+            try {
+                assertTrue(validated.await(5, TimeUnit.SECONDS))
+                accepted.remove("A")
+                s.dropKey("A")
+            } finally {
+                resume.countDown()
+            }
+            val jpeg = byteArrayOf(1, 2, 3)
+            s.push(jpeg, 90)
+            val reply = a.getInputStream().bufferedReader().readText()
+            assertTrue(reply.startsWith("HTTP/1.1 403 Forbidden\r\n"))
+            assertFalse(reply.contains("image/jpeg"))
+            assertEquals("", reply.substringAfter("\r\n\r\n"))
+            assertEquals(setOf("B"), s.connectedKeys())
+            assertEquals(1, s.clientCount)
+            assertArrayEquals(jpeg, part(b.body!!.source()).second)
+        }
+    }
+
+    @Test
+    fun `fixed camera key still admits after dropKey during validation`() {
+        val s = start()
+        val validated = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        s.beforeAdmission = {
+            validated.countDown()
+            check(resume.await(5, TimeUnit.SECONDS))
+        }
+        java.net.Socket("127.0.0.1", s.port).use { camera ->
+            camera.soTimeout = 5_000
+            camera.getOutputStream().apply {
+                write("GET /cam?k=abc HTTP/1.1\r\nHost: localhost\r\n\r\n".toByteArray())
+                flush()
+            }
+            try {
+                assertTrue(validated.await(5, TimeUnit.SECONDS))
+                s.dropKey("abc")
+            } finally {
+                resume.countDown()
+            }
+            val input = camera.getInputStream().bufferedReader()
+            assertEquals("HTTP/1.1 200 OK", input.readLine())
+            assertEquals(setOf("abc"), s.connectedKeys())
+            val jpeg = byteArrayOf(4, 5, 6)
+            s.push(jpeg, 0)
+            var foundPart = false
+            for (i in 0 until 20) {
+                if (input.readLine() == "Content-Length: 3") { foundPart = true; break }
+            }
+            assertTrue("camera frame header", foundPart)
+            assertEquals("X-Rotation: 0", input.readLine())
+            assertEquals("X-Seq: 1", input.readLine())
+            assertEquals("", input.readLine())
+            assertEquals(4, input.read())
+            assertEquals(5, input.read())
+            assertEquals(6, input.read())
+        }
+        assertEquals(403, get(s, "/cam?k=wrong").code)
+    }
+
+    @Test
     fun `a real port is reported`() {
         val s = start()
         assertTrue(s.port > 0)
