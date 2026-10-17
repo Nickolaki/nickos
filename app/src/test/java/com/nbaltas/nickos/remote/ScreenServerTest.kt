@@ -158,6 +158,40 @@ class ScreenServerTest {
     // ---- rejections ----
 
     @Test
+    fun `failure after admission before the server nonce removes the reader and restores idle`() {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000)
+        val idle = CountDownLatch(1)
+        val admitted = LinkedBlockingQueue<Pair<Int, Set<String>>>()
+        val s = ScreenServer(
+            onIdle = { idle.countDown() }, preferredPort = 0, graceMs = 100, firstGraceMs = 60_000,
+            clock = { now.get() }, keys = { keys.byMaster() },
+        )
+        server = s
+        val key = keys.keyFor(A)
+        s.beforeServerNonce = {
+            admitted.add(s.clientCount to s.connectedKeys())
+            throw java.io.IOException("forced nonce delivery failure")
+        }
+        assertTrue(s.start())
+        val failed = raw(s.port, hello(A, key, freshNonce()))
+        assertEquals(1 to setOf(key), admitted.poll(5, TimeUnit.SECONDS))
+        assertTrue("no server nonce delivered", hungUp(failed))
+        waitFor("failed admission removed") { s.clientCount == 0 }
+        assertEquals(emptySet<String>(), s.connectedKeys())
+        assertEquals(0, s.clientCount)
+        assertEquals("idle grace has not elapsed", 1L, idle.count)
+        now.set(1_100)
+        assertTrue("idle restored using the last-reader grace", idle.await(5, TimeUnit.SECONDS))
+
+        s.beforeServerNonce = null
+        val next = connect(s, A, key)
+        assertEquals(1, s.clientCount)
+        assertEquals(setOf(key), s.connectedKeys())
+        s.push(byteArrayOf(7, 8), 90)
+        assertArrayEquals(byteArrayOf(7, 8, 1), frame(next))
+    }
+
+    @Test
     fun `a wrong hmac is rejected without a reply`() {
         val s = start()
         keys.keyFor(A)

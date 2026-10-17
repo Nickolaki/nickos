@@ -57,6 +57,8 @@ class ScreenServer(
     private val seenNonces = HashSet<String>()
     /** Test seam after authentication, before taking the admission lock. */
     @Volatile internal var beforeAdmission: ((String) -> Unit)? = null
+    /** Test seam after admission, before sending the server nonce. */
+    @Volatile internal var beforeServerNonce: (() -> Unit)? = null
     /** Connections that have not finished their hello yet, with when each connected. */
     private val greeting = ConcurrentHashMap<Socket, Long>()
     private val idleFired = AtomicBoolean(false)
@@ -181,9 +183,16 @@ class ScreenServer(
             else { clients += c; hadClient = true; emptySince = -1L; false }
         }
         if (rejected) return null
-        s.getOutputStream().apply { write(sn); flush() }
-        s.soTimeout = 0
-        return Admitted(c, FrameSeal(sessionKey(key, cn, sn), "n2m-screen", "m2n-screen"))
+        try {
+            beforeServerNonce?.invoke()
+            s.getOutputStream().apply { write(sn); flush() }
+            s.soTimeout = 0
+            return Admitted(c, FrameSeal(sessionKey(key, cn, sn), "n2m-screen", "m2n-screen"))
+        } catch (e: Throwable) {
+            // serve() cannot own cleanup until greet() returns the admitted client.
+            leave(c)
+            throw e
+        }
     }
 
     private fun leave(c: Client) {
