@@ -55,6 +55,9 @@ import com.nbaltas.nickos.sync.SyncSession
 import com.nbaltas.nickos.sync.SyncState
 import com.nbaltas.nickos.ui.master.ControlScreen
 import com.nbaltas.nickos.ui.master.MasterHome
+import com.nbaltas.nickos.ui.master.JfPickContent
+import com.nbaltas.nickos.ui.master.JfPrep
+import com.nbaltas.nickos.ui.master.JfRow
 import com.nbaltas.nickos.ui.master.PickPanel
 import com.nbaltas.nickos.ui.master.SettingsScreen
 import com.nbaltas.nickos.ui.master.TAB_APPS
@@ -438,6 +441,45 @@ class DesignScreensTest {
         shot("Together-Pick") {
             val nodes = rememberNodeViews()
             PickPanel(item, thumb = null, nodes = nodes, sync = m.sync, transfer = m.transfer, backLabel = "Movies", onBack = {})
+        }
+    }
+
+    private fun jfMovie() = com.nbaltas.nickos.jellyfin.JfItem(
+        "m1", "Captain Comet", "Movie", null, null, null, null, null, 90L * 60 * 600_000_000, 0, false, null, 2021, null, null, false, false, false, null, null,
+        container = "mkv", size = 1_000_000_000L,
+    )
+
+    @Test fun togetherJellyfinBrowse() {
+        app.store.setJellyfin(JellyfinAccount("https://jf.local", "dad", "tok", "u1", true))
+        addStatus("cccccccccccc", 23)
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
+        shot("Together-Jellyfin-Browse") { TogetherScreen({}, {}, initialSegment = 2) }
+    }
+
+    @Test fun togetherJellyfinPick() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-Pick") {
+            val nodes = rememberNodeViews()
+            JfPickContent(jfMovie(), nodes, nodes.filter { it.online }.map { it.node.id }.toSet(), { _, _ -> }, prep = null, note = null, onBack = {}, onPrimary = {})
+        }
+    }
+
+    @Test fun togetherJellyfinGettingReady() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-GettingReady") {
+            val nodes = rememberNodeViews()
+            val on = nodes.filter { it.online }
+            val rows = on.mapIndexed { i, n ->
+                when (i) {
+                    0 -> JfRow(n.node.id, "Ready", null, ready = true, failed = false)
+                    1 -> JfRow(n.node.id, "42% · 420 MB of 1 GB", 0.42f, ready = false, failed = false)
+                    else -> JfRow(n.node.id, "Failed", null, ready = false, failed = true, error = "Not enough space (needs 1 GB, has 300 MB)")
+                }
+            }
+            JfPickContent(
+                jfMovie(), nodes, on.map { it.node.id }.toSet(), { _, _ -> },
+                prep = JfPrep(0.65f, null, rows), note = "Leo went offline, starting without them", onBack = {}, onPrimary = {},
+            )
         }
     }
 

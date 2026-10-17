@@ -357,6 +357,49 @@ class JellyfinDownloadsTest {
         assertFalse(JellyfinDownloads.onTablet(m, emptyList()))
     }
 
+    // ---- watch together from Jellyfin ----
+
+    private fun landed() = LibraryItem("fid9", "Heat", "Heat (1995).mkv", data.size.toLong(), 1, setOf(Library.SELF), null)
+
+    @Test fun sendToIsMergedIntoAnAlreadyQueuedDownload() {
+        src.onRead = { Thread.sleep(10) }
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans > 0) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 5, waitSteps = 40,
+        )
+        lib.save(item())
+        lib.save(item(), setOf("kid1"))
+        lib.save(item(), setOf("kid2"))
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1", "kid2")), sent)
+        assertEquals(1, src.opens.size)
+    }
+
+    @Test fun fidIsResolvedOnDoneEvenWithNobodyToSendTo() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans > 0) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 5, waitSteps = 40,
+        )
+        lib.save(item())
+        waitFor("fid") { lib.progress.value["m1"]?.fid != null }
+        assertEquals("fid9", lib.progress.value.getValue("m1").fid)
+        assertEquals(DlState.DONE, lib.state("m1"))
+        assertTrue(sent.isEmpty())
+        assertTrue(said.isEmpty())
+    }
+
+    @Test fun inLibraryFindsTheCopyOnAnyTabletByFidThenByName() {
+        val m = item()
+        val n = data.size.toLong()
+        val onKid = LibraryItem("fk", "Heat", Jellyfin.fileName(m), n, 1, setOf("kid1"), null)
+        val other = LibraryItem("fo", "Other", "Other.mkv", n, 1, setOf(Library.SELF), null)
+        assertEquals(onKid, JellyfinDownloads.inLibrary(m, listOf(other, onKid)))
+        assertEquals(other, JellyfinDownloads.inLibrary(m, listOf(other, onKid), fid = "fo"))
+        assertEquals(onKid, JellyfinDownloads.inLibrary(m, listOf(other, onKid), fid = "missing"))
+        assertNull(JellyfinDownloads.inLibrary(m, listOf(other)))
+        assertNull(JellyfinDownloads.inLibrary(m, listOf(LibraryItem("fk", "Heat", Jellyfin.fileName(m), n + 1, 1, setOf("kid1"), null))))
+    }
+
     // ---- fix round ----
 
     private fun partial(q: JellyfinDownloads, id: String = "m1") = q.progress.value.getValue(id)

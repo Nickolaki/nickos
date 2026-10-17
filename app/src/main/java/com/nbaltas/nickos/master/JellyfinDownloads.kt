@@ -19,8 +19,8 @@ import java.nio.ByteBuffer
 
 enum class DlState { QUEUED, DOWNLOADING, DONE, FAILED, CANCELLED }
 
-/** [total] is 0 when the server did not say how big the file is. */
-data class Progress(val bytes: Long, val total: Long, val state: DlState, val err: String? = null) {
+/** [total] is 0 when the server did not say how big the file is. [fid] is the saved copy's library id, known once it is DONE and found. */
+data class Progress(val bytes: Long, val total: Long, val state: DlState, val err: String? = null, val fid: String? = null) {
     val fraction get() = if (total > 0) (bytes.toFloat() / total).coerceIn(0f, 1f) else 0f
     val active get() = state == DlState.QUEUED || state == DlState.DOWNLOADING
 }
@@ -88,7 +88,7 @@ class JellyfinDownloads(
     private val retries: Int = 3,
     private val ledger: PendingLedger? = null,
 ) {
-    private class Entry(val item: JfItem, val sendTo: Set<String>, val sub: String?) {
+    private class Entry(val item: JfItem, val sendTo: MutableSet<String>, val sub: String?) {
         @Volatile var cancelled = false
         val abort = Abort()
     }
@@ -109,11 +109,15 @@ class JellyfinDownloads(
     /** Progress by Jellyfin item id. An id is absent until it is first queued. */
     val progress: StateFlow<Map<String, Progress>> = _progress
 
-    /** Queue [item] to be saved. Does nothing when it is already queued or running. [sendTo] are tablet ids to send it to when it lands. */
+    /** Queue [item] to be saved. When it is already queued or running, only adds [sendTo] to it. [sendTo] are tablet ids to send it to when it lands. */
     fun save(item: JfItem, sendTo: Set<String> = emptySet()) {
         synchronized(lock) {
-            if (_progress.value[item.id]?.active == true) return
-            queue.addLast(Entry(item, sendTo, Jellyfin.subfolder(item)))
+            if (_progress.value[item.id]?.active == true) {
+                val live = current?.takeIf { it.item.id == item.id } ?: queue.firstOrNull { it.item.id == item.id }
+                live?.sendTo?.addAll(sendTo)
+                return
+            }
+            queue.addLast(Entry(item, sendTo.toMutableSet(), Jellyfin.subfolder(item)))
             set(item.id, Progress(0, item.size, DlState.QUEUED))
             if (!running) { running = true; scope.launch { drain() } }
         }
@@ -308,14 +312,25 @@ class JellyfinDownloads(
      */
     private suspend fun finish(e: Entry, name: String, bytes: Long) {
         rescan()
-        if (e.sendTo.isEmpty()) return
+        // Nobody to send to: look for the copy's fid beside the queue, so the next download is not held up.
+        if (e.sendTo.isEmpty()) scope.launch { resolve(e, name, bytes) } else resolve(e, name, bytes)
+    }
+
+    private suspend fun resolve(e: Entry, name: String, bytes: Long) {
+        val id = e.item.id
         repeat(waitSteps) {
             val hits = library().filter { Library.SELF in it.owners && it.name == name && it.size == bytes }
-            if (hits.size == 1) { send(hits[0].fid, e.sendTo); return }
-            if (hits.size > 1) { say("$name is saved. Send it from Watch together"); return }
+            if (hits.size == 1) {
+                val fid = hits[0].fid
+                _progress.update { m -> m[id]?.let { m + (id to it.copy(fid = fid)) } ?: m }
+                val to = synchronized(lock) { e.sendTo.toSet() }
+                if (to.isNotEmpty()) send(fid, to)
+                return
+            }
+            if (hits.size > 1) { if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together"); return }
             delay(waitStepMs)
         }
-        say("$name is saved. Send it from Watch together")
+        if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together")
     }
 
     companion object {
@@ -358,6 +373,13 @@ class JellyfinDownloads(
 
         /** This item's saved copy is in this tablet's library: same name, and the same size when Jellyfin told us it. */
         fun onTablet(item: JfItem, lib: List<LibraryItem>): Boolean = saved(item, lib) != null
+
+        /** The library entry for [item] on any tablet: by [fid] when the download found it, else by name and size. */
+        fun inLibrary(item: JfItem, lib: List<LibraryItem>, fid: String? = null): LibraryItem? {
+            if (fid != null) lib.firstOrNull { it.fid == fid }?.let { return it }
+            val name = Jellyfin.fileName(item)
+            return lib.firstOrNull { it.name == name && (item.size <= 0 || it.size == item.size) }
+        }
 
         /** The library entry of this item's saved copy on this tablet, for the Send button. */
         fun saved(item: JfItem, lib: List<LibraryItem>): LibraryItem? {

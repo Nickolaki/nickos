@@ -108,10 +108,6 @@ fun WatchTab(v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
     val uid = v.node.jfUserId
     if (uid == null) { UserPicker(v, jf); return }
 
-    var detail by remember(v.node.id) { mutableStateOf<Detail?>(null) }
-    var backTo by remember(v.node.id) { mutableStateOf<Detail?>(null) }
-    BackHandler(enabled = detail != null) { detail = backTo.also { backTo = null } }
-
     val play: (JfItem, Boolean) -> Unit = { item, fromStart ->
         if (!v.online) app.master.toastOffline(v.node.name)
         else {
@@ -119,18 +115,39 @@ fun WatchTab(v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
             onPlayed()
         }
     }
+    JellyfinBrowser(jf, uid, v.node.id, "${v.node.jfUserName ?: "Their"}'s library", onPick = null, v = v, play = play)
+}
+
+/**
+ * The Jellyfin library: home rows, movies, shows, history, search and a show's episodes. With [onPick]
+ * a tap on a movie or an episode hands it over instead of playing it. Without, [play] controls the
+ * tablet [v]. [key] keeps the browsing place per tablet. [ownerLabel] is shown next to the tabs.
+ */
+@Composable
+fun JellyfinBrowser(
+    jf: Jellyfin, uid: String, key: String, ownerLabel: String?, onPick: ((JfItem) -> Unit)?,
+    v: NodeView? = null, play: ((JfItem, Boolean) -> Unit)? = null,
+) {
+    var detail by remember(key) { mutableStateOf<Detail?>(null) }
+    var backTo by remember(key) { mutableStateOf<Detail?>(null) }
+    BackHandler(enabled = detail != null) { detail = backTo.also { backTo = null } }
+
+    val doPlay: (JfItem, Boolean) -> Unit = { item, fromStart -> if (onPick != null) onPick(item) else play?.invoke(item, fromStart) }
     val open: (JfItem) -> Unit = { item ->
-        backTo = detail.takeIf { it is Detail.All }
-        detail = when {
-            item.isSeries -> Detail.Series(item.id)
-            item.isEpisode && item.seriesId != null -> Detail.Series(item.seriesId)
-            else -> Detail.Movie(item.id)
+        if (onPick != null && !item.isSeries) onPick(item)
+        else {
+            backTo = detail.takeIf { it is Detail.All }
+            detail = when {
+                item.isSeries -> Detail.Series(item.id)
+                item.isEpisode && item.seriesId != null -> Detail.Series(item.seriesId)
+                else -> Detail.Movie(item.id)
+            }
         }
     }
 
     when (val d = detail) {
-        is Detail.Series -> SeriesDetail(v, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = play)
-        is Detail.Movie -> MovieDetail(v, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = play)
+        is Detail.Series -> SeriesDetail(v, onPick != null, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = doPlay)
+        is Detail.Movie -> MovieDetail(v!!, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = doPlay)
         is Detail.All -> Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 26.dp)) {
             Chip(Modifier.clip(RoundedCornerShape(22.dp)).clickable { detail = null }) {
                 Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
@@ -139,22 +156,22 @@ fun WatchTab(v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
             Title(d.title, 32, Modifier.padding(vertical = 18.dp))
             ItemGrid(d.items, jf, d.landscape, open)
         }
-        null -> LibraryHome(v, jf, uid, open, onSeeAll = { t, items, land -> detail = Detail.All(t, items, land) })
+        null -> LibraryHome(key, ownerLabel, jf, uid, open, onSeeAll = { t, items, land -> detail = Detail.All(t, items, land) })
     }
 }
 
 fun com.nbaltas.nickos.master.MasterRuntime.toastOffline(name: String) = say("$name is offline")
 
 @Composable
-private fun LibraryHome(v: NodeView, jf: Jellyfin, uid: String, open: (JfItem) -> Unit, onSeeAll: (String, List<JfItem>, Boolean) -> Unit) {
-    var mode by remember(v.node.id) { mutableIntStateOf(0) }
-    var query by remember(v.node.id) { mutableStateOf("") }
+private fun LibraryHome(key: String, ownerLabel: String?, jf: Jellyfin, uid: String, open: (JfItem) -> Unit, onSeeAll: (String, List<JfItem>, Boolean) -> Unit) {
+    var mode by remember(key) { mutableIntStateOf(0) }
+    var query by remember(key) { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(top = 26.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         // Phone width: the tabs fill the row, so search gets a full-width row of its own.
         val phone = LocalConfiguration.current.screenWidthDp < 600
         Row(Modifier.padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Segmented(listOf("Home" to null, "Movies" to null, "Shows" to null, "History" to null), mode, { mode = it; query = "" }, height = 52.dp)
-            Muted("${v.node.jfUserName ?: "Their"}'s library", 16, weight = 600, maxLines = 1)
+            if (ownerLabel != null) Muted(ownerLabel, 16, weight = 600, maxLines = 1)
             if (!phone) {
                 Spacer(Modifier.weight(1f))
                 SearchBox(query, { query = it }, Modifier.widthIn(max = 420.dp).weight(1f, fill = false))
@@ -339,7 +356,7 @@ private fun HistoryList(jf: Jellyfin, uid: String, open: (JfItem) -> Unit) {
 // ---------------- Series ----------------
 
 @Composable
-private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onBack: () -> Unit, play: (JfItem, Boolean) -> Unit) {
+private fun SeriesDetail(v: NodeView?, pick: Boolean, jf: Jellyfin, uid: String, id: String, onBack: () -> Unit, play: (JfItem, Boolean) -> Unit) {
     val series by produceState<JfItem?>(null, id) { value = try { jf.item(uid, id) } catch (e: Exception) { null } }
     // What the big button plays: the episode in progress, else Next Up.
     val target by produceState<JfItem?>(null, id) {
@@ -377,10 +394,10 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                 target?.let { t ->
                     val sub = if (t.inProgress) "${t.epCode} · ${minutesText(t.leftMin)} left" else "${t.epCode} · ${t.name}"
                     NickButton(
-                        "${if (t.inProgress) "Resume" else "Play"} on ${v.node.name}", { play(t, false) },
+                        if (pick) "Pick this episode" else "${if (t.inProgress) "Resume" else "Play"} on ${v?.node?.name}", { play(t, false) },
                         Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Solid.Play, sub = sub,
                     )
-                    if (t.inProgress) NickButton("Play episode from start", { play(t, true) }, Modifier.fillMaxWidth().height(64.dp), leading = Lucide.RotateCcw)
+                    if (t.inProgress && !pick) NickButton("Play episode from start", { play(t, true) }, Modifier.fillMaxWidth().height(64.dp), leading = Lucide.RotateCcw)
                 }
             }
         }
@@ -395,7 +412,7 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                 if (eps == null) Muted("Loading episodes…", 18)
                 else Column(Modifier.then(if (narrow) Modifier else Modifier.verticalScroll(rememberScrollState())), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val todo = eps.filter { e -> !JellyfinDownloads.onTablet(e, lib) && dl[e.id]?.let { it.active || it.state == DlState.DONE } != true }
-                    if (todo.isNotEmpty()) NickButton(
+                    if (todo.isNotEmpty() && !pick) NickButton(
                         "Save season", { downloads.saveAll(todo) }, Modifier.widthIn(max = 320.dp), leading = Lucide.Download,
                         sub = "${todo.size} episode${if (todo.size == 1) "" else "s"} to this tablet",
                     )
@@ -403,7 +420,7 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                         EpisodeRow(
                             e, jf, highlight = e.id == target?.id && e.inProgress,
                             dl = dl[e.id], onTablet = JellyfinDownloads.onTablet(e, lib),
-                            save = { downloads.save(e) }, cancel = { downloads.cancel(e.id) },
+                            save = { downloads.save(e) }, cancel = { downloads.cancel(e.id) }, showSave = !pick,
                         ) { play(e, false) }
                     }
                     Spacer(Modifier.height(24.dp))
@@ -424,7 +441,7 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
 
 @Composable
 private fun EpisodeRow(
-    e: JfItem, jf: Jellyfin, highlight: Boolean, dl: Progress?, onTablet: Boolean, save: () -> Unit, cancel: () -> Unit, onClick: () -> Unit,
+    e: JfItem, jf: Jellyfin, highlight: Boolean, dl: Progress?, onTablet: Boolean, save: () -> Unit, cancel: () -> Unit, showSave: Boolean = true, onClick: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 96.dp).clip(RoundedCornerShape(20.dp)).background(if (highlight) C.surface2 else Color.Transparent)
@@ -442,7 +459,7 @@ private fun EpisodeRow(
             Text("${e.index?.let { "$it. " } ?: ""}${e.name}", style = body(19.sp, 700), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Muted(if (e.inProgress) "${minutesText(e.runMin)} · ${minutesText(e.leftMin)} left" else minutesText(e.runMin), 15)
         }
-        when {
+        if (showSave) when {
             dl?.active == true -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (dl.total > 0) "${(dl.fraction * 100).toInt()}%" else "Saving", style = body(15.sp, 700), color = C.muted)
                 Box(Modifier.size(44.dp).clip(CircleShape).background(C.surface2).clickable(onClick = cancel), contentAlignment = Alignment.Center) {
