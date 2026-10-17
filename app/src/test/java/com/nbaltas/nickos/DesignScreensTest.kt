@@ -450,10 +450,9 @@ class DesignScreensTest {
     )
 
     @Test fun togetherJellyfinBrowse() {
-        app.store.setJellyfin(JellyfinAccount("https://jf.local", "dad", "tok", "u1", true))
         addStatus("cccccccccccc", 23)
         set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
-        shot("Together-Jellyfin-Browse") { TogetherScreen({}, {}, initialSegment = 2) }
+        jellyfinShot("Together-Jellyfin-Browse", null, "Continue Watching", together = true)
     }
 
     @Test fun togetherJellyfinPick() {
@@ -633,16 +632,23 @@ class DesignScreensTest {
         return server
     }
 
-    /** Runs the Control screen's Watch tab against [fakeJellyfin], opens the Jellyfin library, optionally taps [open], and saves the picture. */
+    /** Loads fixture rows in Control Watch or Together, optionally taps [open], and saves the loaded picture. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
-    private fun jellyfinShot(name: String, open: String?, waitFor: String) {
+    private fun jellyfinShot(name: String, open: String?, waitFor: String, together: Boolean = false) {
         val server = fakeJellyfin()
         try {
             app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
             app.store.upsertNode(app.store.nodes.value.first { it.id == "aaaaaaaaaaaa" }.copy(jfUserId = "u1", jfUserName = "Hailey"))
             androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
-                setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {}) } } }
-                onNodeWithTag("jellyfin-library").performClick()
+                setContent {
+                    NickTheme {
+                        Box(Modifier.fillMaxSize().background(C.bg)) {
+                            if (together) TogetherScreen({}, {}, initialSegment = 2)
+                            else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
+                        }
+                    }
+                }
+                if (!together) onNodeWithTag("jellyfin-library").performClick()
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
                 if (open != null) {
