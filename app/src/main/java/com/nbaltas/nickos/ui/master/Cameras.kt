@@ -150,6 +150,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlin.math.roundToInt
 
+/**
+ * Who push to talk reaches: the online tablets on the stage, or every online tablet when no tablet camera is on
+ * (so the bar stays with cameras off). RTSP cameras never take part.
+ */
+internal fun talkTargetIds(all: List<String>, online: Set<String>, onStage: Set<String>, anyCamOn: Boolean): List<String> =
+    all.filter { it in online && (!anyCamOn || it in onStage) }
+
 /** Everything the screen knows about one linked tablet's camera, worked out once per recomposition. */
 private class TabletCam(
     val node: LinkedNode,
@@ -305,8 +312,12 @@ fun CamerasScreen(
     // Push to talk. Only kid tablets on the stage can hear; an RTSP camera never appears here.
     val talkLive by rt.talk.state.collectAsState()
     val talkNow = if (live) talkLive else talkPreset ?: TalkState()
-    val shownTargets = visible.filterIsInstance<TabletSource>().map { s ->
-        TalkTarget(s.node.id, s.name, byNode[s.node.id]?.online == true, status[s.node.id]?.supportsTalk == true, status[s.node.id]?.talkNeedsPermission != true)
+    val talkIds = talkTargetIds(
+        nodes.map { it.id }, tablets.filter { it.online }.map { it.node.id }.toSet(),
+        visible.filterIsInstance<TabletSource>().map { it.node.id }.toSet(), tablets.any { it.armed },
+    )
+    val shownTargets = nodes.filter { it.id in talkIds }.map { n ->
+        TalkTarget(n.id, TabletSource(n).name, true, status[n.id]?.supportsTalk == true, status[n.id]?.talkNeedsPermission != true)
     }
     val micAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         rt.say(if (ok) TalkText.MIC_ALLOWED else TalkText.MIC_DENIED)

@@ -102,7 +102,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val jellyfin = apps.firstOrNull { it.pkg == jfPkg }
     val others = apps.filterNot { it.pkg == jfPkg }
 
-    val canOverlay = remember(lockedBy, warn) { rt.device.canOverlay() }
+    val ringingNow by rt.ringing.collectAsState()
+    val pausedNow by store.pausedMsg.collectAsState()
+    val canOverlay = remember(lockedBy, warn, ringingNow, pausedNow) { rt.device.canOverlay() }
 
     // One-time OKs the Master's brightness slider and Off button need on this tablet. Re-read after each page returns.
     var permTick by remember { mutableIntStateOf(0) }
@@ -211,11 +213,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
                     com.nbaltas.nickos.node.Provisioning.forget(ctx) // no longer a QR kid tablet in the making
                     rt.sayGoodbye()
+                    rt.powerRunner.release() // the tablet's own screen timeout goes back too
                     rt.releaseLandscape() // give the tablet's own rotation settings back before the stored copy is wiped
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
                     store.resetAll()
+                    com.nbaltas.nickos.power.PowerRecovery.retry(ctx, store)
                     com.nbaltas.nickos.node.RotationRecovery.retry(ctx, store) // a restore that could not finish is kept and tried again
                     // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
                     if (handBackHome) try {
@@ -245,6 +249,11 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         // so the toast always draws here on the home screen. The wall too without the overlay permission.
         warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
+        val pausedMsg by store.pausedMsg.collectAsState()
+        val pausedBy by store.pausedBy.collectAsState()
+        val ringing by rt.ringing.collectAsState()
+        if (!canOverlay) pausedMsg?.let { PausedScreen(it, pausedBy) }
+        if (!canOverlay && ringing) FoundMeScreen { rt.stopRing(com.nbaltas.nickos.node.RingMachine.Stop.TAP) }
         // After the locked wall, so the banner is drawn over it: the speech is audible there too.
         if (!canOverlay) talkBanner?.let { TalkBannerAtBottom(it) }
     }

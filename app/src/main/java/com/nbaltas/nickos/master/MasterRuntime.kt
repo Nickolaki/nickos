@@ -28,6 +28,7 @@ import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.remote.RemoteMessages
+import com.nbaltas.nickos.node.PauseAll
 import com.nbaltas.nickos.talk.TalkMessages
 import com.nbaltas.nickos.talk.TalkStop
 import com.nbaltas.nickos.talk.TalkStopPolicy
@@ -77,15 +78,25 @@ data class NodeStatus(
     val screenOffOk: Boolean = true,
     /** The landscape lock as the Node reports it. Null for an old Node: the Master hides the switch. */
     val landscape: NetMessages.LandscapeStatus? = null,
+    /** The power settings as the Node reports them. Null for an old Node: the Master hides the controls. */
+    val power: NetMessages.PowerStatus? = null,
     /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
     val talk: String = TalkMessages.STATUS_OK,
     /** The Node's screen sharing: off, needs_consent, ready or live. Old Nodes omit it: off. */
     val screen: String = RemoteMessages.OFF,
     /** "ready" when the Node lets a parent touch its screen. Old Nodes omit it: off. */
     val control: String = RemoteMessages.CONTROL_OFF,
+    /** The alarm is sounding on the Node. Old Nodes omit it: false. */
+    val ringing: Boolean = false,
+    /** The pause wall is up on the Node. Old Nodes omit it: false. */
+    val paused: Boolean = false,
 ) {
     /** Seeing the screen needs the Node's "screen1" capability. */
     val supportsScreen: Boolean get() = RemoteMessages.CAP in caps
+    /** "ring1": the Node can sound its alarm when asked. The Master hides the Ring button without it. */
+    val supportsRing: Boolean get() = NetMessages.RING_CAP in caps
+    /** "pause1": the Node shows the pause wall. */
+    val supportsPause: Boolean get() = NetMessages.PAUSE_CAP in caps
 
     /** The Node refuses talk audio until a grown-up allows notifications on it. */
     val talkNeedsPermission: Boolean get() = talk == TalkMessages.STATUS_NEEDS_PERMISSION
@@ -114,9 +125,11 @@ data class NodeStatus(
                 caps = o.optJSONArray("caps").strings(),
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
                 landscape = NetMessages.decodeLandscape(o),
+                power = NetMessages.decodePowerStatus(o),
                 talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
                 screen = o.optString("screen", RemoteMessages.OFF).ifBlank { RemoteMessages.OFF },
                 control = o.optString("control", RemoteMessages.CONTROL_OFF).ifBlank { RemoteMessages.CONTROL_OFF },
+                ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
             )
         }
 
@@ -148,6 +161,21 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val links = LinkTable<Conn>()
     private val loops = LinkLoops(scope) { id -> linkLoop(id) }
     private var started = false
+
+    /** This tablet's own power settings (wake on charge, screen off on battery): see [PowerRunner]. */
+    val powerRunner = com.nbaltas.nickos.power.PowerRunner(ctx, store)
+
+    /** Applies the stored choice again, which also retries a restore that was waiting for permission. Only while this is the Master. */
+    fun refreshOwnPower() {
+        if (store.role.value == Role.MASTER) Thread { powerRunner.refresh() }.start()
+    }
+
+    /** Saves the parent tablet's own choice and applies it. False when it could not be saved. */
+    fun setOwnPower(wake: Boolean, offMin: Int): Boolean {
+        if (!store.setPower(wake, offMin)) return false
+        powerRunner.refresh()
+        return true
+    }
 
     private val found = FoundTable()
     private var discoveryListener: NsdManager.DiscoveryListener? = null
@@ -212,6 +240,18 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Sending movies between tablets. This tablet hands out its own through [server]. */
     val server = MediaServer.of(videos, WifiHold(ctx))
     val transfer = TransferController(this, store)
+    /** Jellyfin movies and episodes saved onto this tablet, optionally sent on to the kids. */
+    val jfDownloads = JellyfinDownloads(
+        com.nbaltas.nickos.node.AndroidJobIo(ctx, videos, WifiHold(ctx)), JellyfinSource { jellyfin() }, scope,
+        rescan = { sync.rescanSelf() }, library = { sync.library() }, send = { fid, to -> transfer.send(fid, to) },
+        say = { say(it) },
+        ledger = object : PendingLedger {
+            private val prefs = ctx.getSharedPreferences("jf_pending", Context.MODE_PRIVATE)
+            override fun all(): Set<String> = prefs.getStringSet("dests", emptySet())!!.toSet()
+            @Synchronized override fun add(dest: String) { prefs.edit().putStringSet("dests", all() + dest).commit() }
+            @Synchronized override fun remove(dest: String) { prefs.edit().putStringSet("dests", all() - dest).commit() }
+        },
+    ).also { d -> scope.launch(Dispatchers.IO) { d.cleanLeftovers() } }
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
     /** Seeing and controlling a kid tablet's screen. */
@@ -308,7 +348,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch {
             // Only a reset (Master to no role) removes the group. Setup runs with no role yet and must keep it.
             var prev = store.role.value
-            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) carNet.stop(); prev = r }
+            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) { carNet.stop(); powerRunner.stop(); powerRunner.release() }; prev = r }
+        }
+        scope.launch {
+            // The power runner lives only while the role is Master, also when this runtime was started by a setup that backs out
+            // and again on re-entry, which the `started` guard above would otherwise skip.
+            store.role.collect { r -> if (r == Role.MASTER) powerRunner.start() else powerRunner.stop() }
         }
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
@@ -498,7 +543,25 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      * a lost one is lost.
      */
     internal fun sendIntent(id: String) {
-        store.nodes.value.firstOrNull { it.id == id }?.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        val node = store.nodes.value.firstOrNull { it.id == id } ?: return
+        node.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        if (node.powerWake != null || node.powerOffMin != null) send(id, NetMessages.powerCmd(node.powerWake ?: false, node.powerOffMin ?: 0))
+        PauseAll.intent(store.pausedMsg.value)?.let { send(id, it) }
+    }
+
+    /**
+     * Pause (or resume) every linked tablet that is online. The state is kept, so a tablet that connects later gets the
+     * pause too. [force] is true only for the explicit "Resume everyone" button: it lifts a pause another Master started.
+     */
+    fun pauseAll(on: Boolean, msg: String, force: Boolean = false) {
+        val text = if (on) PauseAll.wallText(msg.trim().take(NetMessages.MAX_PAUSE_MSG)) else null
+        store.setPausedMsg(text)
+        _online.value.forEach { id -> sendControl(id, NetMessages.pauseAllCmd(on, text ?: "", force && !on)) }
+    }
+
+    fun ring(id: String, on: Boolean) {
+        sendControl(id, NetMessages.ringCmd(on))
+        patch(id) { it.copy(ringing = on) }
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
@@ -529,6 +592,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private fun onStatus(id: String, m: JSONObject) {
         // Positive evidence this Node speaks sec2 (a legacy link that reported it): never fall back to the clear hello.
         if (m.optJSONArray("caps")?.let { a -> (0 until a.length()).any { a.optString(it) == Handshake.CAP } } == true) linkFlags.setSec2Capable(id, true)
+        PauseAll.resumeIntent(store.pausedMsg.value, m.optBoolean("paused"), m.optStr("pausedOwner"), store.deviceId)
+            ?.let { send(id, it) }
         val st = NodeStatus.from(m)
         _status.update { it + (id to st) }
         val net = NodeNet.from(m)
@@ -612,6 +677,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
         store.updateNode(id) { it.copy(landscape = on) }
         sendControl(id, NetMessages.orientationCmd(on))
+    }
+
+    /** Wake on charge and screen off on battery for a kid tablet. Remembered first, like the landscape lock. */
+    fun setPower(id: String, wake: Boolean, offMin: Int) {
+        store.updateNode(id) { it.copy(powerWake = wake, powerOffMin = offMin) }
+        sendControl(id, NetMessages.powerCmd(wake, offMin))
     }
 
     fun setVolume(id: String, v: Int) { sendControl(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }

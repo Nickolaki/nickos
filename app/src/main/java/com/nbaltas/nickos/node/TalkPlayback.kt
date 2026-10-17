@@ -32,7 +32,7 @@ import com.nbaltas.nickos.talk.TalkMessages
 class AndroidSpeaker(ctx: Context) : Speaker {
     private val audio = ctx.getSystemService(AudioManager::class.java)
     private val attrs = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+        .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
     private var track: AudioTrack? = null

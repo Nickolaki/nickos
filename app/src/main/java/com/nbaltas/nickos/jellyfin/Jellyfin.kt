@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -39,6 +40,11 @@ data class JfItem(
     val parentBackdropId: String?,
     /** ISO time this user last played it (UserData.LastPlayedDate), for History. */
     val lastPlayed: String? = null,
+    /** File container (mkv, mp4) and the server's path, for naming a saved copy. */
+    val container: String? = null,
+    val path: String? = null,
+    /** Bytes of the file on the server, from its first media source. 0 when unknown. */
+    val size: Long = 0,
 ) {
     val isEpisode get() = type == "Episode"
     val isSeries get() = type == "Series"
@@ -83,6 +89,9 @@ data class JfItem(
                 parentThumbId = o.optStr("ParentThumbItemId"),
                 parentBackdropId = o.optStr("ParentBackdropItemId"),
                 lastPlayed = ud?.optStr("LastPlayedDate"),
+                container = o.optStr("Container"),
+                path = o.optStr("Path"),
+                size = o.optJSONArray("MediaSources")?.optJSONObject(0)?.optLong("Size") ?: 0,
             )
         }
     }
@@ -210,9 +219,29 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
     suspend fun playstate(sessionId: String, cmd: String, seekTicks: Long? = null) =
         post("/Sessions/$sessionId/Playing/$cmd", "SeekPositionTicks" to seekTicks)
 
+    // ---- saving a copy ----
+    fun downloadUrl(item: JfItem) = "$base/Items/${item.id}/Download"
+    fun streamUrl(item: JfItem) = "$base/Videos/${item.id}/stream?static=true"
+
+    /**
+     * The file itself, from byte [from] on. Tries /Download, then the static stream when the server
+     * says 401, 403 or 404. The caller closes the response. Blocking: call off the main thread.
+     */
+    fun openDownload(item: JfItem, from: Long = 0, onCall: (okhttp3.Call) -> Unit = {}): Response {
+        fun fetch(url: String): Response {
+            val b = Request.Builder().url(url).header("Authorization", authHeader(deviceName, deviceId, account.token))
+            if (from > 0) b.header("Range", "bytes=$from-")
+            return downloadHttp.newCall(b.build()).also(onCall).execute()
+        }
+        val first = fetch(downloadUrl(item))
+        if (first.code != 401 && first.code != 403 && first.code != 404) return first
+        first.close()
+        return fetch(streamUrl(item))
+    }
+
     // ---- http ----
     private suspend fun items(path: String, vararg q: Pair<String, Any?>): List<JfItem> {
-        val params = q.toList() + ("Fields" to "Overview,ChildCount,ParentId") + ("EnableImageTypes" to "Primary,Backdrop,Thumb")
+        val params = q.toList() + ("Fields" to "Overview,ChildCount,ParentId,Path,MediaSources") + ("EnableImageTypes" to "Primary,Backdrop,Thumb")
         val o = get(path, *params.toTypedArray())
         val a = o.optJSONArray("Items") ?: JSONArray()
         return (0 until a.length()).map { JfItem.from(a.getJSONObject(it)) }
@@ -240,6 +269,46 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
             .connectTimeout(6, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
+
+        private val downloadHttp: OkHttpClient = http.newBuilder().readTimeout(30, TimeUnit.SECONDS).build()
+
+        private val ILLEGAL = Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]")
+        private val SPACES = Regex("\\s+")
+
+        private fun clean(s: String) = s.replace(ILLEGAL, "").replace(SPACES, " ").trim().trimStart('.').trimEnd('.', ' ').trim()
+
+        /** At most [max] characters, without a dot or a space left at either end. */
+        private fun cap(s: String, max: Int) = clean(s.take(max.coerceAtLeast(1)))
+
+        private const val NAME_MAX = 120
+
+        private fun ext(item: JfItem): String {
+            val fromPath = item.path?.substringAfterLast('/')?.substringAfterLast('\\')?.substringAfterLast('.', "")
+            val e = (item.container?.substringBefore(',')?.takeIf { it.isNotBlank() } ?: fromPath).orEmpty().lowercase()
+            return if (e.isNotEmpty() && e.length <= 5 && e.all { it.isLetterOrDigit() }) e else "mp4"
+        }
+
+        /**
+         * The name a saved copy gets: "Name (Year).ext" for a movie, "Series S01E02 - Name.ext" for an
+         * episode (the series in the name keeps two shows' S01E01 apart and files it under Shows).
+         * At most 120 characters before the extension.
+         */
+        fun fileName(item: JfItem): String {
+            val e = ext(item)
+            if (item.isEpisode) {
+                val series = cap(item.seriesName.orEmpty(), 50).ifEmpty { "Shows" }
+                val head = "$series S%02dE%02d - ".format(item.season ?: 1, item.index ?: 0)
+                val name = cap(item.name, NAME_MAX - head.length).ifEmpty { "Episode" }
+                return "$head$name.$e"
+            }
+            val tail = if (item.year != null) " (${item.year})" else ""
+            val name = cap(item.name, NAME_MAX - tail.length).ifEmpty { "Movie" }
+            return "$name$tail.$e"
+        }
+
+        /** Subfolder of Movies/NickOS for a saved copy: the show name for an episode, else none. */
+        fun subfolder(item: JfItem): String? =
+            if (item.isEpisode) cap(item.seriesName.orEmpty(), NAME_MAX).ifEmpty { "Shows" } else null
 
         fun authHeader(device: String, deviceId: String, token: String?): String {
             val safe = device.replace("\"", "'")

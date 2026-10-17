@@ -1,11 +1,14 @@
 package com.nbaltas.nickos.node
 
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
 import android.os.StatFs
@@ -97,6 +100,8 @@ interface JobIo {
     fun has(fid: String): Boolean
     /** A new, empty, not yet visible destination for a file called [name]. Null when it cannot be made. */
     fun create(name: String): String?
+    /** Same, inside folder [sub] of the library folder. Implementations without folders ignore it. */
+    fun create(name: String, sub: String?): String? = create(name)
     /** Null when the destination is gone. */
     fun open(dest: String): JobFile?
     /** The copy is complete and checked: make it a normal file in the library. */
@@ -105,6 +110,8 @@ interface JobIo {
     fun discard(dest: String)
     /** Keep the CPU and WiFi awake while a copy runs. Called again while running to renew. */
     fun awake(on: Boolean)
+    /** Remove half-made copies this app left in the movie folder, but only those in [mine] (destinations it made and never finished). */
+    fun dropPending(mine: Set<String>) {}
 }
 
 /**
@@ -516,20 +523,23 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
 
     override fun has(fid: String): Boolean = videos.find(fid) != null
 
-    override fun create(name: String): String? = try {
+    override fun create(name: String): String? = create(name, null)
+
+    override fun create(name: String, sub: String?): String? = try {
+        val folder = if (sub.isNullOrBlank()) "" else "/$sub"
         if (Build.VERSION.SDK_INT >= 29) {
             val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())?.takeIf { it.startsWith("video/") }
             fun values(m: String?) = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 if (m != null) put(MediaStore.Video.Media.MIME_TYPE, m)
-                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}$folder")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val uri = try { resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values(mime)) }
             catch (e: Exception) { resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values("video/mp4")) }
             uri?.toString()
         } else {
-            val dir = moviesDir().apply { mkdirs() }
+            val dir = (if (sub.isNullOrBlank()) moviesDir() else File(moviesDir(), sub)).apply { mkdirs() }
             File(dir, "$name.part").apply { delete(); createNewFile() }.absolutePath
         }
     } catch (e: Exception) { Log.w(TAG, "create $name: ${e.message}"); null }
@@ -548,7 +558,7 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
         if (dest.startsWith("content:")) {
             resolver.update(Uri.parse(dest), ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null) > 0
         } else {
-            val dir = moviesDir()
+            val dir = File(dest).parentFile ?: moviesDir()
             var target = File(dir, name)
             var n = 1
             while (target.exists()) target = File(dir, "${name.substringBeforeLast('.')} (${n++})" + name.substringAfterLast('.', "").let { if (it.isEmpty() || '.' !in name) "" else ".$it" })
@@ -558,6 +568,25 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
 
     override fun discard(dest: String) {
         if (dest.startsWith("content:")) resolver.delete(Uri.parse(dest), null, null) else File(dest).delete()
+    }
+
+    override fun dropPending(mine: Set<String>) {
+        try {
+            val owned = HashSet<String>()
+            if (Build.VERSION.SDK_INT >= 29) {
+                val q = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.Video.Media.IS_PENDING} = 1 AND ${MediaStore.Video.Media.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?")
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(ctx.packageName, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}%"))
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                }
+                resolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Video.Media._ID), q, null)?.use { c ->
+                    while (c.moveToNext()) owned += ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, c.getLong(0)).toString()
+                }
+            }
+            for (d in mine) {
+                if (d.startsWith("content:")) { if (d in owned) discard(d) } else File(d).delete()
+            }
+        } catch (e: Exception) { Log.w(TAG, "dropPending: ${e.message}") }
     }
 
     @Synchronized

@@ -95,6 +95,8 @@ import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.node.ControlAccess
 import com.nbaltas.nickos.node.LandscapePolicy
+import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.ui.theme.NickSlider
 import com.nbaltas.nickos.ui.theme.NickSwitch
 import com.nbaltas.nickos.ui.theme.ProgressBar
@@ -566,6 +568,8 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // An old Node has no "ring1": no button.
+                    if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
                     // One short line under Lock, so Lock is never pushed out of the card.
                     if (st?.screenOffOk == false) {
                         val asked = askedLine(v)
@@ -605,10 +609,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
             },
             { mod ->
                 DeviceCard(mod, com.nbaltas.nickos.ui.theme.batteryIcon(v.battery ?: 100, st?.charging == true), "Battery") {
-                    val b = v.battery ?: 0
-                    Text("$b%", style = disp(88.sp, 800, 1f), color = if (b < 25) C.danger else C.text)
-                    ProgressBar(b / 100f, height = 14.dp, fill = if (b < 25) C.danger else C.online)
-                    Muted(if (st?.charging == true) "Charging" else "Not charging", 17, weight = 600)
+                    BatteryBody(v.battery ?: 0, st?.charging == true, st?.power) { w, min -> m.setPower(v.node.id, w, min) }
                 }
             },
             { mod -> SliderCard(Lucide.Volume2, "Volume", st?.volume ?: 0, big = true, modifier = mod) { m.setVolume(v.node.id, it) } },
@@ -664,6 +665,29 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
     if (renaming) RenameDialog(v.node.name, onDone = { name -> renaming = false; if (name != null) m.rename(v.node.id, name) })
 }
 
+/**
+ * The Battery card's content. An old Node reports no [power], so the two power controls are hidden and the card keeps
+ * its big number; with them the number shrinks and the card scrolls if the tablet is short.
+ */
+@Composable
+internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.PowerStatus?, onPower: (Boolean, Int) -> Unit) {
+    val low = battery < 25
+    if (power == null) {
+        Text("$battery%", style = disp(88.sp, 800, 1f), color = if (low) C.danger else C.text)
+        ProgressBar(battery / 100f, height = 14.dp, fill = if (low) C.danger else C.online)
+        Muted(if (charging) "Charging" else "Not charging", 17, weight = 600)
+    } else Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("$battery%", style = disp(40.sp, 800, 1f), color = if (low) C.danger else C.text)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ProgressBar(battery / 100f, height = 14.dp, fill = if (low) C.danger else C.online)
+                Muted(if (charging) "Charging" else "Not charging", 15, weight = 600)
+            }
+        }
+        PowerControls(power.wake, power.offMin, if (power.needsPermission) PowerPolicy.NEEDS_PERMISSION_TABLET else null, onPower)
+    }
+}
+
 @Composable
 private fun DeviceCard(
     modifier: Modifier, icon: ImageVector, title: String, rotateIcon: Boolean = false,
@@ -707,6 +731,11 @@ private fun StartButton(icon: ImageVector, label: String, modifier: Modifier = M
         Text(label, style = body(if (height < 56.dp) 16.sp else 19.sp, 700), color = col, maxLines = 1)
     }
 }
+
+/** "Ring" finds a lost tablet; while it sounds the same button reads "Stop ringing". */
+@Composable
+internal fun RingButton(ringing: Boolean, onClick: () -> Unit) =
+    StartButton(Lucide.Volume2, if (ringing) "Stop ringing" else "Ring", danger = ringing, height = 48.dp, onClick = onClick)
 
 /** True when a Device tab card is too short for three full-size buttons (every landscape tablet we support). */
 internal fun tabletCompact(cardHeight: Dp) = cardHeight < 300.dp
