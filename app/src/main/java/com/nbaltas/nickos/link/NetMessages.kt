@@ -70,6 +70,10 @@ object NetMessages {
     fun askPermissionCmd(): JSONObject = JSONObject().put("t", "cmd").put("c", ASK_PERMISSION)
     fun isAskPermission(m: JSONObject?): Boolean = m?.optString("t") == "cmd" && m.optString("c") == ASK_PERMISSION
 
+    /** Master to Node: "open the accessibility setting so a grown-up can switch remote control back on". Sealed link only. */
+    const val ASK_CONTROL = "askControl"
+    fun askControlCmd(): JSONObject = JSONObject().put("t", "cmd").put("c", ASK_CONTROL)
+
     /**
      * Master to Node: {"t":"cmd","c":"orientation","landscape":true} locks the kid tablet to landscape (both directions),
      * false lets it turn freely again. The Node keeps the choice across reboots and answers in "status" with

@@ -4,24 +4,42 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.nbaltas.nickos.App
+import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.remote.TouchMap
 
 /**
  * Taps, swipes, Back and Home for a parent who is looking at this tablet's screen. A grown-up switches it on once in
- * Android's accessibility settings; after that it stays on across reboots. It reads no screen content and no events:
+ * Android's accessibility settings; after that it stays on across reboots. It reads no screen content; the one event it hears is a window change, to keep the kid out of Settings:
  * [ScreenStreamer.touch] decides whether a touch may come in at all.
  */
 class RemoteInputService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        try { App.get(this).store.setRemoteControlEverOn() } catch (e: Exception) { Log.d(TAG, "flag not saved", e) }
         tellParents()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    /**
+     * Backstop for the kid lock: Settings goes straight home, and on Android 12+ the notification shade is pulled up again.
+     * Only window changes are heard, and only the package name is read. Nothing happens in parent mode.
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        try {
+            val app = App.get(this)
+            if (app.store.role.value != Role.NODE) return
+            when (KioskLock.bounce(event.packageName?.toString(), app.node.parentMode, Build.VERSION.SDK_INT)) {
+                KioskLock.Bounce.HOME -> app.node.device.goHome()
+                KioskLock.Bounce.COLLAPSE -> if (Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+                KioskLock.Bounce.NONE -> {}
+            }
+        } catch (e: Exception) { Log.d(TAG, "bounce failed", e) }
+    }
 
     override fun onInterrupt() {}
 

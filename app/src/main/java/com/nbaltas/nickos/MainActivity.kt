@@ -145,6 +145,8 @@ open class MainActivity : ComponentActivity() {
         if (app.node.device.isDeviceOwner && am.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE) {
             try { startLockTask() } catch (_: Exception) {}
         }
+        // Lock task start resets the real status bar flags: switch the shade off again afterwards.
+        app.node.device.disableStatusBar()
         val locked = app.store.lockedApp.value
         if (locked != null && app.store.lockedBy.value == null) {
             main.postDelayed({ if (app.node.homeVisible && !app.node.parentMode) app.node.device.launch(locked) }, 400)

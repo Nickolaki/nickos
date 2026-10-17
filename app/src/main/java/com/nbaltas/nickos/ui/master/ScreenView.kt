@@ -51,7 +51,8 @@ const val SCREEN_SECOND_PARENT = "To watch from a second parent tablet, add it w
 /** The Screen tab of Tablet Control: a start page, then the full screen viewer. */
 @Composable
 fun ScreenTab(v: NodeView) {
-    val ctl = App.get(LocalContext.current).master.screen
+    val rt = App.get(LocalContext.current).master
+    val ctl = rt.screen
     val watching by ctl.watching.collectAsState()
     val states by ctl.states.collectAsState()
     val frame by ctl.frame.collectAsState()
@@ -67,6 +68,7 @@ fun ScreenTab(v: NodeView) {
             onStop = { ctl.unwatch() }, onWatchAgain = { ctl.watch(id) },
             onBack = { ctl.back() }, onHome = { ctl.home() },
             onTap = { x, y -> ctl.tap(x, y) }, onSwipe = { x1, y1, x2, y2, ms -> ctl.swipe(x1, y1, x2, y2, ms) },
+            openSettingLabel = "Open setting on ${v.node.name}", onOpenSetting = { rt.askControl(id) },
         )
     }
 }
@@ -99,6 +101,8 @@ internal fun ScreenViewer(
     onHome: () -> Unit,
     onTap: (Double, Double) -> Unit,
     onSwipe: (Double, Double, Double, Double, Long) -> Unit,
+    openSettingLabel: String? = null,
+    onOpenSetting: (() -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -122,7 +126,10 @@ internal fun ScreenViewer(
                 else -> Muted("Connecting", 20)
             }
         }
-        if (!control) Muted(SCREEN_VIEW_ONLY, 14, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), maxLines = 2)
+        if (!control) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Muted(SCREEN_VIEW_ONLY, 14, Modifier.weight(1f), maxLines = 2)
+            if (onOpenSetting != null) NickButton(openSettingLabel ?: "Open setting", onOpenSetting)
+        }
     }
 }
 

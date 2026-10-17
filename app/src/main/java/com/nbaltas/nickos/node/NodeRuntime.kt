@@ -406,7 +406,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             while (true) {
                 val msg = c.read() ?: break
                 // Screen start, stop and touch only on a sealed link, like talk: a legacy clear text session (v1) gets no key and no control.
-                if (msg.optString("t") == "cmd" && RemoteMessages.isScreenCmd(msg.optString("c")) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
+                if (msg.optString("t") == "cmd" && (RemoteMessages.isScreenCmd(msg.optString("c")) || msg.optString("c") == NetMessages.ASK_CONTROL) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
                 else if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
                 // And only on a sealed link: a legacy clear text session (v1) is refused talk.
@@ -532,6 +532,14 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "touch" -> { RemoteMessages.decodeTouch(m)?.let { screen.touch(masterId, it) }; return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
+            // Sealed link only (checked in the read loop). A short parent window keeps the lock from bouncing Settings; the lock returns when it ends.
+            NetMessages.ASK_CONTROL -> {
+                parentUntil = System.currentTimeMillis() + ASK_CONTROL_MS
+                device.wake()
+                device.pauseLockdown()
+                try { ctx.startActivity(device.remoteInputIntent()) } catch (e: Exception) { Log.w(TAG, "open accessibility settings", e) }
+                return
+            }
             NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, masterId, master?.name ?: "Parent's Tablet") }
             NetMessages.RING -> NetMessages.decodeRing(m)?.let { if (it) startRing() else stopRing(RingMachine.Stop.PARENT) }
             "media" -> device.mediaKey(m.getString("key"))
@@ -614,6 +622,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Re-applies kiosk lockdown with the current allowlist (plus [extra], a one-off parent "open"). */
     fun applyLockdown(extra: String? = null) {
         device.applyLockdown(store.allowed.value + listOfNotNull(store.lockedApp.value, extra, device.jellyfinPackage()))
+        // An update can drop the remote control switch: put it back, but only where a grown-up turned it on before.
+        if (KioskLock.mayReenable(store.remoteControlEverOn(), RemoteInputService.running)) device.reenableRemoteInput()
     }
 
     fun status(): JSONObject {
@@ -682,9 +692,17 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             goHome = { device.goHome() },
             log = { Log.w("NickOS.Kiosk", it) },
         )
+        val expiry = KioskLock.ParentExpiry()
         while (scope.isActive) {
             delay(1000)
             try { watch.tick(System.currentTimeMillis()) } catch (e: Exception) { Log.w("NickOS.Kiosk", "tick", e) }
+            // The parent window ran out while the kid is in another app: lock again now, and bring the kid home so lock task restarts.
+            try {
+                if (expiry.tick(parentMode)) {
+                    applyLockdown()
+                    if (!homeVisible) device.goHome()
+                }
+            } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock", e) }
         }
     }
 
@@ -726,5 +744,5 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         powerRunner.stop()
     }
 
-    companion object { private const val TAG = "NickOS.Node" }
+    companion object { private const val TAG = "NickOS.Node"; private const val ASK_CONTROL_MS = 3 * 60_000L }
 }

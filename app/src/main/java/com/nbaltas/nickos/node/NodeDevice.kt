@@ -365,6 +365,34 @@ class NodeDevice(private val ctx: Context) {
     fun pauseLockdown() {
         if (!isDeviceOwner) return
         try { dpm.setLockTaskPackages(admin, arrayOf()) } catch (e: Exception) { Log.w(TAG, "pause lockdown", e) }
+        // Leaving lock task clears the real status bar flags; unset ours too so the next disable is not seen as a no-op.
+        try { dpm.setStatusBarDisabled(admin, false) } catch (e: Exception) { Log.w(TAG, "pause status bar", e) }
+    }
+
+    /** Re-asserts the status bar disable, for after startLockTask() which resets the real flags. */
+    fun disableStatusBar() {
+        if (!isDeviceOwner) return
+        try { dpm.setStatusBarDisabled(admin, true) } catch (e: Exception) { Log.w(TAG, "status bar", e) }
+    }
+
+    /**
+     * Best effort: switch the remote control accessibility service back on after an update dropped it. Appends to the
+     * enabled list and keeps every other entry. Needs WRITE_SECURE_SETTINGS (or an old Android's device policy); never throws.
+     * Only called on a tablet where a grown-up turned remote control on before.
+     */
+    fun reenableRemoteInput() {
+        try {
+            val flat = KioskLock.serviceName(ctx.packageName, RemoteInputService::class.java.name)
+            val cr = ctx.contentResolver
+            val next = KioskLock.mergeAccessibility(Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), flat)
+            if (isDeviceOwner && Build.VERSION.SDK_INT < 28) {
+                dpm.setSecureSetting(admin, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next)
+                dpm.setSecureSetting(admin, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+            } else {
+                Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next)
+                Settings.Secure.putString(cr, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+            }
+        } catch (e: Throwable) { Log.d(TAG, "could not re-enable remote control", e) }
     }
 
     fun releaseLockdown() {

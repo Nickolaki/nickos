@@ -96,6 +96,7 @@ import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.node.ControlAccess
 import com.nbaltas.nickos.node.LandscapePolicy
 import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.remote.RemoteMessages
 import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.ui.theme.NickSlider
 import com.nbaltas.nickos.ui.theme.NickSwitch
@@ -575,6 +576,11 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                         val asked = askedLine(v)
                         if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = 2)
                         else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                    }
+                    // Remote control gets switched off by some updates: say so, and open the setting on that tablet in one tap.
+                    if (st?.supportsScreen == true && st.control != RemoteMessages.CONTROL_READY) {
+                        Text("Remote control is off on ${v.node.name}. Parents can see the screen but not touch it.", style = body(14.sp, 700), color = C.danger, maxLines = 2)
+                        NickButton("Open setting on ${v.node.name}", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
                     }
                 }
             },

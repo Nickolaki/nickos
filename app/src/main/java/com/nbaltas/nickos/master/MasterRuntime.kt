@@ -739,6 +739,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (sent) _asked.update { it + (id to System.currentTimeMillis()) }
         return sent
     }
+    /** Remote control is off on that tablet: make it open the accessibility setting. An old Node ignores it. */
+    fun askControl(id: String) = sendControl(id, NetMessages.askControlCmd())
     fun requestApps(id: String) = send(id, cmd("apps"))
     /** The Node checks the update track itself and installs (silently when it has the kid lock). */
     fun updateNode(id: String) = sendControl(id, cmd("update"))

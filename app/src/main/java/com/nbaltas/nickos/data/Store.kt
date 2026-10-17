@@ -365,6 +365,10 @@ class Store(context: Context) {
     val kidLockDone: StateFlow<Boolean> = _kidLockDone
     fun setKidLockDone(v: Boolean) { p.edit().putBoolean("kidLockDone", v).commit(); _kidLockDone.value = v }
 
+    /** A grown-up switched remote control on at least once here. Only then may an update's lost switch be put back silently. */
+    fun remoteControlEverOn(): Boolean = p.getBoolean("remoteControlEverOn", false)
+    fun setRemoteControlEverOn() { if (!remoteControlEverOn()) p.edit().putBoolean("remoteControlEverOn", true).commit() }
+
     /**
      * First start of the version that added the kid lock PIN gate: a tablet that is already a Node was set up before the
      * gate existed, so it counts as locked. Keyed by a stored number, not by the flag being absent. Returns true if it ran.
