@@ -559,18 +559,19 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
         val cardH: Dp = if (cols == 3) (maxHeight - 26.dp - 32.dp - gap) / 2 else 300.dp
         val cards: List<@Composable (Modifier) -> Unit> = listOf(
             { mod ->
-                DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true) {
+                DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true, spacing = if (cols > 1 && st?.supportsTouch == true) 8.dp else 18.dp) {
+                    val compactTouch = cols > 1 && st?.supportsTouch == true
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.surface2).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         val on = st?.screenOn != false
-                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false) {
+                        SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false, height = if (compactTouch) 48.dp else 68.dp) {
                             if (st?.screenOffOk == false) m.askPermission(v.node.id) else m.screen(v.node.id, false)
                         }
-                        SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f)) { m.screen(v.node.id, true) }
+                        SegBtn(Lucide.Sun, "On", on, Modifier.weight(1f), height = if (compactTouch) 48.dp else 68.dp) { m.screen(v.node.id, true) }
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
-                    else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth().then(if (cols > 1 && st?.supportsTouch == true) Modifier.height(48.dp) else Modifier), big = !compactTouch, leading = Lucide.Lock)
                     // Hidden when the Node does not have the touch1 capability.
-                    if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
+                    if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m, compact = compactTouch)
                     // An old Node has no "ring1": no button.
                     if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
                     // One short line under Lock, so Lock is never pushed out of the card.
@@ -668,13 +669,13 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
             },
         )
         Column(
-            Modifier.fillMaxSize().then(if (cols == 1) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(start = 40.dp, end = 40.dp, top = 26.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             cards.chunked(cols).forEach { row ->
                 // The Touch row makes the Screen card taller: its grid row gets a fixed extra, every card keeps a bounded height.
-                val rowH = if (st?.supportsTouch == true && row.any { it === cards[0] }) cardH + 64.dp else cardH
+                val rowH = if (cols == 1 && st?.supportsTouch == true && row.any { it === cards[0] }) cardH + 64.dp else cardH
                 Row(Modifier.height(rowH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
             }
         }
@@ -687,23 +688,23 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
  * what the tablet really does (see [TouchText]), and the Allow button asks the kid tablet for the overlay permission.
  */
 @Composable
-private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlayOk: Boolean, m: com.nbaltas.nickos.master.MasterRuntime) {
+private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlayOk: Boolean, m: com.nbaltas.nickos.master.MasterRuntime, compact: Boolean = false) {
     val on = TouchText.touchOn(touch)
     val change = { nowOn: Boolean ->
         // Without the overlay permission the shield only covers NickOS: ask for the permission first.
         if (!nowOn && !overlayOk) m.askPermission(v.node.id)
         m.setTouchOff(v.node.id, !nowOn)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 4.dp)) {
         Row(
             Modifier.fillMaxWidth().toggleable(on, role = androidx.compose.ui.semantics.Role.Switch) { change(it) },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Touch", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+            Text("Touch", style = body(if (compact) 16.sp else 17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
             NickSwitch(on) { change(it) }
         }
         val status = TouchText.status(touch, v.node.name)
-        Text(status ?: TouchText.HINT, style = body(14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
+        Text(status ?: TouchText.HINT, style = body(if (compact) 13.sp else 14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
         if (TouchText.offerAllow(touch)) StartButton(Lucide.Settings, "Allow on ${v.node.name}", height = 40.dp) { m.askPermission(v.node.id) }
     }
 }
@@ -734,9 +735,9 @@ internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.Pow
 @Composable
 private fun DeviceCard(
     modifier: Modifier, icon: ImageVector, title: String, rotateIcon: Boolean = false,
-    trailing: @Composable () -> Unit = {}, content: @Composable () -> Unit,
+    trailing: @Composable () -> Unit = {}, spacing: Dp = 18.dp, content: @Composable () -> Unit,
 ) {
-    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(spacing)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp).then(if (rotateIcon) Modifier.rotate90() else Modifier))
             Text(title, style = body(20.sp, 800), color = C.text, modifier = Modifier.weight(1f))
@@ -747,9 +748,9 @@ private fun DeviceCard(
 }
 
 @Composable
-private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, dim: Boolean = false, onClick: () -> Unit) {
+private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, enabled: Boolean = true, dim: Boolean = false, height: Dp = 68.dp, onClick: () -> Unit) {
     Row(
-        modifier.height(68.dp).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
+        modifier.height(height).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
             .alpha(if (enabled && !dim) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {

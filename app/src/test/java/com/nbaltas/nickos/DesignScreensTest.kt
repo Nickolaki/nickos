@@ -924,6 +924,19 @@ class DesignScreensTest {
         shot("Device-TouchSwitch") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
     }
 
+    /** A node with touch1 and landscape: the Touch switch and "Lock to landscape" must both be fully visible. The foreman records them. */
+    private fun deviceTouchLandscape(size: String) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin")
+            .copy(landscape = landscapeOn, caps = listOf("touch1"), touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        shot("Control-Device-Touch-Landscape-$size") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
+    @Test fun controlDeviceTouchLandscape1024() = deviceTouchLandscape("1024x768")
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun controlDeviceTouchLandscape960() = deviceTouchLandscape("960x600")
+
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
         com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {}, onTalkNotifications = {})
     }
