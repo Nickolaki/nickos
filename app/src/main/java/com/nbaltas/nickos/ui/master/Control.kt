@@ -197,7 +197,7 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
         Box(Modifier.fillMaxSize().then(if (staticBody) Modifier.graphicsLayer { alpha = fade.value } else Modifier)) {
             when {
                 tab == TAB_WATCH -> TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
-                tab == TAB_NOW && inTogether -> if (phone) PhoneTabletRemote(nodeId, nowScroll) else TabletRemote(nodeId)
+                tab == TAB_NOW && inTogether -> if (phone) PhoneGroupRemote(nodeId, nowScroll) else TabletRemote(nodeId)
                 !v.online -> OfflineBody(v, onBack, offlineScroll)
                 tab == TAB_NOW -> if (v.playback?.item != null) NowPlaying(v, nowScroll) else NothingPlaying(v, nowScroll) { onTab(TAB_WATCH) }
                 tab == TAB_APPS -> AppsTab(v, appsGrid)
@@ -417,7 +417,7 @@ private fun NowPlaying(v: NodeView, phoneScroll: ScrollState) {
 
 /** A phone title: wraps at words (never mid-word), at most three lines, then an ellipsis. */
 @Composable
-private fun PhoneMediaTitle(text: String, modifier: Modifier = Modifier) =
+internal fun PhoneMediaTitle(text: String, modifier: Modifier = Modifier) =
     Text(
         text, style = disp(24.sp, 800, 1.15f).copy(lineBreak = LineBreak.Heading, hyphens = Hyphens.None), color = C.text,
         modifier = modifier, maxLines = 3, overflow = TextOverflow.Ellipsis,
@@ -425,7 +425,7 @@ private fun PhoneMediaTitle(text: String, modifier: Modifier = Modifier) =
 
 /** Skip 56 / play 72 / skip 56, true circles. */
 @Composable
-private fun PhoneTransport(playing: Boolean, backSecs: Int, fwdSecs: Int, onBack: () -> Unit, onToggle: () -> Unit, onForward: () -> Unit) {
+internal fun PhoneTransport(playing: Boolean, backSecs: Int, fwdSecs: Int, onBack: () -> Unit, onToggle: () -> Unit, onForward: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
         PhoneSkip(true, backSecs, onBack)
         Box(
@@ -447,7 +447,7 @@ private fun PhoneSkip(back: Boolean, secs: Int, onClick: () -> Unit) {
 
 /** Next and Stop as an equal-weight row of 48dp buttons. Next is left out when there is nothing to go to. */
 @Composable
-private fun PhoneNextStop(showNext: Boolean, nextEnabled: Boolean, onNext: () -> Unit, stopLabel: String, onStop: () -> Unit) {
+internal fun PhoneNextStop(showNext: Boolean, nextEnabled: Boolean, onNext: () -> Unit, stopLabel: String, onStop: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showNext) NickButton("Next episode", onNext, Modifier.weight(1f).fillMaxHeight(), leading = Solid.Next, enabled = nextEnabled)
         NickButton(stopLabel, onStop, Modifier.weight(1f).fillMaxHeight(), leading = Solid.Stop)
@@ -456,7 +456,7 @@ private fun PhoneNextStop(showNext: Boolean, nextEnabled: Boolean, onNext: () ->
 
 /** The seek bar's time row: 14sp, tabular digits. */
 @Composable
-private fun PhoneTimes(left: String, right: String) {
+internal fun PhoneTimes(left: String, right: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(left, style = body(14.sp, 700).copy(fontFeatureSettings = "tnum"), color = C.text)
         Text(right, style = body(14.sp, 700).copy(fontFeatureSettings = "tnum"), color = C.muted)
@@ -518,55 +518,6 @@ private fun PhoneNowPlaying(
                 EyebrowText("On ${v.node.name}")
                 DeviceSliders(v)
             }
-        }
-    }
-}
-
-/** The group remote on a phone: same geometry as [PhoneNowPlaying]. Same sync commands as the tablet remote. */
-@Composable
-private fun PhoneTabletRemote(nodeId: String, scroll: ScrollState) {
-    val app = App.get(LocalContext.current)
-    val sync = app.master.sync
-    val session by sync.session.collectAsState()
-    val s = session ?: return
-    if (nodeId !in s.nodes) return
-    val pos = sync.expectedPos()
-    val library = remember(s.fid) { sync.library() }
-    val item = library.firstOrNull { it.fid == s.fid }
-    val epLabel = item?.episode?.let { TogetherText.episodeLine(it) }
-    val thumbs by sync.thumbs.collectAsState()
-    val next = sync.next()
-    val bg = thumbs[s.fid]
-
-    Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-        if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.3f)
-        else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.3f), radius = 0.dp, showTitle = false)
-        Column(
-            Modifier.fillMaxSize().verticalScroll(scroll).padding(PhoneMetrics.gutter),
-            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.sectionGap),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.gutter)) {
-                MovieThumb(bg, s.title, Modifier.size(80.dp, 120.dp), radius = PhoneMetrics.nestedRadius, showTitle = false, art = s.art)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
-                    PhoneMediaTitle(s.title)
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (s.durMs > 0) {
-                    NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })
-                    PhoneTimes(fmtMs(pos), fmtMs(s.durMs))
-                } else {
-                    Box(Modifier.fillMaxWidth().height(PhoneMetrics.minTarget), contentAlignment = Alignment.Center) { ProgressBar(0f, height = 8.dp) }
-                    PhoneTimes("--:--", "--:--")
-                }
-            }
-            PhoneTransport(playing = s.playing, backSecs = 10, fwdSecs = 10, onBack = { sync.skip(-10_000) }, onToggle = { sync.toggle() }, onForward = { sync.skip(10_000) })
-            PhoneNextStop(
-                showNext = item?.episode != null, nextEnabled = next != null, onNext = { sync.playNext() },
-                stopLabel = "Stop", onStop = { sync.stop() },
-            )
         }
     }
 }

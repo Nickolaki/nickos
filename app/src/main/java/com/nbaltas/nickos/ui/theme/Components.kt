@@ -9,6 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.ripple
 import androidx.compose.ui.semantics.Role
@@ -572,7 +574,7 @@ private fun PhoneSegmented(items: List<Pair<String, ImageVector?>>, selected: In
     val c = C
     val scrolls = items.size > 4
     Row(
-        modifier.clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(c.surface).padding(4.dp)
+        modifier.selectableGroup().clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(c.surface).padding(4.dp)
             .then(if (scrolls) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -582,7 +584,7 @@ private fun PhoneSegmented(items: List<Pair<String, ImageVector?>>, selected: In
             val col by animateColorAsState(if (on) c.onAccent else c.muted, tween(120), label = "segText")
             Row(
                 (if (scrolls) Modifier else Modifier.weight(1f)).heightIn(min = PhoneMetrics.minTarget).clip(RoundedCornerShape(10.dp)).background(bg)
-                    .clickable(role = Role.Tab) { onSelect(i) }.padding(horizontal = 8.dp),
+                    .selectable(selected = on, role = Role.Tab) { onSelect(i) }.padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
             ) {

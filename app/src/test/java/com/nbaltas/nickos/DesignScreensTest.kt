@@ -527,6 +527,25 @@ class DesignScreensTest {
     }
 
     @Test fun togetherPick() {
+        val item = seedTogetherPick()
+        shot("Together-Pick") { TogetherPickContent(item) }
+    }
+
+    /** The phone Pick panel with the system font at 2.0: the title, the transfer rows and Play must stay reachable. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherPickPhoneFont200() {
+        val item = seedTogetherPick()
+        phoneFont200("Together-Pick-font200") { TogetherPickContent(item) }
+    }
+
+    @Composable
+    private fun TogetherPickContent(item: com.nbaltas.nickos.sync.LibraryItem) {
+        val m = app.master
+        val nodes = rememberNodeViews()
+        PickPanel(item, thumb = null, nodes = nodes, sync = m.sync, transfer = m.transfer, backLabel = "Movies", onBack = {})
+    }
+
+    private fun seedTogetherPick(): com.nbaltas.nickos.sync.LibraryItem {
         val m = app.master
         addStatus("cccccccccccc", 23)
         set(m.sync, "_videos", mapOf(
@@ -536,11 +555,7 @@ class DesignScreensTest {
         set(m.transfer, "_jobs", mapOf(
             "bbbbbbbbbbbb" to listOf(SyncMessages.JobEntry("cc", "Captain Comet", "running", 420_000_000L, 1_000_000_000L)),
         ))
-        val item = Library.merge(m.sync.videos.value.mapValues { it.value.list }).first { it.fid == "cc" }
-        shot("Together-Pick") {
-            val nodes = rememberNodeViews()
-            PickPanel(item, thumb = null, nodes = nodes, sync = m.sync, transfer = m.transfer, backLabel = "Movies", onBack = {})
-        }
+        return Library.merge(m.sync.videos.value.mapValues { it.value.list }).first { it.fid == "cc" }
     }
 
     private fun jfMovie() = com.nbaltas.nickos.jellyfin.JfItem(
@@ -631,6 +646,18 @@ class DesignScreensTest {
     }
 
     @Test fun togetherJellyfinPlaying() {
+        seedJellyfinPlaying()
+        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
+    }
+
+    /** The phone group remote with the system font at 2.0: the title, the status slot, the transport and the volume must stay reachable. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherJellyfinPlayingPhoneFont200() {
+        seedJellyfinPlaying()
+        phoneFont200("Together-Jellyfin-Playing-font200") { TogetherScreen({}, {}) }
+    }
+
+    private fun seedJellyfinPlaying() {
         val m = app.master
         val now = android.os.SystemClock.elapsedRealtime()
         set(m.sync, "_session", SyncSession(
@@ -645,7 +672,6 @@ class DesignScreensTest {
             "aaaaaaaaaaaa" to ClockInfo(0L, 20L, SyncQuality.GOOD),
             "bbbbbbbbbbbb" to ClockInfo(0L, 20L, SyncQuality.GOOD),
         ))
-        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
     }
 
     /** The tablet's own Now Playing tab during a Jellyfin stream: poster and title from the Jellyfin artwork. */

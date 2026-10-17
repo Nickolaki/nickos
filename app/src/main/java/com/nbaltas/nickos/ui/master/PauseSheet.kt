@@ -5,7 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -71,10 +74,10 @@ fun PauseAllSheet(paused: Boolean, startMsg: String = "", onSubmit: (Boolean, St
                     }
                     NickField(msg, { msg = it.take(NetMessages.MAX_PAUSE_MSG) }, placeholder = "Or type a message")
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NickButton("Cancel", onClose, Modifier.weight(1f), style = BtnStyle.GHOST)
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NickButton("Cancel", onClose, Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp), style = BtnStyle.GHOST)
                     NickButton(
-                        if (paused) "Resume everyone" else "Pause everyone", { onSubmit(!paused, msg) }, Modifier.weight(1f),
+                        if (paused) "Resume everyone" else "Pause everyone", { onSubmit(!paused, msg) }, Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp),
                         style = BtnStyle.PRIMARY, leading = if (paused) Solid.Play else Solid.Pause,
                         enabled = PauseAll.canSubmit(paused, msg),
                     )

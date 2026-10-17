@@ -247,7 +247,7 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
         }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(start = pad, end = pad, top = if (phone) 4.dp else 12.dp, bottom = if (phone) 24.dp else 40.dp),
+                .padding(start = pad, end = pad, top = if (phone) 0.dp else 12.dp, bottom = if (phone) 24.dp else 40.dp),
             verticalArrangement = Arrangement.spacedBy(if (phone) PhoneMetrics.cardGap else 24.dp),
         ) {
             if (phone) {
@@ -385,7 +385,7 @@ private fun PhoneTopBar(onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: 
     val now = rememberNow(1000)
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
     val hasUpdate = update is com.nbaltas.nickos.update.UpdateState.Available
-    Column(Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = PhoneMetrics.gutter, end = PhoneMetrics.gutter, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("NickOS", style = disp(24.sp, 800, 1.15f), color = C.text, maxLines = 1)
