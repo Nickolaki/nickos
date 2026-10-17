@@ -72,7 +72,19 @@ class TransferController(
     fun retry(fid: String, id: String) = send(fid, setOf(id))
 
     /** Stop a copy on tablet [id] and remove what it has so far. */
-    fun cancel(fid: String, id: String) { port.send(id, SyncMessages.cmdCancel(fid)) }
+    fun cancel(fid: String, id: String) {
+        synchronized(lock) {
+            asks.values.forEach { pending ->
+                pending[fid]?.let { ask ->
+                    ask.targets -= id
+                    if (ask.targets.isEmpty()) pending.remove(fid)
+                }
+            }
+            started -= "$id:$fid"
+            resent -= "$id:$fid"
+            port.send(id, SyncMessages.cmdCancel(fid))
+        }
+    }
 
     /** A `delete` sent and not yet answered. */
     private class Deleting(val title: String, val at: Long)
@@ -185,15 +197,23 @@ class TransferController(
     }
 
     private fun onServing(src: String, msg: SyncMessages.ServingMsg) {
-        val ask = synchronized(lock) { asks[src]?.remove(msg.fid) } ?: return // nobody asked: ignore
-        val key = msg.key
-        val host = port.nodes().firstOrNull { it.id == src }?.host
-        if (!msg.ok || key == null || host == null || msg.port !in 1..65535 || !key.all { it.isLetterOrDigit() }) {
-            return port.say("${sync.kid(src)} can't find ${ask.item.title} any more")
+        synchronized(lock) {
+            val ask = asks[src]?.get(msg.fid) ?: return // nobody asked: ignore
+            val key = msg.key
+            val host = port.nodes().firstOrNull { it.id == src }?.host
+            if (!msg.ok || key == null || host == null || msg.port !in 1..65535 || !key.all { it.isLetterOrDigit() }) {
+                asks[src]?.remove(msg.fid)
+                return port.say("${sync.kid(src)} can't find ${ask.item.title} any more")
+            }
+            // Built here from parts, never taken whole from a tablet: the host is where this Master reaches it.
+            val url = "http://$host:${msg.port}/v/${ask.item.fid}?k=$key"
+            // Keep the ask registered until dispatch finishes. Cancellation and the final
+            // membership check share this lock with fetch, so cancel cannot be overtaken.
+            ask.targets.toList().forEach { id ->
+                if (asks[src]?.get(msg.fid) === ask && id in ask.targets) fetch(id, ask.item, url)
+            }
+            if (asks[src]?.get(msg.fid) === ask) asks[src]?.remove(msg.fid)
         }
-        // Built here from parts, never taken whole from a tablet: the host is where this Master reaches it.
-        val url = "http://$host:${msg.port}/v/${ask.item.fid}?k=$key"
-        ask.targets.forEach { fetch(it, ask.item, url) }
     }
 
     private fun onJobs(id: String, list: List<SyncMessages.JobEntry>) {
