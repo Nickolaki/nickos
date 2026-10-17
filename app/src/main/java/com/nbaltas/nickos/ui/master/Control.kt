@@ -96,6 +96,7 @@ import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.node.ControlAccess
 import com.nbaltas.nickos.node.LandscapePolicy
 import com.nbaltas.nickos.link.NetMessages
+import com.nbaltas.nickos.remote.RemoteMessages
 import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.ui.theme.NickSlider
 import com.nbaltas.nickos.ui.theme.NickSwitch
@@ -577,6 +578,18 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                         val asked = askedLine(v)
                         if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = 2)
                         else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
+                    }
+                    // Two separate things. Screen view: the grown-up taps Allow on the tablet. Touch control: the accessibility switch,
+                    // which some updates turn off; open that setting on the tablet in one tap (a 90 s window the parent can end).
+                    if (st?.supportsScreen == true) {
+                        if (st.screen == RemoteMessages.NEEDS_CONSENT) Text("Screen: tap Allow on ${v.node.name}", style = body(14.sp, 700), color = C.accent, maxLines = 2)
+                        if (st.maintenance) {
+                            Text("Settings open on ${v.node.name}", style = body(14.sp, 700), color = C.danger, maxLines = 2)
+                            NickButton("Lock now", { m.home(v.node.id) }, Modifier.fillMaxWidth(), BtnStyle.DANGER)
+                        } else if (st.control != RemoteMessages.CONTROL_READY) {
+                            Text("Touch control: off", style = body(14.sp, 700), color = C.danger, maxLines = 2)
+                            NickButton("Open setting on ${v.node.name}", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
+                        }
                     }
                 }
             },

@@ -84,7 +84,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     // The parent window ran out while the setup was open on an existing Node: back to the card, watchdog on.
     LaunchedEffect(screen, existing) {
         while (screen in setOf(NodeScreen.KIOSK, NodeScreen.MENU, NodeScreen.DRAWER, NodeScreen.PAIR)) {
-            if (!KioskPolicy.parentScreenMayStay(screen == NodeScreen.KIOSK, existing, rt.parentMode)) screen = NodeScreen.ASK
+            if (!KioskPolicy.parentScreenMayStay(screen == NodeScreen.KIOSK, existing, rt.parentMode)) { rt.relockIfExpired(); screen = NodeScreen.ASK; onKidMode() }
             kotlinx.coroutines.delay(1000)
         }
     }

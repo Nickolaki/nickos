@@ -91,6 +91,8 @@ data class NodeStatus(
     val ringing: Boolean = false,
     /** The pause wall is up on the Node. Old Nodes omit it: false. */
     val paused: Boolean = false,
+    /** The parent's "Open setting" window is open on the Node (the lock is paused for up to 90 s). Old Nodes omit it: false. */
+    val maintenance: Boolean = false,
     /** The touch lock as the Node reports it (wish and what is really in place). Null for an old Node: the Master hides the switch. */
     val touch: NetMessages.TouchStatus? = null,
 ) {
@@ -138,6 +140,7 @@ data class NodeStatus(
                 screen = o.optString("screen", RemoteMessages.OFF).ifBlank { RemoteMessages.OFF },
                 control = o.optString("control", RemoteMessages.CONTROL_OFF).ifBlank { RemoteMessages.CONTROL_OFF },
                 ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
+                maintenance = o.optBoolean("maintenance"),
                 touch = NetMessages.readTouchStatus(o),
             )
         }
@@ -820,6 +823,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         if (sent) _asked.update { it + (id to System.currentTimeMillis()) }
         return sent
     }
+    /** Remote control is off on that tablet: make it open the accessibility setting. An old Node ignores it. */
+    fun askControl(id: String) = sendControl(id, NetMessages.askControlCmd())
     fun requestApps(id: String) = send(id, cmd("apps"))
     /** The Node checks the update track itself and installs (silently when it has the kid lock). */
     fun updateNode(id: String) = sendControl(id, cmd("update"))

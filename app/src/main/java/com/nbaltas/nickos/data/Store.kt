@@ -370,6 +370,26 @@ class Store(context: Context) {
     fun setKidLockDone(v: Boolean) { p.edit().putBoolean("kidLockDone", v).commit(); _kidLockDone.value = v }
 
     /**
+     * A grown-up has remote control switched on here (set when it connects in a parent or settings window, cleared when it is
+     * switched off with no update going on). Only then may an update's lost switch be put back silently. The old
+     * "remoteControlEverOn" key was never released and is not read.
+     */
+    fun remoteConsent(): Boolean = p.getBoolean("remoteConsent", false)
+    fun setRemoteConsent(v: Boolean) { if (remoteConsent() != v) p.edit().putBoolean("remoteConsent", v).commit() }
+
+    /** The app version the silent re-enable was last tried for: at most one try per update. */
+    fun lastVersionCode(): Long = p.getLong("remoteTriedVersion", 0)
+    fun setLastVersionCode(v: Long) { if (lastVersionCode() != v) p.edit().putLong("remoteTriedVersion", v).commit() }
+
+    /** Android refused the silent re-enable (no WRITE_SECURE_SETTINGS): never tried again. */
+    fun remoteReenableUnsupported(): Boolean = p.getBoolean("remoteUnsupported", false)
+    fun setRemoteReenableUnsupported() { if (!remoteReenableUnsupported()) p.edit().putBoolean("remoteUnsupported", true).commit() }
+
+    /** A settings window is open. A marker only, never a time: any restart that finds it set closes the window at once. */
+    fun maintenanceOpen(): Boolean = p.getBoolean("maintenanceOpen", false)
+    fun setMaintenanceOpen(v: Boolean) { if (maintenanceOpen() != v) p.edit().putBoolean("maintenanceOpen", v).commit() }
+
+    /**
      * First start of the version that added the kid lock PIN gate: a tablet that is already a Node was set up before the
      * gate existed, so it counts as locked. Keyed by a stored number, not by the flag being absent. Returns true if it ran.
      */

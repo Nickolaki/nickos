@@ -234,6 +234,19 @@ class NodeDevice(private val ctx: Context) {
         return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
+    /**
+     * The most specific accessibility page: on Android 13+ the details page of the NickOS service, if some activity answers
+     * it, else the general accessibility settings.
+     */
+    fun remoteInputPageIntent(): Intent {
+        val general = remoteInputIntent()
+        if (Build.VERSION.SDK_INT < 33) return general
+        val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS") // Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS, API 33
+            .putExtra(Intent.EXTRA_COMPONENT_NAME, ComponentName(ctx, RemoteInputService::class.java).flattenToString())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return if (details.resolveActivity(ctx.packageManager) != null) details else general
+    }
+
     fun goHome() {
         lastLaunched = null
         ctx.startActivity(
@@ -262,31 +275,42 @@ class NodeDevice(private val ctx: Context) {
 
     fun jellyfinPackage(): String? = JELLYFIN_PACKAGES.firstOrNull { label(it) != null }
 
-    private var usageCursor = 0L
-    private var usageLast: String? = null
+    private val usage = UsageForeground()
+
+    /** NickOS itself is in front again, so a clock change no longer blocks the strict lookup. */
+    @Synchronized
+    fun clearUntrusted() = usage.clearUntrusted()
 
     /**
      * Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened.
      * Reads usage events incrementally: 6h back the first time, then only what's new.
+     * With [strict] (the relock decision) only a verified foreground counts, anything else is null.
      */
     @Synchronized
-    fun foregroundPackage(homeVisible: Boolean): String? {
+    fun foregroundPackage(homeVisible: Boolean, lastLaunchedFallback: Boolean = true, strict: Boolean = false): String? {
         if (homeVisible) return null
         if (hasUsageAccess()) {
             val usm = ctx.getSystemService(UsageStatsManager::class.java)
             val now = System.currentTimeMillis()
-            val from = if (usageCursor == 0L) now - 6 * 60 * 60 * 1000L else usageCursor - 2000
-            val events = usm.queryEvents(from, now)
+            val events = usm.queryEvents(usage.from(now), now)
             val e = UsageEvents.Event()
+            val list = ArrayList<UsageForeground.Ev>()
             while (events.hasNextEvent()) {
                 events.getNextEvent(e)
-                if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) usageLast = e.packageName
+                when (e.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> list.add(UsageForeground.Ev(UsageForeground.Kind.RESUMED, e.packageName))
+                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED, UsageEvents.Event.MOVE_TO_BACKGROUND ->
+                        list.add(UsageForeground.Ev(UsageForeground.Kind.PAUSED, e.packageName))
+                }
             }
-            usageCursor = now
-            val last = usageLast
+            val last = usage.fold(now, true, list, strict)
             if (last != null) return if (last == ctx.packageName || isLauncher(last)) null else last
+            if (strict) return null
+        } else {
+            usage.fold(0L, false, emptyList(), strict)
+            if (strict) return null
         }
-        return lastLaunched
+        return if (lastLaunchedFallback) lastLaunched else null
     }
 
     private fun isLauncher(pkg: String): Boolean {
@@ -365,7 +389,42 @@ class NodeDevice(private val ctx: Context) {
     fun pauseLockdown() {
         if (!isDeviceOwner) return
         try { dpm.setLockTaskPackages(admin, arrayOf()) } catch (e: Exception) { Log.w(TAG, "pause lockdown", e) }
+        // Leaving lock task clears the real status bar flags; unset ours too so the next disable is not seen as a no-op.
+        try { dpm.setStatusBarDisabled(admin, false) } catch (e: Exception) { Log.w(TAG, "pause status bar", e) }
     }
+
+    /** Re-asserts the status bar disable, for after startLockTask() which resets the real flags. */
+    fun disableStatusBar() {
+        if (!isDeviceOwner) return
+        try { dpm.setStatusBarDisabled(admin, true) } catch (e: Exception) { Log.w(TAG, "status bar", e) }
+    }
+
+    /**
+     * Best effort: switch the remote control accessibility service back on after an update dropped it. Appends to the
+     * enabled list and keeps every other entry. Needs WRITE_SECURE_SETTINGS (or an old Android's device policy); never throws.
+     * Only called on a tablet where a grown-up turned remote control on before. False when Android refused it (SecurityException):
+     * the caller remembers that and stops trying.
+     */
+    fun reenableRemoteInput(): Boolean {
+        try {
+            val flat = KioskLock.serviceName(ctx.packageName, RemoteInputService::class.java.name)
+            val cr = ctx.contentResolver
+            val next = KioskLock.mergeAccessibility(Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), flat)
+            if (isDeviceOwner && Build.VERSION.SDK_INT < 28) {
+                dpm.setSecureSetting(admin, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next)
+                dpm.setSecureSetting(admin, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+            } else {
+                Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next)
+                Settings.Secure.putString(cr, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+            }
+        } catch (e: SecurityException) { Log.d(TAG, "re-enabling remote control is not allowed here", e); return false
+        } catch (e: Throwable) { Log.d(TAG, "could not re-enable remote control", e) }
+        return true
+    }
+
+    /** True while no lock task is running (API 23+; older Android has no way to ask, so it counts as running). */
+    fun lockTaskNone(): Boolean =
+        Build.VERSION.SDK_INT >= 23 && ctx.getSystemService(ActivityManager::class.java).lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE
 
     fun releaseLockdown() {
         if (!isDeviceOwner) {

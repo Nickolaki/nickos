@@ -4,31 +4,64 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.nbaltas.nickos.App
+import com.nbaltas.nickos.BuildConfig
+import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.remote.TouchMap
 
 /**
  * Taps, swipes, Back and Home for a parent who is looking at this tablet's screen. A grown-up switches it on once in
- * Android's accessibility settings; after that it stays on across reboots. It reads no screen content and no events:
+ * Android's accessibility settings; after that it stays on across reboots. It reads no screen content; the one event it hears is a window change, to keep the kid out of Settings:
  * [ScreenStreamer.touch] decides whether a touch may come in at all.
  */
 class RemoteInputService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        try {
+            val app = App.get(this)
+            // Connecting in a parent window or the settings window is a grown-up turning remote control on: remember that.
+            if (KioskLock.consentOnConnect(app.node.parentMode, app.node.maintenance)) app.store.setRemoteConsent(true)
+            app.node.endMaintenance() // the service is on: the settings window has done its job
+        } catch (e: Exception) { Log.d(TAG, "consent not saved", e) }
         tellParents()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    /**
+     * Backstop for the kid lock: Settings goes straight home, and on Android 12+ the notification shade is pulled up again
+     * (once a second at most). Only window changes are heard, and only the package name is read. Kid tablets in kid mode
+     * only, never in a parent window or the settings window.
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        try {
+            val app = App.get(this)
+            val now = System.currentTimeMillis()
+            when (KioskLock.bounce(event.packageName?.toString(), app.store.role.value == Role.NODE, app.node.parentMode, app.node.maintenance, Build.VERSION.SDK_INT, now, lastShade)) {
+                KioskLock.Bounce.HOME -> app.node.device.goHome()
+                KioskLock.Bounce.COLLAPSE -> if (Build.VERSION.SDK_INT >= 31) { lastShade = now; performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE) }
+                KioskLock.Bounce.NONE -> {}
+            }
+        } catch (e: Exception) { Log.d(TAG, "bounce failed", e) }
+    }
+
+    private var lastShade = 0L
 
     override fun onInterrupt() {}
 
     override fun onUnbind(intent: Intent?): Boolean {
         if (instance === this) instance = null
+        // Switched off while the app lives on and no update is replacing it: the grown-up's choice, so the silent re-enable stops.
+        try {
+            val installed = if (Build.VERSION.SDK_INT >= 28) packageManager.getPackageInfo(packageName, 0).longVersionCode
+            else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
+            if (KioskLock.consentClearedOnUnbind(BuildConfig.VERSION_CODE.toLong(), installed)) App.get(this).store.setRemoteConsent(false)
+        } catch (e: Exception) { Log.d(TAG, "consent not cleared", e) }
         tellParents()
         return super.onUnbind(intent)
     }

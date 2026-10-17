@@ -122,6 +122,7 @@ open class MainActivity : ComponentActivity() {
             app.node.homeVisible = true
             app.node.device.lastLaunched = null
             app.node.pushStatus()
+            app.node.onForeground() // ends the parent's settings window and puts the lock back if a window ran out
             enterKidMode()
         }
     }
@@ -139,13 +140,15 @@ open class MainActivity : ComponentActivity() {
      * "locked to" app if the parent set one. Paused while the parent PIN window is open.
      */
     private fun enterKidMode() {
-        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.parentMode) return
+        if (app.store.role.value != Role.NODE || !com.nbaltas.nickos.node.NodeSupport.ok() || app.node.lockPaused) return
         showSystemBars(false)
         app.node.applyLockdown()
         val am = getSystemService(ActivityManager::class.java)
         if (app.node.device.isDeviceOwner && am.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE) {
             try { startLockTask() } catch (_: Exception) {}
         }
+        // Lock task start resets the real status bar flags: switch the shade off again afterwards.
+        app.node.device.disableStatusBar()
         val locked = app.store.lockedApp.value
         if (locked != null && app.store.lockedBy.value == null) {
             main.postDelayed({ if (app.node.homeVisible && !app.node.parentMode) app.node.device.launch(locked) }, 400)

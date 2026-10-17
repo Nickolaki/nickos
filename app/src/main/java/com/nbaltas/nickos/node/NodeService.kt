@@ -115,7 +115,11 @@ class BootReceiver : BroadcastReceiver() {
         if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); return }
         NodeService.start(ctx)
         // After a self-update the kiosk task died with the old process: put the kid home back.
-        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+        // And after a reboot too: lock task only starts once the home screen is opened. Kid mode only, never over a parent.
+        val app = App.get(ctx)
+        // A reboot or an update ends a parent's settings window: the lock goes back on with the launch below.
+        app.store.setMaintenanceOpen(false)
+        if (KioskLock.bootLaunch(intent.action, role == Role.NODE, app.node.parentMode)) {
             ctx.startActivity(com.nbaltas.nickos.entryIntent(ctx).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
