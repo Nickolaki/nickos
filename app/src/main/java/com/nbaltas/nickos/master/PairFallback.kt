@@ -6,6 +6,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 
@@ -31,6 +33,7 @@ object PairFallback {
         val hosts = ownIps.distinct().flatMap { Subnet.hosts(it).orEmpty() }.distinct().filterNot { it in ownIps }
         if (hosts.isEmpty()) return null
         val queue = ConcurrentLinkedQueue(hosts)
+        val lock = Mutex()
         val winner = AtomicReference<T?>(null)
         coroutineScope {
             val workers = java.util.concurrent.CopyOnWriteArrayList<Job>()
@@ -41,8 +44,14 @@ object PairFallback {
                         val id = prober.probe(host, port) ?: continue
                         // Another worker may have won while this probe ran: no more pair tries then.
                         if (!isActive || winner.get() != null) break
-                        val r = tryPair(id, host to port) ?: continue
-                        if (winner.compareAndSet(null, r)) {
+                        // One handshake at a time; the checks are repeated inside the lock.
+                        // The win is recorded inside the lock too, so the next worker in sees it.
+                        val won = lock.withLock {
+                            if (!isActive || winner.get() != null) return@withLock false
+                            val r = tryPair(id, host to port) ?: return@withLock false
+                            winner.compareAndSet(null, r)
+                        }
+                        if (won) {
                             queue.clear()
                             val me = coroutineContext[Job]
                             workers.forEach { if (it !== me) it.cancel() }

@@ -320,6 +320,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         discoveryListener = null
         // Cancelling the loops cannot reach the blocking parts: close the links and the media server too.
         scope.coroutineContext[Job]?.children?.forEach { it.cancel() }
+        // A handshake still in flight must not claim a link after this: new generation first, then close its sockets.
+        links.invalidate()
+        handshaking.toList().forEach { try { it.close() } catch (_: Exception) {} }
         links.ids().forEach { id -> links.drop(id)?.close() }
         try { server.stop() } catch (_: Exception) {}
         // The role collector is cancelled above, so leaving Master gives the power settings back here.
@@ -537,8 +540,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     /** How long the link lasted from the welcome, in ms (even if it later dropped); -1 when the Node could not be reached. */
+    private val handshaking: MutableSet<Conn> = ConcurrentHashMap.newKeySet()
+
     private fun session(n: LinkedNode, addr: Pair<String, Int>): Long {
+        val gen = links.generation()
         var c = Conn.open(addr.first, addr.second)
+        handshaking.add(c)
         var claimed = false
         try {
             // An old Node may be silent for 11.5 s: long until a status says "hb3" (then 8 s, see runLink).
@@ -551,7 +558,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 Handshake.Hello.DENIED -> {
                     if (!Handshake.mayFallBack(linkFlags, n.id)) return -1
                     c.close()
+                    handshaking.remove(c)
                     c = Conn.open(addr.first, addr.second)
+                    handshaking.add(c)
                     c.socket.soTimeout = LinkTimeout.LEGACY_MS
                     if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return -1
                     legacy = true
@@ -559,8 +568,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 Handshake.Hello.FAIL -> return -1
             }
             val welcomed = System.currentTimeMillis()
-            links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
+            // A second link to the same Node (a reconnect racing discovery) replaces the old one; a stale generation (stop ran) cannot claim.
+            if (!links.claimIfCurrent(n.id, c, gen) { it.close() }) return -1
             claimed = true
+            handshaking.remove(c)
             if (legacy) send(n.id, cmd("update")) // the Node installs the sec2 build from the track and the link comes back sealed
             // A read timeout or reset ends a link that did work: it still counts as welcomed (so the loop redials at once).
             try { runLink(n, c) } catch (e: Exception) { Log.d(TAG, "link ${n.id}: ${e.message}") }
@@ -581,6 +592,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 cam.onDisconnected(n.id)
                 screen.onDisconnected(n.id)
             }
+            handshaking.remove(c)
             delivery(c, n.id).close()
             c.close()
         }
@@ -624,6 +636,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
+        if (links[n.id] !== c) { c.close(); return } // stop() dropped it between the claim and here
         live.add(n.id)
         grace.connected(n.id)
         send(n.id, cmd("pin").put("pin", store.pin.value))
@@ -955,6 +968,21 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
  */
 class LinkTable<C : Any> {
     private val map = ConcurrentHashMap<String, C>()
+    private val gen = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Captured before a handshake; [claimIfCurrent] refuses it once [invalidate] ran. */
+    fun generation(): Int = gen.get()
+
+    /** Bumped by stop(): every handshake begun before it can no longer claim. */
+    @Synchronized fun invalidate() { gen.incrementAndGet() }
+
+    /** Like [claim], but only while [expected] is still the current generation. A replaced link goes to [onReplaced]. */
+    @Synchronized fun claimIfCurrent(id: String, c: C, expected: Int, onReplaced: (C) -> Unit): Boolean {
+        if (gen.get() != expected) return false
+        map.put(id, c)?.let(onReplaced)
+        return true
+    }
+
     operator fun get(id: String): C? = map[id]
     fun ids(): Set<String> = map.keys.toSet()
 

@@ -58,6 +58,34 @@ class PairFallbackTest {
         assertEquals(0, tries.get())
     }
 
+    @Test fun twoReadyProbesPairOnlyOnce() = runBlocking {
+        val tries = AtomicInteger()
+        val r = PairFallback.sweep(listOf("192.168.1.10"), { host, _ -> if (host.endsWith(".20") || host.endsWith(".30")) "n" + host else null }, 47470, maxInFlight = 2) { id, _ ->
+            tries.incrementAndGet()
+            kotlinx.coroutines.delay(50) // the other probe is ready and waits at the lock meanwhile
+            "paired-" + id
+        }
+        assertTrue(r!!.startsWith("paired-"))
+        assertEquals(1, tries.get())
+    }
+
+    @Test fun cancelBeforeTheLockPairsNothing() = runBlocking {
+        val tries = AtomicInteger()
+        val inFirst = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val job = async(kotlinx.coroutines.Dispatchers.Default) {
+            PairFallback.sweep(listOf("192.168.1.10"), { host, _ -> if (host.endsWith(".20") || host.endsWith(".30")) "n" + host else null }, 47470, maxInFlight = 2) { _, _ ->
+                tries.incrementAndGet()
+                inFirst.complete(Unit)
+                kotlinx.coroutines.delay(10_000) // holds the lock; the second probe waits for it
+                null as String?
+            }
+        }
+        inFirst.await()
+        job.cancel()
+        job.join()
+        assertEquals(1, tries.get())
+    }
+
     @Test fun tryPairOnOpenHostsOnly() = runBlocking {
         val tried = mutableListOf<String>()
         val r = PairFallback.sweep(listOf("10.0.0.5"), { host, _ -> if (host == "10.0.0.7") "id7" else null }, 47470, maxInFlight = 1) { id, _ ->
