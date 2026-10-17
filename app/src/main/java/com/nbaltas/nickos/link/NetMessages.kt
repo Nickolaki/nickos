@@ -124,6 +124,46 @@ object NetMessages {
     }
 
     /**
+     * Master to Node: {"t":"cmd","c":"touch","off":true} makes the kid tablet ignore every touch while the video keeps
+     * playing; false gives touch back. The Node keeps the choice across reboots and answers in "status" with "touchOff"
+     * (what the parent wants) and "touchShield" (what is really in place: on, inapp or none). Capability "touch1".
+     */
+    const val TOUCH = "touch"
+    const val TOUCH_CAP = "touch1"
+    const val SHIELD_ON = "on"
+    const val SHIELD_INAPP = "inapp"
+    const val SHIELD_NONE = "none"
+    fun touchCmd(off: Boolean): JSONObject = JSONObject().put("t", "cmd").put("c", TOUCH).put("off", off)
+
+    /** Null unless this is a touch command with a real boolean "off" (a missing one must not lock or unlock by accident). */
+    fun parseTouch(m: JSONObject?): Boolean? {
+        if (m == null || m.optString("t") != "cmd" || m.optString("c") != TOUCH) return null
+        if (m.opt("off") !is Boolean) return null
+        return m.getBoolean("off")
+    }
+
+    /** [off] is the wish, [shield] what is in force (on: the overlay covers everything, inapp: only inside NickOS, none: nothing). */
+    data class TouchStatus(val off: Boolean, val shield: String)
+
+    /** Null when the Node predates the feature and sent no "touchOff". An unknown or missing shield reads as none. */
+    fun readTouchStatus(status: JSONObject): TouchStatus? {
+        if (status.opt("touchOff") !is Boolean) return null
+        val sh = status.optString("touchShield").takeIf { it == SHIELD_ON || it == SHIELD_INAPP || it == SHIELD_NONE } ?: SHIELD_NONE
+        return TouchStatus(status.getBoolean("touchOff"), sh)
+    }
+
+    /**
+     * What the Node really has in place for a touch wish: nothing when touch is not off, the overlay when it is attached,
+     * else only the box inside NickOS. Nothing too while the shield is stepping aside (parent mode, locked or paused).
+     */
+    fun effectiveShield(off: Boolean, overlayAttached: Boolean, inAppBox: Boolean): String = when {
+        !off -> SHIELD_NONE
+        overlayAttached -> SHIELD_ON
+        inAppBox -> SHIELD_INAPP
+        else -> SHIELD_NONE
+    }
+
+    /**
      * What the parent asked for ([lock]) and what the Node manages to do ([state]: on, off, no_permission, or pending
      * when applying it or putting the old rotation back has not worked yet and is being tried again).
      */

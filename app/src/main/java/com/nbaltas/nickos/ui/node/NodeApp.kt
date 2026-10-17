@@ -78,6 +78,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     }
     // Where Cancel on the PIN pad goes back to, and where a right PIN goes.
     var pinFromAsk by remember { mutableStateOf(false) }
+    // The touch shield's emergency hold asks for the same PIN pad as holding the avatar does.
+    val shieldPin by rt.pinWanted.collectAsState()
+    LaunchedEffect(shieldPin) { if (shieldPin) { pinFromAsk = false; screen = NodeScreen.PIN } }
     // The parent window ran out while the setup was open on an existing Node: back to the card, watchdog on.
     LaunchedEffect(screen, existing) {
         while (screen in setOf(NodeScreen.KIOSK, NodeScreen.MENU, NodeScreen.DRAWER, NodeScreen.PAIR)) {
@@ -192,9 +195,11 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onOk = {
                 val fromAsk = pinFromAsk; pinFromAsk = false
                 onParentMode()
+                rt.shieldPinDone(entered = true)
                 screen = if (fromAsk && KioskPolicy.setupNeeded(rt.device.kioskState())) NodeScreen.KIOSK else NodeScreen.MENU
             },
-            onCancel = { screen = if (pinFromAsk) NodeScreen.ASK else NodeScreen.HOME; pinFromAsk = false },
+            onCancel = { screen = if (pinFromAsk) NodeScreen.ASK else NodeScreen.HOME; pinFromAsk = false; rt.shieldPinDone(entered = false) },
+            onFail = { rt.shieldPinDone(entered = false) },
         )
         if (screen == NodeScreen.MENU) ParentMenu(
             kiosk = kioskStatus,
@@ -256,5 +261,12 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         if (!canOverlay && ringing) FoundMeScreen { rt.stopRing(com.nbaltas.nickos.node.RingMachine.Stop.TAP) }
         // After the locked wall, so the banner is drawn over it: the speech is audible there too.
         if (!canOverlay) talkBanner?.let { TalkBannerAtBottom(it) }
+        // The touch lock without the overlay permission: only blocks touches inside NickOS. Last, so it is above the PIN pad
+        // too; the emergency hold takes it away (rt.shieldWanted is false while the PIN prompt is up).
+        val touchOff by store.touchOff.collectAsState()
+        val shieldOn by produceState(false, touchOff, lockedBy, pausedMsg, canOverlay) {
+            while (true) { value = !canOverlay && rt.shieldWanted(); kotlinx.coroutines.delay(300) }
+        }
+        if (shieldOn) TouchShieldBox(onHold = { rt.requestShieldPin() })
     }
 }

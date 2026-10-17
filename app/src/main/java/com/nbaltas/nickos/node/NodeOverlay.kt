@@ -38,6 +38,9 @@ import com.nbaltas.nickos.ui.node.PausedScreen
 class NodeOverlay(private val ctx: Context, private val store: Store, private val rt: NodeRuntime) {
     private val main = Handler(Looper.getMainLooper())
     private val wm = ctx.getSystemService(WindowManager::class.java)
+    @Volatile private var touchView: View? = null
+    private val injectGate = InjectGate()
+    private val hold by lazy { CornerHold(TouchShield.CORNER_DP * ctx.resources.displayMetrics.density) }
     private var lockView: View? = null
     private var toastView: View? = null
     private var guardView: View? = null
@@ -54,6 +57,10 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val paused = store.pausedMsg.value != null
         val ringing = rt.ringing.value
         val canOverlay = rt.device.canOverlay()
+        // The touch shield steps aside in parent mode and under the walls that already block touches. It sits lowest, so the
+        // touchable "Found me!" wall above it still takes taps. Without the overlay permission NodeApp draws a box instead.
+        val shield = canOverlay && rt.shieldWanted()
+        scheduleShieldCheck()
         if (!canOverlay) {
             hideAll()
             // No window to draw in: bring NickOS to the front, its activity draws the same walls (see NodeApp).
@@ -65,26 +72,109 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
         // "Parent is watching" sits at the top of the screen and above every other window, so nothing ever hides it.
         val watching = rt.screen.watching.value
-        // Stacking, bottom to top: lock, pause, bedtime toast, "Found me!", the talking banner, "Parent is watching". A new
+        // Stacking, bottom to top: touch shield, lock, pause, bedtime toast, "Found me!", the talking banner, "Parent is watching". A new
         // window is always added last, so when a lower one has to appear, every one above it is taken down and put back after it.
-        val wanted = booleanArrayOf(locked, paused, toast, ringing, talking, watching)
-        val views = arrayOf(lockView, pauseView, toastView, ringView, talkView, watchView)
+        val wanted = booleanArrayOf(shield, locked, paused, toast, ringing, talking, watching)
+        val views = arrayOf(touchView, lockView, pauseView, toastView, ringView, talkView, watchView)
         val lowestNew = wanted.indices.firstOrNull { wanted[it] && views[it] == null }
         for (i in wanted.indices) {
             if (views[i] != null && (!wanted[i] || (lowestNew != null && i > lowestNew))) { remove(views[i]); views[i] = null }
         }
         for (i in wanted.indices) {
             if (wanted[i] && views[i] == null) views[i] = when (i) {
-                0 -> add(fullScreen = true) { LockedOverlayContent(store) }
-                1 -> add(fullScreen = true) { PausedOverlayContent(store) }
-                2 -> add(fullScreen = false) { ToastOverlayContent(rt) }
-                3 -> add(fullScreen = true) { FoundMeScreen { rt.stopRing(RingMachine.Stop.TAP) } }
+                0 -> try { addShield() } catch (e: Exception) { android.util.Log.w("NickOS.Touch", "touch shield", e); null }
+                1 -> add(fullScreen = true) { LockedOverlayContent(store) }
+                2 -> add(fullScreen = true) { PausedOverlayContent(store) }
+                3 -> add(fullScreen = false) { ToastOverlayContent(rt) }
+                4 -> add(fullScreen = true) { FoundMeScreen { rt.stopRing(RingMachine.Stop.TAP) } }
                 // Only a banner that was added without an exception counts as shown (see talkOnScreen / watchOnScreen).
-                4 -> try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+                5 -> try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
                 else -> try { add(fullScreen = false, atTop = true) { WatchOverlayContent() } } catch (e: Exception) { android.util.Log.w("NickOS.Screen", "watch pill", e); null }
             }
         }
-        lockView = views[0]; pauseView = views[1]; toastView = views[2]; ringView = views[3]; talkView = views[4]; watchView = views[5]
+        touchView = views[0]; lockView = views[1]; pauseView = views[2]; toastView = views[3]; ringView = views[4]; talkView = views[5]; watchView = views[6]
+    }
+
+    /** The shield window is added (or at least has its parent). */
+    fun shieldAttached(): Boolean {
+        val v = touchView ?: return false
+        return v.isAttachedToWindow || v.parent != null
+    }
+
+    private var shieldCheck: Runnable? = null
+
+    /** The emergency PIN window ends by itself: look at the shield again then. */
+    private fun scheduleShieldCheck() {
+        shieldCheck?.let { main.removeCallbacks(it) }
+        shieldCheck = null
+        val end = rt.shieldSuspension.endsAt()
+        val now = System.currentTimeMillis()
+        if (end > now) Runnable { update() }.also { shieldCheck = it; main.postDelayed(it, end - now + 50) }
+    }
+
+    /**
+     * A see through window that takes every touch and shows nothing. A long press in its top left corner asks for the
+     * parent PIN (see [TouchShield]). It has no NOT_TOUCHABLE flag, so it consumes touches; it takes no focus, so the
+     * hardware volume keys and the player underneath are not disturbed.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun addShield(): View {
+        val v = View(ctx)
+        val fire = Runnable { if (hold.consume(System.currentTimeMillis())) rt.requestShieldPin() }
+        v.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    hold.start(e.x, e.y, System.currentTimeMillis())
+                    main.removeCallbacks(fire)
+                    if (hold.holding) main.postDelayed(fire, TouchShield.HOLD_MS)
+                }
+                android.view.MotionEvent.ACTION_MOVE -> { hold.move(e.x, e.y); if (!hold.holding) main.removeCallbacks(fire) }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> { hold.cancel(); main.removeCallbacks(fire) }
+            }
+            true
+        }
+        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        if (injectGate.busy) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        wm.addView(v, lp)
+        return v
+    }
+
+    /**
+     * The parent's remote tap or swipe has to pass the shield. Call before dispatchGesture: [NO_SHIELD] when there is no
+     * shield (nothing to do, no restore needed), [DROPPED] when another injection is in flight (skip this one), else a
+     * token to give to [endInject]. Waits (a short while) until the shield really lets touches through.
+     */
+    fun beginInject(): Long {
+        if (!shieldAttached()) return NO_SHIELD
+        val token = injectGate.begin() ?: return DROPPED
+        passThrough(true, wait = true)
+        return token
+    }
+
+    /** Android answered, refused or timed out. Only the injection still in flight puts the shield back. */
+    fun endInject(token: Long) {
+        if (token > 0 && injectGate.finish(token)) passThrough(false, wait = false)
+    }
+
+    private fun passThrough(on: Boolean, wait: Boolean) {
+        val apply = {
+            val v = touchView
+            val lp = v?.layoutParams as? WindowManager.LayoutParams
+            if (v != null && lp != null) try {
+                lp.flags = if (on) lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                wm.updateViewLayout(v, lp)
+            } catch (e: Exception) { android.util.Log.w("NickOS.Touch", "shield pass through", e) }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) { apply(); return }
+        if (!wait) { main.post { apply() }; return }
+        val done = java.util.concurrent.CountDownLatch(1)
+        main.post { try { apply() } finally { done.countDown() } }
+        try { done.await(GUARD_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
     }
 
     /**
@@ -150,6 +240,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     }
 
     fun hideAll() = main.post {
+        remove(touchView); touchView = null
         remove(lockView); lockView = null
         remove(pauseView); pauseView = null
         remove(ringView); ringView = null
@@ -184,7 +275,12 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         return view
     }
 
-    private companion object { const val GUARD_WAIT_MS = 1500L; const val TALK_WAIT_MS = 500L }
+    companion object {
+        private const val GUARD_WAIT_MS = 1500L
+        private const val TALK_WAIT_MS = 500L
+        const val NO_SHIELD = -1L
+        const val DROPPED = 0L
+    }
 
     private fun remove(v: View?) {
         if (v != null) try { wm.removeView(v) } catch (_: Exception) {}

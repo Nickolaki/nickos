@@ -90,7 +90,12 @@ data class NodeStatus(
     val ringing: Boolean = false,
     /** The pause wall is up on the Node. Old Nodes omit it: false. */
     val paused: Boolean = false,
+    /** The touch lock as the Node reports it (wish and what is really in place). Null for an old Node: the Master hides the switch. */
+    val touch: NetMessages.TouchStatus? = null,
 ) {
+    /** "touch1": the Node can ignore touches on request. */
+    val supportsTouch: Boolean get() = NetMessages.TOUCH_CAP in caps
+
     /** Seeing the screen needs the Node's "screen1" capability. */
     val supportsScreen: Boolean get() = RemoteMessages.CAP in caps
     /** "ring1": the Node can sound its alarm when asked. The Master hides the Ring button without it. */
@@ -130,6 +135,7 @@ data class NodeStatus(
                 screen = o.optString("screen", RemoteMessages.OFF).ifBlank { RemoteMessages.OFF },
                 control = o.optString("control", RemoteMessages.CONTROL_OFF).ifBlank { RemoteMessages.CONTROL_OFF },
                 ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
+                touch = NetMessages.readTouchStatus(o),
             )
         }
 
@@ -574,6 +580,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     internal fun sendIntent(id: String) {
         val node = store.nodes.value.firstOrNull { it.id == id } ?: return
         node.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        node.touchOff?.let { send(id, NetMessages.touchCmd(it)) }
         if (node.powerWake != null || node.powerOffMin != null) send(id, NetMessages.powerCmd(node.powerWake ?: false, node.powerOffMin ?: 0))
         PauseAll.intent(store.pausedMsg.value)?.let { send(id, it) }
     }
@@ -711,6 +718,15 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
         store.updateNode(id) { it.copy(landscape = on) }
         sendControl(id, NetMessages.orientationCmd(on))
+    }
+
+    /**
+     * Turn touch off (or back on) for a kid tablet. Remembered first, so a lost command is sent again on the next connect.
+     * The switch shows what the Node reports back, not the wish.
+     */
+    fun setTouchOff(id: String, off: Boolean) {
+        store.updateNode(id) { it.copy(touchOff = off) }
+        sendControl(id, NetMessages.touchCmd(off))
     }
 
     /** Wake on charge and screen off on battery for a kid tablet. Remembered first, like the landscape lock. */
