@@ -62,6 +62,7 @@ import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.LockOpen
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Moon
+import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.MonitorOff
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Power
@@ -109,6 +110,7 @@ const val TAB_NOW = 0
 const val TAB_WATCH = 1
 const val TAB_APPS = 2
 const val TAB_DEVICE = 3
+const val TAB_SCREEN = 4
 
 /** Tablet Control: header + Now Playing / Watch / Apps / Device. [onSettings] takes a Settings section. */
 @Composable
@@ -122,11 +124,19 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
         onDispose { app.master.fastPoll = false }
     }
 
+    // Leaving the Screen tab, or this screen, tells the tablet to stop sharing.
+    DisposableEffect(tab == TAB_SCREEN) {
+        val onScreen = tab == TAB_SCREEN
+        onDispose { if (onScreen) app.master.screen.unwatch() }
+    }
+    val watchingScreen by app.master.screen.watching.collectAsState()
+
     val session by app.master.sync.session.collectAsState()
     val inTogether = session?.nodes?.contains(nodeId) == true
 
     Column(Modifier.fillMaxSize()) {
-        ControlHeader(v, tab, onTab, onBack)
+        // The screen viewer takes the whole window.
+        if (!(tab == TAB_SCREEN && watchingScreen == nodeId && v.online)) ControlHeader(v, tab, onTab, onBack)
         Box(Modifier.fillMaxSize()) {
             when {
                 tab == TAB_WATCH -> TabletLibrary(nodeId, v, onPlayed = { onTab(TAB_NOW) }, onSettings = { onSettings(1) })
@@ -135,6 +145,7 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
                 tab == TAB_NOW -> if (v.playback?.item != null) NowPlaying(v) else NothingPlaying(v) { onTab(TAB_WATCH) }
                 tab == TAB_APPS -> AppsTab(v)
                 tab == TAB_DEVICE -> DeviceTab(v, onUnlinked = onBack)
+                tab == TAB_SCREEN -> ScreenTab(v)
             }
         }
     }
@@ -143,7 +154,7 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
 @Composable
 private fun ControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBack: () -> Unit) {
     val phone = LocalConfiguration.current.screenWidthDp < 600
-    val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet)
+    val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet, "Screen" to Lucide.Monitor)
     BoxWithConstraints(Modifier.fillMaxWidth().background(C.bg)) {
         val narrow = maxWidth < 1100.dp
         val who: @Composable (Modifier) -> Unit = { modifier ->

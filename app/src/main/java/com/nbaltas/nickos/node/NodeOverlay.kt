@@ -19,7 +19,9 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nbaltas.nickos.data.Store
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.unit.dp
@@ -38,6 +40,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var toastView: View? = null
     private var guardView: View? = null
     @Volatile private var talkView: View? = null
+    private var watchView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -54,6 +57,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             lockView = add(fullScreen = true) { LockedOverlayContent(store) }
             // The talking banner is added after the wall so it stays on top of it.
             if (talkView != null) { remove(talkView); talkView = null }
+            if (watchView != null) { remove(watchView); watchView = null }
         }
         if (!locked && lockView != null) { remove(lockView); lockView = null }
         // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
@@ -67,6 +71,12 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             talkView = try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
         }
         if (!talking && talkView != null) { remove(talkView); talkView = null }
+        // "Parent is watching" sits at the top, away from the other banners, and stays over the locked wall.
+        val watching = rt.screen.watching.value
+        if (watching && watchView == null) {
+            watchView = try { add(fullScreen = false, atTop = true) { WatchOverlayContent() } } catch (e: Exception) { android.util.Log.w("NickOS.Screen", "watch pill", e); null }
+        }
+        if (!watching && watchView != null) { remove(watchView); watchView = null }
     }
 
     /**
@@ -120,9 +130,10 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         remove(lockView); lockView = null
         remove(toastView); toastView = null
         remove(talkView); talkView = null
+        remove(watchView); watchView = null
     }
 
-    private fun add(fullScreen: Boolean, content: @androidx.compose.runtime.Composable () -> Unit): View {
+    private fun add(fullScreen: Boolean, atTop: Boolean = false, content: @androidx.compose.runtime.Composable () -> Unit): View {
         val owner = OverlayOwner()
         val view = ComposeView(ctx).apply {
             setViewTreeLifecycleOwner(owner)
@@ -142,7 +153,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = if (fullScreen) Gravity.TOP else Gravity.BOTTOM }
+        ).apply { gravity = if (fullScreen || atTop) Gravity.TOP else Gravity.BOTTOM }
         wm.addView(view, lp)
         owner.resume()
         return view
@@ -183,6 +194,17 @@ private fun TalkOverlayContent(rt: NodeRuntime) {
                 .padding(bottom = 28.dp),
         ) { com.nbaltas.nickos.ui.node.TalkBanner(it) }
     }
+}
+
+@androidx.compose.runtime.Composable
+private fun WatchOverlayContent() {
+    androidx.compose.foundation.layout.Box(
+        androidx.compose.ui.Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+            .padding(top = 12.dp),
+        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+    ) { com.nbaltas.nickos.ui.node.WatchPill() }
 }
 
 private class OverlayOwner : LifecycleOwner, SavedStateRegistryOwner {

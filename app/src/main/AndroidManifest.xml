@@ -36,6 +36,8 @@
     <!-- Tablet cameras: a Node streams its front camera to the Master. Video only, never the microphone. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Parents see a kid tablet's screen. The kid tablet asks a grown-up first, in the grown-up menu. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Push to talk on the parent tablet only. Asked for the first time the parent holds the talk button, never at setup. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -117,7 +119,7 @@
         <service
             android:name=".node.NodeService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|camera" />
+            android:foregroundServiceType="connectedDevice|camera|mediaProjection" />
 
         <service
             android:name=".master.MasterService"

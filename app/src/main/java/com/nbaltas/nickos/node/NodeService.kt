@@ -59,9 +59,30 @@ class NodeService : Service() {
     fun cameraType(on: Boolean): Boolean {
         // The camera type arrived with Android 11; before that the plain service may open the camera.
         if (Build.VERSION.SDK_INT < 30) return true
+        camOn = on
+        return promote().also { if (!it) camOn = false }
+    }
+
+    /**
+     * Adds the screen capture type while a MediaProjection is held, and drops it when it ends. It must be on BEFORE
+     * getMediaProjection() is called. False when Android refuses: the capture must not start.
+     */
+    fun projectionType(on: Boolean): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return true
+        projOn = on
+        return promote().also { if (!it) projOn = false }
+    }
+
+    private var camOn = false
+    private var projOn = false
+
+    /** One foreground type for everything running now: the camera and the screen capture each keep the other's type. */
+    private fun promote(): Boolean {
         val n = notification ?: return false
-        val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or (if (on) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0)
-        return try { startForeground(1, n, type); true } catch (e: Exception) { Log.w("NickOS.Node", "camera service type refused", e); false }
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (camOn && Build.VERSION.SDK_INT >= 30) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        if (projOn && Build.VERSION.SDK_INT >= 29) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        return try { startForeground(1, n, type); true } catch (e: Exception) { Log.w("NickOS.Node", "service type refused", e); false }
     }
 
     companion object {
@@ -72,6 +93,9 @@ class NodeService : Service() {
 
         /** See [cameraType]. False when the service is not running. */
         fun camera(on: Boolean): Boolean = instance?.cameraType(on) ?: false
+
+        /** See [projectionType]. False when the service is not running. */
+        fun projection(on: Boolean): Boolean = instance?.projectionType(on) ?: false
 
         fun start(ctx: Context) { if (NodeSupport.ok()) ContextCompat.startForegroundService(ctx, Intent(ctx, NodeService::class.java)) }
 
