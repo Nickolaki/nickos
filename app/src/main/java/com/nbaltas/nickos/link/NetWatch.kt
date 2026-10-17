@@ -19,13 +19,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.net.Inet4Address
 
 /**
  * Turns a burst of raw network events into one [onChange]. Pure apart from the coroutine scope, so it is
  * unit tested with a fake event feed.
  *  - [available] and [lost] always count.
- *  - [address] (an interface address was seen) counts only when the IPv4 address differs from the last one.
+ *  - [address] (a network identity was seen: interface, IPv4 and gateway, see [LanAddress.identity]) counts only when
+ *    it differs from the last one. A loss and regain inside the debounce is a band switch only on the same identity.
  * Events within [debounceMs] of each other collapse into one call, fired [debounceMs] after the LAST event, so a
  * reconnect that flaps on, off, on produces a single restart after things settle.
  */
@@ -40,7 +40,7 @@ class ChangeGate(private val scope: CoroutineScope, private val debounceMs: Long
     fun available() = fire()
     fun lost() { synchronized(this) { lastIp = null; lostInBurst = true }; fire() }
 
-    /** [ip] is the current IPv4 address on the watched interface, null when it has none. */
+    /** [ip] is the current network identity ([LanAddress.identity]), null when there is none. */
     fun address(ip: String?) {
         val changed = synchronized(this) { (ip != lastIp).also { if (it) lastIp = ip } }
         if (changed) fire()
@@ -95,7 +95,7 @@ class NetWatch(private val ctx: Context, debounceMs: Long = 800, private val pol
             override fun onAvailable(network: Network) = gate.available()
             override fun onLost(network: Network) = gate.lost()
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-                gate.address(linkProperties.linkAddresses.map { it.address }.filterIsInstance<Inet4Address>().firstOrNull()?.hostAddress)
+                gate.address(LanAddress.ownIdentity(ctx))
             }
         }
         callback = cb
@@ -114,7 +114,7 @@ class NetWatch(private val ctx: Context, debounceMs: Long = 800, private val pol
         } catch (e: Exception) { Log.w(TAG, "no ap receiver", e); apReceiver = null }
         scope.launch {
             while (isActive) {
-                gate.address(LanAddress.own(ctx))
+                gate.address(LanAddress.ownIdentity(ctx))
                 delay(pollMs)
             }
         }

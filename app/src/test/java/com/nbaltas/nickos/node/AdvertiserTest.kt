@@ -76,6 +76,20 @@ class AdvertiserTest {
     }
 
     @Test
+    fun `refresh skips only when the whole network identity is unchanged`() {
+        val g = FakeGate()
+        val a = advertiser(g)
+        val home = "wlan0|192.168.49.5|192.168.49.1"
+        a.start(47470, home)
+        waitFor("first") { g.registers.get() == 1 }
+        a.refresh(home)                                   // same interface, address and gateway: nothing to announce
+        Thread.sleep(80)
+        assertEquals(1, g.registers.get())
+        a.refresh("p2p-wlan0-0|192.168.49.5|192.168.49.1") // same IPv4, other interface: a different network
+        waitFor("second") { g.registers.get() == 2 }
+    }
+
+    @Test
     fun `the new registration waits for the old one's ack`() {
         val g = FakeGate()
         val a = advertiser(g, ackMs = 2000)

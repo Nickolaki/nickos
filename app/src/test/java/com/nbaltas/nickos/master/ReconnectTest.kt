@@ -56,6 +56,54 @@ class ReconnectTest {
     }
 
     @Test
+    fun `a node without hb3 keeps 25 s and one with it gets 8 s`() {
+        assertEquals(25_000, LinkTimeout.forCaps(null))
+        assertEquals(25_000, LinkTimeout.forCaps(listOf("sync1", "ring1", "sec2")))
+        assertEquals(8_000, LinkTimeout.forCaps(listOf("sync1", "hb3")))
+    }
+
+    @Test
+    fun `welcomed sessions that end under 5 s are failures for the schedule`() {
+        val r = RetryDelay()
+        assertEquals(listOf(500L, 1_000L, 2_000L, 3_000L, 3_000L), List(5) { r.ended(100) })
+    }
+
+    @Test
+    fun `a session of 5 s or more resets the schedule`() {
+        val r = RetryDelay()
+        r.ended(100); r.ended(100)
+        assertEquals(0L, r.ended(5_000))
+        assertEquals(500L, r.ended(4_999))
+    }
+
+    @Test
+    fun `grace expiry cannot remove a node that reconnected in between`() {
+        val online = kotlinx.coroutines.flow.MutableStateFlow(setOf("a"))
+        lateinit var t: OnlineTracker
+        var reconnecting: Thread? = null
+        t = OnlineTracker(online, betweenExpireAndRemove = {
+            // The link comes back right after the expiry decided "a" is gone, before it is removed.
+            reconnecting = Thread { t.connected("a") }.also { it.start() }
+            Thread.sleep(100)
+        })
+        t.dropped("a", 0)
+        t.expire(GRACE_MS)
+        reconnecting!!.join(2_000)
+        assertEquals(setOf("a"), online.value)
+    }
+
+    @Test
+    fun `grace expiry removes a node that stayed away and forget clears it`() {
+        val online = kotlinx.coroutines.flow.MutableStateFlow(setOf("a", "b"))
+        val t = OnlineTracker(online)
+        t.dropped("a", 0)
+        t.expire(GRACE_MS)
+        assertEquals(setOf("b"), online.value)
+        t.forget("b")
+        assertEquals(emptySet<String>(), online.value)
+    }
+
+    @Test
     fun `an address arriving while the link is down or sleeping is dialed now`() {
         val a = "192.168.1.9" to 47470
         val b = "192.168.1.20" to 47470

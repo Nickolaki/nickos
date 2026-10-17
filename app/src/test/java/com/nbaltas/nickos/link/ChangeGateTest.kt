@@ -78,6 +78,27 @@ class ChangeGateTest {
     }
 
     @Test
+    fun `the same ipv4 on another interface or gateway is a change, not a band switch`() {
+        val home = LanAddress.identity("wlan0", "192.168.49.5", "192.168.49.1")
+        val car = LanAddress.identity("p2p-wlan0-0", "192.168.49.5", "192.168.49.1")
+        val otherGw = LanAddress.identity("wlan0", "192.168.49.5", "192.168.49.254")
+        gate.address(home); settle()
+        assertEquals(1, fired.get())
+        gate.lost(); gate.available(); gate.address(car); settle()
+        assertEquals(2, fired.get())
+        gate.lost(); gate.available(); gate.address(otherGw); settle()
+        assertEquals(3, fired.get())
+    }
+
+    @Test
+    fun `a band switch on the same network is not a change`() {
+        val id = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1")
+        gate.address(id); settle()
+        gate.lost(); gate.available(); gate.address(id); settle()
+        assertEquals(1, fired.get())
+    }
+
+    @Test
     fun `close cancels a pending change and ignores later ones`() {
         gate.available()
         gate.close()

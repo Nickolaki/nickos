@@ -117,7 +117,7 @@ class Advertiser(
         scope.launch { lock.withLock { this@Advertiser.port = port; if (!stopped) register() } }
     }
 
-    /** [ip] is the address now; the same one as at the last registration means nothing to announce (null: always re-register). */
+    /** [ip] is the network identity now (interface, IPv4, gateway: [LanAddress.identity]); the same one as at the last registration means nothing to announce (null: always re-register). */
     fun refresh(ip: String? = null) {
         if (stopped || !queued.compareAndSet(false, true)) return
         scope.launch {
@@ -304,12 +304,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         }
         server = ss
         Wire.multicastLock(ctx)
-        advertiser.start(ss.localPort, LanAddress.own(ctx))
+        advertiser.start(ss.localPort, LanAddress.ownIdentity(ctx))
         wifi.ensureOn()
         approvalReceiver = wifi.watchApproval()
         // Every network change: advertise again (the old mDNS record points at the old network), and turn WiFi
         // back on if it dropped. The ServerSocket binds the wildcard address, so it needs nothing.
-        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh(LanAddress.own(ctx)) }.also { it.start() }
+        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh(LanAddress.ownIdentity(ctx)) }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         applyLandscape()
         powerRunner.start()
@@ -637,7 +637,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP + NetMessages.HEARTBEAT_CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("power", NetMessages.encodePower(powerRunner.status()))

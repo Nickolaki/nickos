@@ -221,7 +221,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val _online = MutableStateFlow<Set<String>>(emptySet())
     val online: StateFlow<Set<String>> = _online
     private val live: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
-    private val grace = OnlineGrace()
+    private val grace = OnlineTracker(_online)
     /** The address each link loop is dialing right now (absent while it sleeps or is linked). */
     private val dialing = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>()
 
@@ -486,10 +486,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             var wait = RetryDelay.SLOW_MS
             if (addr != null) {
                 dialing[id] = addr
-                val linked = try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}"); false } finally { dialing.remove(id, addr) }
-                if (linked) {
-                    // It was up and dropped (a band switch): same address again at once, then 0.5 / 1 / 2 / 3 s.
-                    backoff.success(); wait = retry.dropped()
+                val lasted = try { session(n, addr) } catch (e: Exception) { Log.d(TAG, "link $id: ${e.message}"); -1L } finally { dialing.remove(id, addr) }
+                if (lasted >= 0) {
+                    // It was up and dropped. After a stable session (a band switch) the same address again at once; a
+                    // short one counts as a failure: 0.5 / 1 / 2 / 3 s.
+                    if (lasted >= RetryDelay.STABLE_MS) backoff.success()
+                    wait = retry.ended(lasted)
                 } else {
                     wait = retry.failed()
                     if (backoff.failure() && seen != null) {
@@ -504,33 +506,35 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         }
     }
 
-    /** True when the Node welcomed us (even if the link later dropped); false when it could not be reached. */
-    private fun session(n: LinkedNode, addr: Pair<String, Int>): Boolean {
+    /** How long the link lasted from the welcome, in ms (even if it later dropped); -1 when the Node could not be reached. */
+    private fun session(n: LinkedNode, addr: Pair<String, Int>): Long {
         var c = Conn.open(addr.first, addr.second)
         var claimed = false
         try {
-            c.socket.soTimeout = 8_000 // Node sends status at least every 3s; a link silent for 8s is dead
+            // An old Node may be silent for 11.5 s: long until a status says "hb3" (then 8 s, see runLink).
+            c.socket.soTimeout = LinkTimeout.LEGACY_MS
             var legacy = false
             when (Handshake.helloResult(c, store.deviceId, displayName, n.token)) {
                 Handshake.Hello.OK -> linkFlags.setSec2(n.id, true)
                 // An old Node does not know v2 and says denied. Only while this Node has never done sec2 do we fall back
                 // to the v1 hello (token in clear), once, to let it update itself. After one v2 handshake: never.
                 Handshake.Hello.DENIED -> {
-                    if (!Handshake.mayFallBack(linkFlags, n.id)) return false
+                    if (!Handshake.mayFallBack(linkFlags, n.id)) return -1
                     c.close()
                     c = Conn.open(addr.first, addr.second)
-                    c.socket.soTimeout = 8_000
-                    if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return false
+                    c.socket.soTimeout = LinkTimeout.LEGACY_MS
+                    if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return -1
                     legacy = true
                 }
-                Handshake.Hello.FAIL -> return false
+                Handshake.Hello.FAIL -> return -1
             }
+            val welcomed = System.currentTimeMillis()
             links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
             claimed = true
             if (legacy) send(n.id, cmd("update")) // the Node installs the sec2 build from the track and the link comes back sealed
             // A read timeout or reset ends a link that did work: it still counts as welcomed (so the loop redials at once).
             try { runLink(n, c) } catch (e: Exception) { Log.d(TAG, "link ${n.id}: ${e.message}") }
-            return true
+            return System.currentTimeMillis() - welcomed
         } finally {
             // Only the link that is still the current one may announce the Node offline; a replaced one must not
             // tear down its successor's state.
@@ -540,8 +544,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 grace.dropped(n.id, System.currentTimeMillis())
                 scope.launch {
                     delay(GRACE_MS)
-                    val gone = grace.expire(System.currentTimeMillis())
-                    if (gone.isNotEmpty()) _online.update { it - gone }
+                    grace.expire(System.currentTimeMillis())
                 }
                 sync.onDisconnected(n.id)
                 transfer.onDisconnected(n.id)
@@ -592,8 +595,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     private fun runLink(n: LinkedNode, c: Conn) {
         live.add(n.id)
-        grace.reconnected(n.id)
-        _online.update { it + n.id }
+        grace.connected(n.id)
         send(n.id, cmd("pin").put("pin", store.pin.value))
         // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
         sendHotspot(n.id)
@@ -605,7 +607,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         while (true) {
             val m = c.read() ?: break
             when (m.optString("t")) {
-                "status" -> onStatus(n.id, m)
+                "status" -> {
+                    onStatus(n.id, m)
+                    val t = LinkTimeout.forCaps(m.optJSONArray("caps")?.let { a -> (0 until a.length()).map { a.optString(it) } })
+                    if (c.socket.soTimeout != t && t == LinkTimeout.HEARTBEAT_MS) c.socket.soTimeout = t
+                }
                 "apps" -> onApps(n.id, m.optJSONArray("list") ?: JSONArray())
                 "want" -> scope.launch { resumeOn(n.id, m.getString("itemId")) }
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
@@ -763,8 +769,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         _net.update { it - id }
         _status.update { it - id }
         live.remove(id)
-        grace.reconnected(id)
-        _online.update { it - id }
+        grace.forget(id)
     }
 
     private fun patch(id: String, f: (NodeStatus) -> NodeStatus) = _status.update { m -> m[id]?.let { m + (id to f(it)) } ?: m }

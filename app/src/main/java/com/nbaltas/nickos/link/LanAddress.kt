@@ -1,6 +1,7 @@
 package com.nbaltas.nickos.link
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -77,5 +78,23 @@ object LanAddress {
         return choose(found, wifi)
     }
 
-    private val WIFI_NAMES = listOf("wlan", "swlan", "ap", "softap", "wl")
+    /**
+     * Who this tablet is on the network it is on: interface name, IPv4 and default gateway as one key. The same IPv4 on
+     * another interface or behind another gateway (home WiFi, then the car's Wi-Fi Direct) is a different network.
+     */
+    fun identity(iface: String?, ip: String?, gateway: String?): String? = ip?.let { "${iface.orEmpty()}|$it|${gateway.orEmpty()}" }
+
+    /** [identity] of [own], or null when not on a network. */
+    fun ownIdentity(ctx: Context): String? {
+        val ip = own(ctx) ?: return null
+        val iface = interfaces().firstOrNull { it.second == ip }?.first
+        val gw = try {
+            val cm = ctx.getSystemService(ConnectivityManager::class.java)
+            cm.allNetworks.mapNotNull { cm.getLinkProperties(it) }.firstOrNull { it.interfaceName == iface }
+                ?.routes?.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway?.hostAddress
+        } catch (e: Exception) { null }
+        return identity(iface, ip, gw)
+    }
+
+    private val WIFI_NAMES =listOf("wlan", "swlan", "ap", "softap", "wl")
 }
