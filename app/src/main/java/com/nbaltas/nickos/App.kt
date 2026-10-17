@@ -21,6 +21,7 @@ class App : Application() {
     /** Keeps the home screen offer matching the role: at start (update, restart) and on every role or opt-in change. */
     override fun onCreate() {
         super.onCreate()
+        store.migrateKidLock() // before any screen decides whether this Node is an existing one
         HomeAlias.apply(this, store.role.value, store.masterHomeOptIn.value)
         // An update does not run the provisioning callbacks: a Device Owner kid tablet puts its HOME choice back here, parent mode or not.
         if (store.role.value == Role.NODE) NodeDevice.makeHome(this)

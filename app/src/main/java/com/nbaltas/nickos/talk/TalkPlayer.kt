@@ -15,7 +15,14 @@ interface Speaker {
 
 /** What tells the people near the tablet that a parent is talking: the banner, and a notification when it cannot be drawn over an app. */
 interface TalkIndicator {
+    /** True when "Parent is talking" can be made visible right now (the overlay banner, or a notification that will show). */
+    fun available(): Boolean
     fun show(text: String)
+    /**
+     * Called a few times a second while a session plays. Keeps the indicator visible if the way it was shown was lost
+     * (the overlay permission taken away: post the notification instead). False when no way is left: the session must end.
+     */
+    fun maintain(): Boolean
     fun clear()
 }
 
@@ -29,6 +36,18 @@ object TalkBannerPolicy {
 
     /** Without the display over other apps permission the overlay cannot appear: a loud notification does the job. */
     fun needsNotification(canOverlay: Boolean) = !canOverlay
+
+    enum class Way { OVERLAY, NOTICE, NONE }
+
+    /** How the indicator can be shown: the overlay banner, else a notification that will really show, else not at all. */
+    fun way(canOverlay: Boolean, noticeReady: Boolean) = when {
+        canOverlay -> Way.OVERLAY
+        noticeReady -> Way.NOTICE
+        else -> Way.NONE
+    }
+
+    /** Talk audio plays only when the people near the tablet can be shown that a parent is talking. */
+    fun mayPlay(canOverlay: Boolean, noticeReady: Boolean) = way(canOverlay, noticeReady) != Way.NONE
 }
 
 /**
@@ -56,6 +75,8 @@ class TalkPlayer(
     override fun begin(sid: String, masterId: String): Boolean {
         current?.close(flush = false)
         current = null
+        // No visible indicator, no audio: nothing is opened, the receiver drops the session.
+        if (!indicator.available()) { log("talk refused: no way to show that a parent is talking"); return false }
         val p = Playing(sid, newSpeaker())
         if (!p.open()) return false
         current = p
@@ -66,6 +87,10 @@ class TalkPlayer(
 
     @Synchronized
     override fun play(pcm: ByteArray) { current?.offer(pcm) }
+
+    /** False when a session is playing and its indicator can no longer be kept visible: the caller ends the session. */
+    @Synchronized
+    fun indicatorHolds(): Boolean = current == null || indicator.maintain()
 
     /** The indicator stays until the writer has played out what is left. */
     @Synchronized

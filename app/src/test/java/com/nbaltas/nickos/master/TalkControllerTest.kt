@@ -383,6 +383,45 @@ class TalkControllerTest {
         ctl.stop(TalkStop.RELEASED)
     }
 
+    @Test fun `a new press whose old microphone is still closing after the wait fails and records nothing`() {
+        val closeGate = CountDownLatch(1)
+        val order = CopyOnWriteArrayList<String>()
+        val first = object : MicPort {
+            val started = AtomicBoolean(false)
+            override fun start() { started.set(true); order += "start1" }
+            override fun read(buf: ByteArray, off: Int, len: Int): Int { Thread.sleep(5); return len }
+            override fun stop() { closeGate.await(10, TimeUnit.SECONDS); order += "stop1" }
+        }
+        val second = Mic(); val third = Mic()
+        val mics = java.util.ArrayDeque<MicPort>(listOf(first, second, third))
+        val w = Wire()
+        val stops = CopyOnWriteArrayList<TalkStop>()
+        val ctl = TalkController(scope, { mics.removeFirst() }, { w }, { true }, onStopped = { stops += it }, oldCloseWaitMs = 200)
+        ctl.press(listOf(tgt("a", "Hailey")))
+        until("first open") { first.started.get() }
+        ctl.stop(TalkStop.RELEASED)
+        assertEquals(TalkController.Press.STARTED, ctl.press(listOf(tgt("a", "Hailey"))))
+        until("second press failed") { ctl.state.value.tryAgain }
+        assertFalse(ctl.state.value.talking)
+        assertFalse("no recording", second.started.get())
+        assertEquals(listOf(TalkStop.RELEASED, TalkStop.MIC_BUSY), stops.toList())
+        // Still stuck: the next press must not slip in behind the failed one.
+        assertEquals(TalkController.Press.STARTED, ctl.press(listOf(tgt("a", "Hailey"))))
+        assertFalse(ctl.state.value.tryAgain)
+        until("third press failed") { ctl.state.value.tryAgain }
+        assertFalse("no recording", third.started.get())
+        closeGate.countDown()
+        until("old closed") { order.contains("stop1") }
+        // Once the old microphone is closed a press works again.
+        val fourth = Mic(); mics.addFirst(fourth)
+        until("fourth press starts", 4000) {
+            if (!ctl.state.value.talking) ctl.press(listOf(tgt("a", "Hailey")))
+            fourth.started.get()
+        }
+        assertFalse(ctl.state.value.tryAgain)
+        ctl.stop(TalkStop.RELEASED)
+    }
+
     @Test fun `a late failure of an old press cannot stop a newer one`() {
         val boom = CountDownLatch(1)
         val old = object : MicPort {

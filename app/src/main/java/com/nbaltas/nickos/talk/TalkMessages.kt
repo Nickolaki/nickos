@@ -10,6 +10,27 @@ object TalkGate {
 }
 
 /**
+ * What the parent should feel on the same WiFi, and the knobs that decide it. The numbers on a real tablet are on
+ * Nick's device checklist; what a unit test can check is that the knobs add up inside the budget.
+ *  - Start to hear: the first frame is ready after one frame of speech; the Node then holds [PREFILL_FRAMES] frames of cushion.
+ *  - Release to silence: the Node plays out at most its cushion plus the speaker's own buffer ([TRACK_FRAMES]) and never waits longer than [DRAIN_MS].
+ *  - A sender that dies without an end: the Node goes quiet after [TalkReceiver.IDLE_MS].
+ */
+object TalkBudget {
+    const val START_TO_HEAR_MS = 500
+    const val RELEASE_TO_SILENCE_MS = 300
+    /** Frames the Node holds back before playing (the jitter buffer depth): 3 x 40 ms. */
+    const val PREFILL_FRAMES = 3
+    /** The speaker's buffer, in frames. */
+    const val TRACK_FRAMES = 4
+    /** The longest wait for the end of a sentence to play out after the parent lets go. */
+    const val DRAIN_MS = 300L
+    /** Time the sender and the network get in the start to hear budget once the cushion is counted. */
+    val startHeadroomMs get() = START_TO_HEAR_MS - TalkMessages.FRAME_MS * PREFILL_FRAMES
+    val releaseTailMs get() = TalkMessages.FRAME_MS * (PREFILL_FRAMES + TRACK_FRAMES)
+}
+
+/**
  * Push to talk, Master to Node (capability "talk1" in the Node's status "caps"). All three ride the sealed link:
  *  {"t":"talkStart","sid"}                    a session begins
  *  {"t":"talk","sid","seq","pcm"}             one 40 ms frame: 16 kHz, mono, 16 bit little endian PCM, base64
@@ -19,6 +40,10 @@ object TalkGate {
  */
 object TalkMessages {
     const val CAP = "talk1"
+    /** The Node's status field "talk": it can show that a parent is talking, so it plays talk audio. */
+    const val STATUS_OK = "ok"
+    /** It cannot (no display over other apps and no usable notification): it refuses talk audio until a grown-up allows notifications. */
+    const val STATUS_NEEDS_PERMISSION = "needs_permission"
     const val SAMPLE_RATE = 16_000
     const val FRAME_MS = 40
     /** 40 ms of 16 bit mono samples. */

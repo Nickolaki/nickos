@@ -217,13 +217,28 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Push to talk: the state machine decides, [TalkPlayback] plays. Frames only count from a Master still linked here. */
     private val talkNotice = TalkNotice(ctx)
     private val talkIndicator = object : TalkIndicator {
+        @Volatile private var noticeUp = false
+        private fun way() = TalkBannerPolicy.way(device.canOverlay(), talkNotice.ready())
+        override fun available() = way() != TalkBannerPolicy.Way.NONE
         override fun show(text: String) {
             _talkBanner.value = text; overlay.refresh()
             // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
-            if (TalkBannerPolicy.needsNotification(device.canOverlay())) talkNotice.show(text)
+            if (TalkBannerPolicy.needsNotification(device.canOverlay())) { talkNotice.show(text); noticeUp = true }
         }
-        override fun clear() { _talkBanner.value = null; overlay.refresh(); talkNotice.clear() }
+        override fun maintain(): Boolean {
+            val text = _talkBanner.value ?: return true
+            return when (way()) {
+                TalkBannerPolicy.Way.OVERLAY -> true
+                // The overlay was lost mid session: the notification takes over.
+                TalkBannerPolicy.Way.NOTICE -> { if (!noticeUp) { talkNotice.show(text); noticeUp = true }; true }
+                TalkBannerPolicy.Way.NONE -> false
+            }
+        }
+        override fun clear() { _talkBanner.value = null; overlay.refresh(); talkNotice.clear(); noticeUp = false }
     }
+
+    /** The status field `talk`: "ok", or "needs_permission" when this tablet would refuse talk audio (see [TalkIndicator.available]). */
+    private fun talkStatus() = if (talkIndicator.available()) TalkMessages.STATUS_OK else TalkMessages.STATUS_NEEDS_PERMISSION
 
     /** The receiver is given the player at once, the player is told a failure through [talk]: see [talkPlayer]. */
     private val talkPlayer = TalkPlayer(
@@ -274,7 +289,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         applyLandscape()
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
-        jobs += scope.launch { while (isActive) { delay(200); try { talk.tick() } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
+        jobs += scope.launch { while (isActive) { delay(200); try { talk.tick(); if (!talkPlayer.indicatorHolds()) { Log.w(TAG, "talk ended: the indicator was lost"); talk.stop() } } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
         jobs += scope.launch { kioskLoop() }
         together.start()
         applyLockdown()
@@ -513,6 +528,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("bedtimeAt", store.bedtimeAt.value)
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
+            .put("talk", talkStatus())
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)

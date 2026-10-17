@@ -234,6 +234,8 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
     var asked by rememberSaveable { mutableIntStateOf(0) }
     lateinit var proceed: () -> Unit
     val asks = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { proceed() }
+    // Android 13 and up: without notifications the parent cannot talk to this tablet (it must show that someone is talking).
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { proceed() }
     proceed = {
         val device = App.get(ctx).node.device
         val exempt = try { (ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName) } catch (e: Exception) { true }
@@ -243,8 +245,12 @@ internal fun NodeNameScreen(onBack: (() -> Unit)?, onContinue: () -> Unit) {
             asked < 3 && !device.screenOffOk -> device.deviceAdminIntent()
             else -> null
         }
-        if (intent == null) onContinue()
-        else {
+        if (intent == null) {
+            if (asked < 4 && !device.notificationsOk) {
+                asked = 4
+                try { askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) } catch (e: Exception) { proceed() }
+            } else onContinue()
+        } else {
             asked = when { intent.action == Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -> 1; intent.action == Settings.ACTION_MANAGE_WRITE_SETTINGS -> 2; else -> 3 }
             try { asks.launch(intent) } catch (e: Exception) { proceed() }
         }

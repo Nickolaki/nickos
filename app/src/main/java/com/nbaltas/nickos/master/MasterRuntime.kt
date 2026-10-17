@@ -76,7 +76,12 @@ data class NodeStatus(
     val screenOffOk: Boolean = true,
     /** The landscape lock as the Node reports it. Null for an old Node: the Master hides the switch. */
     val landscape: NetMessages.LandscapeStatus? = null,
+    /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
+    val talk: String = TalkMessages.STATUS_OK,
 ) {
+    /** The Node refuses talk audio until a grown-up allows notifications on it. */
+    val talkNeedsPermission: Boolean get() = talk == TalkMessages.STATUS_NEEDS_PERMISSION
+
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
     /** "del1": the Node deletes a movie when the Master asks. */
@@ -101,6 +106,7 @@ data class NodeStatus(
                 caps = o.optJSONArray("caps").strings(),
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
                 landscape = NetMessages.decodeLandscape(o),
+                talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
             )
         }
 
@@ -471,11 +477,22 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         send(id, NetMessages.hotspotCmd(h, gw))
     }
 
+    /**
+     * On every (re)connect: the per tablet settings this Master stores itself, sent again. Today that is the landscape lock.
+     * The PIN and the car network are sent separately. What the Node keeps itself (lock, bedtime, allowed apps, locked app)
+     * is not stored here and not re-sent. Transient commands (media keys, volume, brightness, screen) are not either:
+     * a lost one is lost.
+     */
+    internal fun sendIntent(id: String) {
+        store.nodes.value.firstOrNull { it.id == id }?.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+    }
+
     private fun runLink(n: LinkedNode, c: Conn) {
         _online.update { it + n.id }
         send(n.id, cmd("pin").put("pin", store.pin.value))
         // Always: a cleared hotspot is sent as "forget" so a Node that was offline when it was cleared still drops it.
         sendHotspot(n.id)
+        sendIntent(n.id)
         scope.launch { pushResume(n.id) }
         send(n.id, cmd("apps")) // icons for the cards and the Apps tab
         sync.onConnected(n.id)
@@ -549,7 +566,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     // ---- device actions ----
     /** Lock or free the kid tablet's rotation. Nothing is guessed: the switch follows what the Node reports back. */
-    fun setLandscape(id: String, on: Boolean) { send(id, NetMessages.orientationCmd(on)) }
+    fun setLandscape(id: String, on: Boolean) {
+        // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
+        store.updateNode(id) { it.copy(landscape = on) }
+        send(id, NetMessages.orientationCmd(on))
+    }
 
     fun setVolume(id: String, v: Int) { send(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
     fun setBrightness(id: String, v: Int) { send(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }

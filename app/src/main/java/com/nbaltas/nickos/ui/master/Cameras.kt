@@ -306,7 +306,7 @@ fun CamerasScreen(
     val talkLive by rt.talk.state.collectAsState()
     val talkNow = if (live) talkLive else talkPreset ?: TalkState()
     val shownTargets = visible.filterIsInstance<TabletSource>().map { s ->
-        TalkTarget(s.node.id, s.name, byNode[s.node.id]?.online == true, status[s.node.id]?.supportsTalk == true)
+        TalkTarget(s.node.id, s.name, byNode[s.node.id]?.online == true, status[s.node.id]?.supportsTalk == true, status[s.node.id]?.talkNeedsPermission != true)
     }
     val micAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         rt.say(if (ok) TalkText.MIC_ALLOWED else TalkText.MIC_DENIED)
@@ -318,7 +318,13 @@ fun CamerasScreen(
         when (rt.talk.press(targets)) {
             // Asking does not start talking: the parent holds the button again once it is allowed.
             TalkController.Press.NEEDS_PERMISSION -> micAsk.launch(android.Manifest.permission.RECORD_AUDIO)
-            TalkController.Press.NOBODY -> rt.say(if (targets.any { it.online && !it.capable }) TalkText.UPDATE_HINT else TalkText.NOBODY)
+            TalkController.Press.NOBODY -> rt.say(
+                when {
+                    targets.any { it.needsPermission } -> TalkText.CANT_HEAR
+                    targets.any { it.online && !it.capable } -> TalkText.UPDATE_HINT
+                    else -> TalkText.NOBODY
+                },
+            )
             TalkController.Press.STARTED -> rt.talk.state.value.sid?.let { holds[key] = it }
             TalkController.Press.BUSY -> {}
         }
@@ -391,7 +397,7 @@ fun CamerasScreen(
             }
 
             if (shownTargets.isNotEmpty()) TalkBarRow(
-                TalkBar.of(shownTargets, talkNow.takeIf { it.talking }?.names),
+                TalkBar.of(shownTargets, talkNow.takeIf { it.talking }?.names, talkNow.tryAgain),
                 onPress = { pressTalk("all", shownTargets) }, onRelease = { releaseTalk("all", it) },
                 modifier = Modifier.padding(start = 40.dp, end = 40.dp, bottom = 20.dp),
             )
@@ -446,8 +452,9 @@ fun CamerasScreen(
                                             ctl, src, t?.display ?: TileDisplay.OFFLINE, t?.cam, rotations[src.node.id] ?: 0, prefs, live, compact, leaving, now,
                                             talk = me?.let {
                                                 TileTalk(
-                                                    it.online && it.capable, talkNow.talking && it.id in talkNow.ids,
+                                                    it.online && it.capable && it.canHear, talkNow.talking && it.id in talkNow.ids,
                                                     { pressTalk(id, listOf(it)) }, { c -> releaseTalk(id, c) },
+                                                    note = if (it.needsPermission) TalkText.CANT_HEAR else null,
                                                 )
                                             },
                                             onTap = onTap,

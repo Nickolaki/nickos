@@ -1,14 +1,21 @@
 package com.nbaltas.nickos.talk
 
 /** A kid tablet shown on the Cameras screen, as far as talking to it goes. */
-data class TalkTarget(val id: String, val name: String, val online: Boolean, val capable: Boolean)
+data class TalkTarget(
+    val id: String, val name: String, val online: Boolean, val capable: Boolean,
+    /** False when the tablet reports `talk: needs_permission`: it cannot show that a parent is talking, so it refuses the audio. */
+    val canHear: Boolean = true,
+) {
+    /** Online and new enough, but a grown-up has to allow notifications on it first. */
+    val needsPermission get() = online && capable && !canHear
+}
 
 object TalkRecipients {
     /**
      * Who hears the parent for one press: the kid tablets on the screen that are online and understand talk. Worked out
      * once when the press starts and never again, so a tablet that appears mid press is not suddenly listening.
      */
-    fun freeze(shown: List<TalkTarget>): List<TalkTarget> = shown.filter { it.online && it.capable }.distinctBy { it.id }
+    fun freeze(shown: List<TalkTarget>): List<TalkTarget> = shown.filter { it.online && it.capable && it.canHear }.distinctBy { it.id }
 }
 
 /** The words on the Cameras screen. Plain, no dashes. */
@@ -22,6 +29,8 @@ object TalkText {
     const val MIC_FAILED = "The microphone stopped working"
     const val MIC_ALLOWED = "Microphone allowed. Hold to talk."
     const val MIC_DENIED = "Talking needs the microphone"
+    const val TRY_AGAIN = "Try again"
+    const val CANT_HEAR = "Can't hear you: allow notifications on this tablet"
 
     /** "Hailey", "Hailey, Leo", and a count once the list would be long. */
     fun who(names: List<String>): String = when {
@@ -47,12 +56,15 @@ data class TalkBar(val enabled: Boolean, val talking: Boolean, val button: Strin
         const val TALKING = "Talking"
 
         /** [live]: the names frozen at the start of the press, or null when nobody is talking. */
-        fun of(shown: List<TalkTarget>, live: List<String>?): TalkBar {
+        fun of(shown: List<TalkTarget>, live: List<String>?, tryAgain: Boolean = false): TalkBar {
             if (live != null) return TalkBar(true, true, TALKING, TalkText.talking(live))
             val names = TalkRecipients.freeze(shown).map { it.name }
             return when {
+                // The last press could not get the microphone (the old one was still closing): a short word on the button.
+                tryAgain && names.isNotEmpty() -> TalkBar(true, false, TalkText.TRY_AGAIN, TalkText.ready(names))
                 names.isNotEmpty() -> TalkBar(true, false, TalkText.HOLD, TalkText.ready(names))
                 // A tablet is there but too old to hear: say so rather than just "nobody".
+                shown.any { it.needsPermission } -> TalkBar(false, false, TalkText.HOLD, TalkText.CANT_HEAR)
                 shown.any { it.online && !it.capable } -> TalkBar(false, false, TalkText.HOLD, TalkText.UPDATE)
                 else -> TalkBar(false, false, TalkText.HOLD, TalkText.NOBODY)
             }
@@ -61,7 +73,9 @@ data class TalkBar(val enabled: Boolean, val talking: Boolean, val button: Strin
 }
 
 /** Why a press stopped capturing. Every way out of talking has one. */
-enum class TalkStop { RELEASED, CANCELLED, LEFT_SCREEN, BACKGROUNDED, PERMISSION_LOST, AUDIO_ERROR, ALL_GONE, TIME_CAP }
+enum class TalkStop { RELEASED, CANCELLED, LEFT_SCREEN, BACKGROUNDED, PERMISSION_LOST, AUDIO_ERROR, ALL_GONE, TIME_CAP,
+    /** The old microphone was still closing when this press wanted it: nothing was recorded. The button says Try again. */
+    MIC_BUSY }
 
 object TalkStopPolicy {
     /** The most one press may last. The Node has the same cap on its side. */

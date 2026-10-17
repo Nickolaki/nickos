@@ -3,6 +3,7 @@ package com.nbaltas.nickos.node
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
@@ -13,6 +14,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.nbaltas.nickos.R
 import com.nbaltas.nickos.talk.Speaker
+import com.nbaltas.nickos.talk.TalkBudget
 import com.nbaltas.nickos.talk.TalkMessages
 
 /**
@@ -46,7 +48,7 @@ class AndroidSpeaker(ctx: Context) : Speaker {
             val min = AudioTrack.getMinBufferSize(TalkMessages.SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
             val t = AudioTrack.Builder()
                 .setAudioAttributes(attrs).setAudioFormat(fmt)
-                .setBufferSizeInBytes(maxOf(min, TalkMessages.FRAME_BYTES * 4))
+                .setBufferSizeInBytes(maxOf(min, TalkMessages.FRAME_BYTES * TalkBudget.TRACK_FRAMES))
                 .setTransferMode(AudioTrack.MODE_STREAM).build()
             track = t
             takeFocus()
@@ -113,7 +115,7 @@ class AndroidSpeaker(ctx: Context) : Speaker {
 
     private companion object {
         /** The longest wait for the end of a sentence to play out. */
-        const val DRAIN_MS = 800L
+        const val DRAIN_MS = TalkBudget.DRAIN_MS
     }
 }
 
@@ -124,9 +126,26 @@ class AndroidSpeaker(ctx: Context) : Speaker {
 class TalkNotice(private val ctx: Context) {
     private val nm = ctx.getSystemService(NotificationManager::class.java)
 
+    /** True when a notification posted now would really be seen: permission given (Android 13+), notifications on, channel not switched off. */
+    fun ready(): Boolean = try {
+        when {
+            Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> false
+            !nm.areNotificationsEnabled() -> false
+            Build.VERSION.SDK_INT >= 26 -> {
+                ensureChannel()
+                (nm.getNotificationChannel(CHANNEL)?.importance ?: NotificationManager.IMPORTANCE_NONE) != NotificationManager.IMPORTANCE_NONE
+            }
+            else -> true
+        }
+    } catch (e: Exception) { false }
+
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent talking", NotificationManager.IMPORTANCE_HIGH))
+    }
+
     fun show(text: String) {
         try {
-            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent talking", NotificationManager.IMPORTANCE_HIGH))
+            ensureChannel()
             nm.notify(ID, NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(text)

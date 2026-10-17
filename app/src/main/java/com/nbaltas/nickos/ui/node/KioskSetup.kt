@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.MainActivity
+import com.nbaltas.nickos.node.KioskPolicy
 import com.nbaltas.nickos.node.KioskState
 import com.nbaltas.nickos.node.KioskStep
 import com.nbaltas.nickos.ui.theme.BtnStyle
@@ -49,17 +50,23 @@ import kotlinx.coroutines.delay
  * Entering this screen opens the parent window so the watchdog does not bounce the settings page the parent is on.
  */
 @Composable
-fun KioskSetup(onStart: () -> Unit) {
+fun KioskSetup(existing: Boolean, onExpired: () -> Unit, onStart: () -> Unit) {
     val ctx = LocalContext.current
     val rt = App.get(ctx).node
     var state by remember { mutableStateOf(rt.device.kioskState()) }
     var unavailable by remember { mutableStateOf(emptySet<KioskStep>()) }
-    fun rearm() { rt.parentUntil = System.currentTimeMillis() + MainActivity.PARENT_MINUTES * 60_000L }
+    // Only extends a window that is still running on an existing Node; an expired one goes back to the PIN card.
+    fun rearm(): Boolean {
+        val until = KioskPolicy.rearmedUntil(existing, rt.parentUntil, System.currentTimeMillis(), MainActivity.PARENT_MINUTES.toLong())
+        if (until == null) { onExpired(); return false }
+        rt.parentUntil = until
+        return true
+    }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         rearm(); state = rt.device.kioskState()
     }
     LaunchedEffect(Unit) {
-        rearm()
+        if (!rearm()) return@LaunchedEffect
         // The system pages return with Back, which does not always report a result: look again every second.
         while (true) { delay(1000); state = rt.device.kioskState() }
     }

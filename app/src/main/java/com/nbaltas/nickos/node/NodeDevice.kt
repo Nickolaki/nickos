@@ -95,7 +95,10 @@ class NodeDevice(private val ctx: Context) {
     fun batteryTemperatureTenths(): Int =
         ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
 
-    fun hasCameraPermission() = ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    /** The notification permission Android 13+ asks for (before that there is nothing to ask). A Device Owner is granted it by policy. */
+    val notificationsOk get() = Build.VERSION.SDK_INT < 33 || ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    fun hasCameraPermission() =ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
     val screenOn get() = power.isInteractive
 

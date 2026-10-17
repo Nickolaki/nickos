@@ -40,6 +40,10 @@ class TalkPlayerTest {
     private class Indicator : TalkIndicator {
         val log = CopyOnWriteArrayList<String>()
         @Volatile var text: String? = null
+        @Volatile var availableNow = true
+        @Volatile var holds = true
+        override fun available() = availableNow
+        override fun maintain() = holds
         override fun show(text: String) { this.text = text; log += "show $text" }
         override fun clear() { text = null; log += "clear" }
     }
@@ -212,6 +216,76 @@ class TalkPlayerTest {
     @Test fun `without the overlay permission a notification stands in for the banner`() {
         assertTrue(TalkBannerPolicy.needsNotification(canOverlay = false))
         assertFalse(TalkBannerPolicy.needsNotification(canOverlay = true))
+    }
+
+    // ---- no visible indicator, no audio ----
+    @Test fun `with no way to show the banner or a notification the session is refused and nothing is opened`() {
+        val sp = FakeSpeaker()
+        val ind = Indicator().also { it.availableNow = false }
+        val p = player(ind, sp)
+        val rx = TalkReceiver(p, { true }, { 1_000L })
+        val sid = "0123456789abcdef"
+        assertEquals(TalkReceiver.Result.REJECTED, rx.onMessage("m", TalkMessages.start(sid)))
+        assertFalse(rx.active)
+        assertEquals("no speaker was allocated", 0, sp.allocated.get())
+        assertTrue("nothing shown", ind.log.isEmpty())
+        // The frames of a refused session play nothing either.
+        assertEquals(TalkReceiver.Result.REJECTED, rx.onMessage("m", TalkMessages.frame(sid, 1, frame)))
+        assertEquals(0, sp.written.get())
+    }
+
+    @Test fun `once a notification can be posted the next session plays`() {
+        val sp = FakeSpeaker()
+        val ind = Indicator().also { it.availableNow = false }
+        val p = player(ind, sp)
+        assertFalse(p.begin("s1", "m"))
+        ind.availableNow = true
+        assertTrue(p.begin("s2", "m"))
+        assertEquals("Dad", ind.text)
+        p.end(flush = false)
+        until("banner cleared") { ind.text == null }
+    }
+
+    @Test fun `losing the indicator in the middle of a session is noticed so the session can end`() {
+        val sp = FakeSpeaker()
+        val ind = Indicator()
+        val p = player(ind, sp)
+        assertTrue(p.indicatorHolds())          // nothing playing: nothing to hold
+        assertTrue(p.begin("s1", "m"))
+        assertTrue(p.indicatorHolds())
+        ind.holds = false                       // overlay lost and no notification possible
+        assertFalse(p.indicatorHolds())
+        p.end(flush = false)
+        until("banner cleared") { ind.text == null }
+        assertTrue("idle again", p.indicatorHolds())
+    }
+
+    @Test fun `the indicator policy picks the overlay, then a notification that will show, else nothing`() {
+        assertEquals(TalkBannerPolicy.Way.OVERLAY, TalkBannerPolicy.way(canOverlay = true, noticeReady = false))
+        assertEquals(TalkBannerPolicy.Way.OVERLAY, TalkBannerPolicy.way(canOverlay = true, noticeReady = true))
+        assertEquals(TalkBannerPolicy.Way.NOTICE, TalkBannerPolicy.way(canOverlay = false, noticeReady = true))
+        assertEquals(TalkBannerPolicy.Way.NONE, TalkBannerPolicy.way(canOverlay = false, noticeReady = false))
+        assertTrue(TalkBannerPolicy.mayPlay(canOverlay = true, noticeReady = false))
+        assertTrue(TalkBannerPolicy.mayPlay(canOverlay = false, noticeReady = true))
+        assertFalse(TalkBannerPolicy.mayPlay(canOverlay = false, noticeReady = false))
+    }
+
+    @Test fun `the node status says talk needs permission and the master decodes it, an old node stays ok`() {
+        val s = com.nbaltas.nickos.master.NodeStatus.from(org.json.JSONObject("""{"talk":"needs_permission","caps":["talk1"]}"""))
+        assertTrue(s.talkNeedsPermission)
+        assertFalse(com.nbaltas.nickos.master.NodeStatus.from(org.json.JSONObject("""{"talk":"ok"}""")).talkNeedsPermission)
+        assertFalse(com.nbaltas.nickos.master.NodeStatus.from(org.json.JSONObject("{}")).talkNeedsPermission)
+    }
+
+    @Test fun `a tablet that needs permission is left out of the press and the bar says why`() {
+        val a = TalkTarget("a", "Hailey", online = true, capable = true, canHear = false)
+        val b = TalkTarget("b", "Leo", online = true, capable = true)
+        assertEquals(listOf("b"), TalkRecipients.freeze(listOf(a, b)).map { it.id })
+        val bar = TalkBar.of(listOf(a), null)
+        assertFalse(bar.enabled)
+        assertEquals("Can't hear you: allow notifications on this tablet", bar.line)
+        assertTrue(TalkBar.of(listOf(a, b), null).enabled)
+        assertFalse(TalkTarget("a", "Hailey", online = false, capable = true, canHear = false).needsPermission)
     }
 
     private var failedHook: (String) -> Unit = {}

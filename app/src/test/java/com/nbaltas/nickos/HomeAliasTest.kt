@@ -16,6 +16,7 @@ import com.nbaltas.nickos.node.Provisioning
 import com.nbaltas.nickos.node.StartScreen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -219,6 +220,50 @@ class HomeAliasDeviceTest {
         s.resetAll()
         assertFalse(s.kidLockDone.value)
         assertFalse(Store(ctx).kidLockDone.value)
+    }
+
+    /** App.onCreate already ran the migration under Robolectric: put the tablet back to "never ran it", as an update finds it. */
+    private fun beforeMigration(): Store {
+        ctx.getSharedPreferences("nickos", Context.MODE_PRIVATE).edit().remove("migration").commit()
+        return Store(ctx)
+    }
+
+    @Test fun `the first start of this version treats an existing Node as locked, once`() {
+        val s = beforeMigration()
+        s.setRole(com.nbaltas.nickos.data.Role.NODE)
+        assertFalse(s.kidLockDone.value)
+        assertTrue(s.migrateKidLock())
+        assertTrue(s.kidLockDone.value)
+        assertTrue(Store(ctx).kidLockDone.value)
+        // Not again: a later start does not set the flag back after it was cleared on purpose.
+        s.setKidLockDone(false)
+        assertFalse(Store(ctx).migrateKidLock())
+        assertFalse(Store(ctx).kidLockDone.value)
+    }
+
+    @Test fun `the first start on a tablet that is not a Node only records the version`() {
+        val s = beforeMigration()
+        assertTrue(s.migrateKidLock())
+        assertFalse(s.kidLockDone.value)
+        s.setRole(com.nbaltas.nickos.data.Role.NODE) // set up afterwards: a new tablet keeps today's no PIN flow
+        assertFalse(Store(ctx).migrateKidLock())
+        assertFalse(Store(ctx).kidLockDone.value)
+    }
+
+    @Test fun `a reset keeps the migration version`() {
+        val s = Store(ctx)
+        s.migrateKidLock()
+        s.resetAll()
+        assertFalse(Store(ctx).migrateKidLock())
+    }
+
+    @Test fun `a window that ran out is never extended on an existing Node`() {
+        val now = 1_000_000L
+        assertEquals(now + 600_000L, KioskPolicy.rearmedUntil(true, now + 1, now, 10))
+        assertNull(KioskPolicy.rearmedUntil(true, now, now, 10))
+        assertNull(KioskPolicy.rearmedUntil(true, 0L, now, 10))
+        // A new, never locked tablet keeps today's flow without a PIN.
+        assertEquals(now + 600_000L, KioskPolicy.rearmedUntil(false, 0L, now, 10))
     }
 
     @Test fun `the state line tells the truth`() {

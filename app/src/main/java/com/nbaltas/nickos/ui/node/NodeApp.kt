@@ -106,6 +106,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val askPerm = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { permTick++; onPermResult() }
     val brightnessOk = remember(screen, permTick) { rt.device.brightnessOk }
     val screenOffOk = remember(screen, permTick) { rt.device.screenOffOk }
+    // Android 13 and up: the parent can only talk to this tablet if it may post a notification when the overlay is not allowed.
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permTick++; onPermResult() }
     fun ask(i: android.content.Intent) { try { askPerm.launch(i) } catch (e: Exception) { permTick++ } }
 
     // The friendly request card. Each system screen is opened at most once per Allow, so declining never loops.
@@ -115,7 +117,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     val playing = screen == NodeScreen.HOME && playerUi.fid != null
     fun nextPermScreen() {
         val d = rt.device
-        when (PermissionAsk.nextStep(d.isDeviceOwner, d.brightnessOk, d.screenOffOk, tried)) {
+        when (PermissionAsk.nextStep(d.isDeviceOwner, d.brightnessOk, d.screenOffOk, tried, d.notificationsOk)) {
+            PermStep.NOTIFICATIONS -> { tried += PermStep.NOTIFICATIONS; try { askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) } catch (e: Exception) { nextPermScreen() } }
             PermStep.BRIGHTNESS -> { tried += PermStep.BRIGHTNESS; try { askPerm.launch(d.writeSettingsIntent()) } catch (e: Exception) { nextPermScreen() } }
             PermStep.SCREEN_OFF -> { tried += PermStep.SCREEN_OFF; try { askPerm.launch(d.deviceAdminIntent()) } catch (e: Exception) { nextPermScreen() } }
             null -> { walking = false; permTick++ }
@@ -123,7 +126,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     }
     onPermResult = { if (walking) nextPermScreen() }
     val permWanted = remember(screen, permTick, masterAsked, walking, playing) {
-        PermissionAsk.showCard(rt.device.isDeviceOwner, rt.device.brightnessOk, rt.device.screenOffOk, rt.permAsk.declined, playing, masterAsked)
+        PermissionAsk.showCard(rt.device.isDeviceOwner, rt.device.brightnessOk, rt.device.screenOffOk, rt.permAsk.declined, playing, masterAsked, rt.device.notificationsOk)
     }
     val showPermCard = !walking && permWanted && (screen == NodeScreen.HOME || screen == NodeScreen.MENU)
 
@@ -133,7 +136,14 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (screen) {
-            NodeScreen.KIOSK -> KioskSetup(onStart = { store.setKidLockDone(true); screen = NodeScreen.HOME; onKidMode() })
+            NodeScreen.KIOSK -> KioskSetup(
+                existing = existing,
+                onExpired = { screen = NodeScreen.ASK },
+                onStart = {
+                    if (KioskPolicy.setupMayStay(existing, rt.parentMode)) { store.setKidLockDone(true); screen = NodeScreen.HOME; onKidMode() }
+                    else screen = NodeScreen.ASK
+                },
+            )
             NodeScreen.ASK -> AskGrownUpScreen(onPin = { pinFromAsk = true; screen = NodeScreen.PIN })
             NodeScreen.DRAWER -> AppDrawer(onBack = { screen = NodeScreen.MENU }, onOpen = { rt.device.launch(it) })
             NodeScreen.PAIR -> {
@@ -179,7 +189,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         if (screen == NodeScreen.MENU) ParentMenu(
             kiosk = kioskStatus,
             pinIsDefault = pin == Store.DEFAULT_PIN,
-            onFinishKiosk = { screen = NodeScreen.KIOSK },
+            onFinishKiosk = { screen = if (KioskPolicy.setupMayStay(existing, rt.parentMode)) NodeScreen.KIOSK else NodeScreen.ASK },
             onKidMode = { screen = NodeScreen.HOME; onKidMode() },
             onAllApps = { screen = NodeScreen.DRAWER },
             onSettings = { ctx.startActivity(androidSettingsIntent()) },

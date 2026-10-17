@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /** The two one-time system screens a normally installed Node needs before the Master can change brightness or turn the screen off. */
-enum class PermStep { BRIGHTNESS, SCREEN_OFF }
+enum class PermStep { BRIGHTNESS, SCREEN_OFF, NOTIFICATIONS }
 
 /**
  * When the Node pops up its own "let the parent tablet change brightness?" card, and which system screens Allow walks
@@ -17,8 +17,8 @@ object PermissionAsk {
     const val NOT_NOW = "Not now"
 
     /** Something is still missing on a tablet that is not Device Owner. */
-    fun needed(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean) =
-        !deviceOwner && !(brightnessOk && screenOffOk)
+    fun needed(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean, notificationsOk: Boolean = true) =
+        !deviceOwner && !(brightnessOk && screenOffOk && notificationsOk)
 
     /**
      * Show the card? Not when nothing is needed, not while a video is playing in kid mode, and not after "Not now"
@@ -26,14 +26,18 @@ object PermissionAsk {
      */
     fun showCard(
         deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean,
-        declined: Boolean, playing: Boolean, masterAsked: Boolean,
-    ) = needed(deviceOwner, brightnessOk, screenOffOk) && !playing && (masterAsked || !declined)
+        declined: Boolean, playing: Boolean, masterAsked: Boolean, notificationsOk: Boolean = true,
+    ) = needed(deviceOwner, brightnessOk, screenOffOk, notificationsOk) && !playing && (masterAsked || !declined)
 
-    /** The next system screen to open, skipping what is already allowed and what was already shown (so a "no" never loops). */
-    fun nextStep(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean, tried: Set<PermStep>): PermStep? {
+    /**
+     * The next system screen to open, skipping what is already allowed and what was already shown (so a "no" never loops).
+     * Notifications come last (Android 13 and up): without them the parent cannot talk to this tablet.
+     */
+    fun nextStep(deviceOwner: Boolean, brightnessOk: Boolean, screenOffOk: Boolean, tried: Set<PermStep>, notificationsOk: Boolean = true): PermStep? {
         if (deviceOwner) return null
         if (!brightnessOk && PermStep.BRIGHTNESS !in tried) return PermStep.BRIGHTNESS
         if (!screenOffOk && PermStep.SCREEN_OFF !in tried) return PermStep.SCREEN_OFF
+        if (!notificationsOk && PermStep.NOTIFICATIONS !in tried) return PermStep.NOTIFICATIONS
         return null
     }
 }

@@ -49,7 +49,7 @@ class TalkPlanTest {
     @Test fun `no talk words contain a dash`() {
         val words = listOf(
             TalkText.HOLD, TalkText.NOBODY, TalkText.UPDATE, TalkText.UPDATE_HINT, TalkText.BANNER_FALLBACK, TalkText.NEEDS_MIC,
-            TalkText.MIC_FAILED, TalkText.MIC_ALLOWED, TalkText.MIC_DENIED, TalkBar.TALKING, TalkText.talking(listOf("Hailey")),
+            TalkText.MIC_FAILED, TalkText.MIC_ALLOWED, TalkText.MIC_DENIED, TalkText.TRY_AGAIN, TalkText.CANT_HEAR, TalkBar.TALKING, TalkText.talking(listOf("Hailey")),
             TalkText.ready(listOf("Hailey")), TalkText.banner("Dad's Tablet"),
         )
         val em = 0x2014.toChar()
@@ -90,6 +90,15 @@ class TalkPlanTest {
         assertEquals("No tablet to talk to", bar.line)
     }
 
+    @Test fun `after a press that could not get the microphone the button says try again`() {
+        val bar = TalkBar.of(listOf(t("a", "Hailey")), null, tryAgain = true)
+        assertTrue(bar.enabled); assertFalse(bar.talking)
+        assertEquals("Try again", bar.button)
+        assertEquals("Hold to talk to Hailey", bar.line)
+        assertEquals("Hold to talk", TalkBar.of(listOf(t("a", "Hailey")), null).button)
+        assertFalse(TalkBar.of(listOf(t("a", "Hailey", online = false)), null, tryAgain = true).enabled)
+    }
+
     // ---- stop policy ----
     private fun inputs(permission: Boolean = true, audioOk: Boolean = true, live: Int = 2, elapsed: Long = 1_000) =
         TalkStopPolicy.Inputs(permission, audioOk, live, elapsed)
@@ -112,7 +121,7 @@ class TalkPlanTest {
 
     @Test fun `the parent is told about failures but not about letting go`() {
         for (r in TalkStop.values()) {
-            val quiet = r in setOf(TalkStop.RELEASED, TalkStop.CANCELLED, TalkStop.LEFT_SCREEN, TalkStop.BACKGROUNDED)
+            val quiet = r in setOf(TalkStop.RELEASED, TalkStop.CANCELLED, TalkStop.LEFT_SCREEN, TalkStop.BACKGROUNDED, TalkStop.MIC_BUSY)
             assertEquals(r.name, !quiet, TalkStopPolicy.worthSaying(r))
         }
     }

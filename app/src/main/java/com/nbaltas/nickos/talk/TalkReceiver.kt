@@ -133,7 +133,7 @@ class TalkReceiver(
         /** The longest session, whatever the sender does. */
         const val CAP_MS = 120_000L
         /** Frames held back before playing: 3 x 40 ms. */
-        const val PREFILL = 3
+        const val PREFILL = TalkBudget.PREFILL_FRAMES
         private const val REMEMBER = 8
     }
 }

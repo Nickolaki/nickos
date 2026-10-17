@@ -37,6 +37,8 @@ class TileTalk(
     val onPress: () -> Unit,
     /** True when the press was cancelled (the finger slid off, a dialog came up) rather than let go. */
     val onRelease: (cancelled: Boolean) -> Unit,
+    /** Why this tablet cannot hear right now ("Can't hear you: ..."), or null. */
+    val note: String? = null,
 )
 
 /**

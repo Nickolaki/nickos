@@ -132,7 +132,13 @@ class TalkSender(
 }
 
 /** What the Cameras screen shows: nothing, or who is being talked to right now. */
-data class TalkState(val sid: String? = null, val ids: List<String> = emptyList(), val names: List<String> = emptyList()) {
+data class TalkState(
+    val sid: String? = null,
+    val ids: List<String> = emptyList(),
+    val names: List<String> = emptyList(),
+    /** The last press could not get the microphone: the button says Try again until the next press. */
+    val tryAgain: Boolean = false,
+) {
     val talking get() = sid != null
 }
 
@@ -159,13 +165,16 @@ class TalkController(
     private val onStopped: (TalkStop) -> Unit = {},
     private val io: CoroutineContext = Dispatchers.IO,
     private val lanes: CoroutineContext = Dispatchers.IO,
+    private val oldCloseWaitMs: Long = OLD_CLOSE_WAIT_MS,
 ) {
     enum class Press { STARTED, NEEDS_PERMISSION, BUSY, NOBODY }
 
     private inner class Session(val sender: TalkSender, val mic: MicPort) {
         @Volatile var active = true
-        /** Start and close of the microphone never overlap. */
+        /** Start and close of the microphone never overlap, and a start never follows a close. */
         val micLock = Any()
+        /** Set under [micLock] by the close: from then on this press never starts its microphone. */
+        var closed = false
         /** Counted down once this press's microphone is closed. */
         val released = CountDownLatch(1)
     }
@@ -225,7 +234,9 @@ class TalkController(
         onStopped(reason)
     }
 
-    private fun closeMic(s: Session) { synchronized(s.micLock) { try { s.mic.stop() } catch (_: Exception) {} } }
+    // Every stop ends here, under the same lock the start takes (run off the caller's thread so a finger lifting never
+    // waits for a slow start). Once it has run, a start that was already past its check finds [closed] and does not open.
+    private fun closeMic(s: Session) { synchronized(s.micLock) { s.closed = true; try { s.mic.stop() } catch (_: Exception) {} } }
 
     private fun checkGone(s: Session) {
         if (s.active && s.sender.liveRecipients <= 0) stop(TalkStop.ALL_GONE, s.sender.sid)
@@ -234,11 +245,20 @@ class TalkController(
     private fun capture(s: Session, began: Long, before: CountDownLatch?) {
         var seq = 0L
         var audioOk = true
+        var oldStillOpen = false
         try {
-            // A new press waits for the old microphone to be closed. Bounded: a stuck close must not silence this press for ever.
-            before?.await(OLD_CLOSE_WAIT_MS, TimeUnit.MILLISECONDS)
+            // A new press waits for the old microphone to be closed. If it is not closed in time this press FAILS
+            // (nothing is recorded, the button says Try again): two presses never own the microphone together.
+            if (before != null && !before.await(oldCloseWaitMs, TimeUnit.MILLISECONDS)) {
+                oldStillOpen = true
+                stop(TalkStop.MIC_BUSY, s.sender.sid)
+                synchronized(this) { if (session == null) _state.value = TalkState(tryAgain = true) }
+                // The next press must wait for the old microphone too: this one is released only after it.
+                scope.launch(io) { before.await(); s.released.countDown() }
+                return
+            }
             val started = synchronized(s.micLock) {
-                if (!s.active) false else { s.mic.start(); true }
+                if (!s.active || s.closed) false else { s.mic.start(); true }
             }
             if (!started) return
             val buf = ByteArray(TalkMessages.FRAME_BYTES)
@@ -259,11 +279,11 @@ class TalkController(
         } finally {
             // A stop that came before the microphone had started would have found nothing to close.
             closeMic(s)
-            s.released.countDown()
+            if (!oldStillOpen) s.released.countDown()
         }
     }
 
-    private companion object { const val OLD_CLOSE_WAIT_MS = 2_000L }
+    companion object { const val OLD_CLOSE_WAIT_MS = 2_000L }
 }
 
 /** 16 kHz mono 16 bit from the voice communication source, which also cancels echo from the tablet's own speaker. */

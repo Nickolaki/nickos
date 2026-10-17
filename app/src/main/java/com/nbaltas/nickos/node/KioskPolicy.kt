@@ -62,6 +62,13 @@ object KioskPolicy {
     fun setupMayStay(existing: Boolean, pinWindow: Boolean) = !existing || pinWindow
 
     /**
+     * The parent window after a rearm, or null when it may not be extended. A new tablet always may; an existing Node
+     * only while the window it got from the PIN is still running, so an expired window sends it back to the PIN card.
+     */
+    fun rearmedUntil(existing: Boolean, currentUntil: Long, now: Long, minutes: Long): Long? =
+        if (!existing || now < currentUntil) now + minutes * 60_000L else null
+
+    /**
      * Packages that must never be bounced: NickOS itself, the system, and the system dialogs a grant or an
      * update shows as activities (runtime permission, Home role, "Install?").
      */
