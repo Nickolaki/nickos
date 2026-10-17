@@ -170,7 +170,7 @@ internal fun Welcome(onStart: () -> Unit) {
 }
 
 @Composable
-internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit) {
+internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit, nodeAllowed: Boolean = NodeSupport.ok()) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Step 1 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -186,7 +186,7 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
                         "For the parent. Sees and controls every linked tablet. Great mounted at the front of the car.", "Choose Master", onMaster)
                     RoleCard(m, Lucide.Smartphone, false, Color(0xFFFF7A59), "Node", "Kid's tablet", Color(0xFFFF9B80),
                         "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode,
-                        enabled = nodeCardEnabled(), note = if (nodeCardEnabled()) null else NodeSupport.REFUSAL_COPY)
+                        enabled = nodeAllowed, note = if (nodeAllowed) null else NodeSupport.REFUSAL_COPY)
                 }
                 if (narrow) Column(verticalArrangement = Arrangement.spacedBy(24.dp)) { cards(Modifier.fillMaxWidth()) }
                 else Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(32.dp)) { cards(Modifier.weight(1f).fillMaxHeight()) }
