@@ -177,6 +177,23 @@ class TouchShieldTest {
         assertFalse("a late timeout does nothing", g.finish(first))
     }
 
+    @Test fun `a second gesture through beginInject is dropped even after the shield is gone, and the first restores it`() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = com.nbaltas.nickos.data.Store(ctx)
+        val rt = NodeRuntime(ctx, store)
+        val overlay = NodeOverlay(ctx, store, rt)
+        rt.boxActive.value = true
+        val a = overlay.beginInject()
+        assertTrue("gesture A has a token", a > 0)
+        assertTrue(rt.injecting.value)
+        rt.boxActive.value = false // the in-app box left composition for A
+        assertEquals("gesture B while A is in flight", NodeOverlay.DROPPED, overlay.beginInject())
+        overlay.endInject(a)
+        assertFalse("A completed, the shield is restored", rt.injecting.value)
+        rt.boxActive.value = true
+        assertTrue("the next gesture is admitted again", overlay.beginInject() > 0)
+    }
+
     @Test fun `the switch tells the truth`() {
         assertEquals(null, TouchText.status(NetMessages.TouchStatus(false, "none"), "Mia"))
         assertEquals("Touch is off", TouchText.status(NetMessages.TouchStatus(true, "on"), "Mia"))

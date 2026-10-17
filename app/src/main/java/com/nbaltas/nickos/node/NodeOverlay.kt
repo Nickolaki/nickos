@@ -152,6 +152,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
      * token to give to [endInject]. Waits (a short while) until the shield really lets touches through.
      */
     fun beginInject(): Long {
+        // A gesture in flight has taken the shield away, so the busy state is checked first: a second gesture must be dropped, not sent without a token.
+        if (injectGate.busy) return DROPPED
         val overlayUp = shieldAttached()
         if (!overlayUp && !rt.boxActive.value) return NO_SHIELD
         val token = injectGate.begin() ?: return DROPPED

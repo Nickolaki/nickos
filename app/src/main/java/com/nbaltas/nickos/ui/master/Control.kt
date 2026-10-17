@@ -660,7 +660,9 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             cards.chunked(cols).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).height(cardH)) } }
+                // The Touch row makes the Screen card taller: its grid row gets a fixed extra, every card keeps a bounded height.
+                val rowH = if (st?.supportsTouch == true && row.any { it === cards[0] }) cardH + 64.dp else cardH
+                Row(Modifier.height(rowH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
             }
         }
     }
