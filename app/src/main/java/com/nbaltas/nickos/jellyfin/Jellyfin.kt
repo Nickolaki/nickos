@@ -3,6 +3,7 @@ package com.nbaltas.nickos.jellyfin
 import com.nbaltas.nickos.BuildConfig
 import com.nbaltas.nickos.data.JellyfinAccount
 import com.nbaltas.nickos.data.optStr
+import com.nbaltas.nickos.sync.JfStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -222,6 +223,10 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
     // ---- saving a copy ----
     fun downloadUrl(item: JfItem) = "$base/Items/${item.id}/Download"
     fun streamUrl(item: JfItem) = "$base/Videos/${item.id}/stream?static=true"
+    /** The stream address with the token in it, for a tablet that streams. Only for a sealed link; never log it. */
+    fun authedStreamUrl(item: JfItem) = JfStream.authedUrl(base, item.id, account.token)
+    /** The fid a streamed copy of [item] plays under. */
+    fun streamFid(item: JfItem) = JfStream.fid(base, item.id)
 
     /**
      * The file itself, from byte [from] on. Tries /Download, then the static stream when the server

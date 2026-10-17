@@ -58,6 +58,8 @@ import com.nbaltas.nickos.ui.master.MasterHome
 import com.nbaltas.nickos.ui.master.JfPickContent
 import com.nbaltas.nickos.ui.master.JfPrep
 import com.nbaltas.nickos.ui.master.JfRow
+import com.nbaltas.nickos.ui.master.JfStreamUi
+import com.nbaltas.nickos.sync.JfTogether
 import com.nbaltas.nickos.ui.master.PickPanel
 import com.nbaltas.nickos.ui.master.SettingsScreen
 import com.nbaltas.nickos.ui.master.TAB_APPS
@@ -494,6 +496,35 @@ class DesignScreensTest {
                 prep = JfPrep(0.65f, null, rows), note = "Leo went offline, starting without them", onBack = {}, onPrimary = {},
             )
         }
+    }
+
+    @Test fun togetherJellyfinStream() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-Stream") {
+            val nodes = rememberNodeViews()
+            val stream = JfStreamUi(2, JfTogether.streamLabel(2, listOf("Leo")), onStream = {})
+            JfPickContent(
+                jfMovie(), nodes, nodes.filter { it.online }.map { it.node.id }.toSet(), { _, _ -> },
+                prep = null, note = null, onBack = {}, onPrimary = {}, stream = stream,
+            )
+        }
+    }
+
+    @Test fun togetherStreamWaiting() {
+        val m = app.master
+        val now = android.os.SystemClock.elapsedRealtime()
+        val fid = "jf:ab12cd34:m1"
+        set(m.sync, "_session", SyncSession(fid, "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, false, "http://jf.local/x"))
+        set(m.sync, "_states", mapOf(
+            "aaaaaaaaaaaa" to NodeSyncState(SyncState.PAUSED, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+            "bbbbbbbbbbbb" to NodeSyncState(SyncState.BUFFERING, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+        ))
+        set(m.sync, "_offsets", mapOf(
+            "aaaaaaaaaaaa" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+            "bbbbbbbbbbbb" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+        ))
+        set(m.sync, "_waiting", "Waiting for Leo")
+        shot("Together-Stream-Waiting") { TogetherScreen({}, {}) }
     }
 
     @Test fun togetherLibraryEmpty() = shot("Together-Library-Empty") { TogetherScreen({}, {}) }

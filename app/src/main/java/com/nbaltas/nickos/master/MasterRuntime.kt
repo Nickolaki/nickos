@@ -103,6 +103,8 @@ data class NodeStatus(
 
     /** Watch together needs the Node's "sync1" capability; absent on a pre-feature Node. */
     val supportsSync: Boolean get() = "sync1" in caps
+    /** "stream1": the Node plays a Jellyfin stream it is given, with no file on the tablet. */
+    val supportsStream: Boolean get() = com.nbaltas.nickos.sync.SyncMessages.STREAM_CAP in caps
     /** "del1": the Node deletes a movie when the Master asks. */
     val supportsDelete: Boolean get() = "del1" in caps
     /** Tablet cameras need the Node's "cam1" capability. */
@@ -296,6 +298,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     fun lanAddress(): String? = LanAddress.own(ctx)
+    /** True when tablet [id] is linked right now over a sealed link. */
+    fun isSealed(id: String): Boolean = links[id]?.isSealed == true
     /** Every address this tablet has: the home WiFi and the car network it hosts can be up at the same time. */
     private fun ownIps(): List<String> =
         (LanAddress.all(ctx).map { it.second } + listOfNotNull((carNet.state.value as? CarNetState.On)?.ownIp)).distinct()

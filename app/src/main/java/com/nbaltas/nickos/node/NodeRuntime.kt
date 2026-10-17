@@ -407,7 +407,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                 val msg = c.read() ?: break
                 // Screen start, stop and touch only on a sealed link, like talk: a legacy clear text session (v1) gets no key and no control.
                 if (msg.optString("t") == "cmd" && RemoteMessages.isScreenCmd(msg.optString("c")) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
-                else if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                else if (msg.optString("t") == "cmd") try { command(id, msg, c.isSealed) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
                 // And only on a sealed link: a legacy clear text session (v1) is refused talk.
                 else if (TalkMessages.isTalk(msg)) {
@@ -515,11 +515,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     }
 
     // ---- commands from a Master ----
-    private fun command(masterId: String, m: JSONObject) {
+    private fun command(masterId: String, m: JSONObject, sealed: Boolean) {
         val master = store.masters.value.firstOrNull { it.id == masterId }
         val c = m.getString("c")
         // Watch together answers the asking Master only, and never with a status broadcast (pings are frequent).
-        if (together.command(c, m) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
+        if (together.command(c, m, sealed) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
         if (c in NodeTogether.LEAVES_PLAYER) syncPlayer.stop()
         when (c) {
             // The camera answers with its own camState, never with a status broadcast.

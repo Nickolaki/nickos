@@ -8,6 +8,10 @@ import android.util.Log
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.node.parentName
 import com.nbaltas.nickos.sync.ClockSync
+import com.nbaltas.nickos.sync.GroupWait
+import com.nbaltas.nickos.sync.JfStream
+import com.nbaltas.nickos.sync.StreamGate
+import com.nbaltas.nickos.sync.WaitAct
 import com.nbaltas.nickos.sync.Library
 import com.nbaltas.nickos.sync.LibraryItem
 import com.nbaltas.nickos.sync.SyncMessages
@@ -41,6 +45,25 @@ data class NodeSyncState(
     val err: String?,
     val receivedAt: Long,
 )
+
+/**
+ * A tablet that could not play a streamed movie. [code] is cant_reach, auth, unsupported or timeout,
+ * never an address. [fid] and [title] say which movie, so "Save to tablets instead" knows what to save.
+ */
+data class StreamFail(val id: String, val code: String, val fid: String, val title: String) {
+    /** The Save fallback makes sense only when the tablet could not get the stream, not when it cannot play it. */
+    val canSaveInstead: Boolean get() = code == CANT_REACH || code == TIMEOUT
+
+    companion object {
+        const val CANT_REACH = "cant_reach"
+        const val AUTH = "auth"
+        const val UNSUPPORTED = "unsupported"
+        const val TIMEOUT = "timeout"
+        val CODES = setOf(CANT_REACH, AUTH, UNSUPPORTED, TIMEOUT)
+        /** Anything else a tablet says is read as a format problem. */
+        fun clean(code: String?): String = if (code in CODES) code!! else UNSUPPORTED
+    }
+}
 
 /** A tablet's clock against the Master's: tabletClock = masterClock + [offset]. */
 data class ClockInfo(val offset: Long, val rtt: Long, val quality: SyncQuality)
@@ -76,6 +99,18 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
     /** Told to stop: its late reports must not bring a session back until this time. */
     private val quiet = HashMap<String, Long>()
     private var lastAnchor = 0L
+    /** The group wait for the current streamed movie. Disabled (does nothing) for a file on the tablets. */
+    private var wait = GroupWait(false)
+    /** When the current start or seek happened: a report made before it belongs to the previous generation. */
+    private var genAt = 0L
+
+    private val _waiting = MutableStateFlow<String?>(null)
+    /** "Waiting for Leo" while the group is held for a tablet that is buffering, else null. */
+    val waiting: StateFlow<String?> = _waiting
+
+    private val _failed = MutableStateFlow<Map<String, StreamFail>>(emptyMap())
+    /** Tablets that could not play the streamed movie, by tablet id. Kept after the tablet leaves the session. */
+    val failed: StateFlow<Map<String, StreamFail>> = _failed
 
     private val _session = MutableStateFlow<SyncSession?>(null)
     /** The session, or null. Non-null means the remote is what Watch together shows. */
@@ -201,6 +236,9 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             val dur = msg.dur.coerceAtLeast(0)
             val pos = if (dur > 0) msg.pos.coerceIn(0, dur) else msg.pos.coerceAtLeast(0)
             var s = _session.value
+            // A streamed movie has no file to know about, and a tablet's say-so must never put it in a
+            // session (it would be sent the address). Only a tablet the Master put there is heard.
+            if (JfStream.isStreamFid(msg.fid) && (s == null || s.fid != msg.fid || id !in s.nodes)) return
             if (s == null) {
                 // This app was restarted while tablets kept playing: take the session back from their reports.
                 if (!joinable) return
@@ -218,9 +256,23 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             }
             _states.update { it + (id to NodeSyncState(st, pos, msg.at, dur, msg.rate, msg.err?.take(40), now)) }
             if (dur > 0 && s.durMs <= 0) _session.value = s.copy(durMs = dur)
+            // A tablet that failed or left is taken out below, which also lets the group go on without it.
+            if (wait.enabled && st != SyncState.ERROR && st != SyncState.STOPPED && st != SyncState.ENDED) {
+                // A report made before the last start or seek (on the tablet's clock, mapped to ours) is from the old line.
+                val off = clocks[id]?.offset
+                val gen = if (off != null && msg.at - off < genAt) wait.gen - 1 else wait.gen
+                act(wait.report(id, st, now, gen), now)
+            }
             when (st) {
                 SyncState.ENDED -> drop(id, ended = true)
-                SyncState.ERROR -> { port.say("${kid(id)}: ${TogetherText.error(msg.err)}"); drop(id) }
+                SyncState.ERROR -> {
+                    if (s.streaming) {
+                        val f = StreamFail(id, StreamFail.clean(msg.err), s.fid, s.title)
+                        _failed.update { it + (id to f) }
+                        port.say(TogetherText.streamError(kid(id), f.code))
+                    } else port.say("${kid(id)}: ${TogetherText.error(msg.err)}")
+                    drop(id)
+                }
                 SyncState.STOPPED -> drop(id)
                 else -> {}
             }
@@ -233,15 +285,24 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
      * Play [fid] from the start on [nodes] (one tablet is simply a group of one). Replaces any
      * session; tablets of the old one that are not in the new one are stopped.
      */
-    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>) {
+    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>, url: String? = null) {
         synchronized(lock) {
-            if (nodes.isEmpty()) return
+            // A stream goes only to tablets that are online, sealed and say stream1. The rest are left out.
+            val go = if (url == null) nodes else nodes.filter { eligible(it, true) }.toSet()
+            if (go.isEmpty()) return
             val now = clock()
-            _session.value?.nodes?.minus(nodes)?.forEach { halt(it, now) }
+            _session.value?.nodes?.minus(go)?.forEach { halt(it, now) }
             _states.value = emptyMap()
             needPlan.clear(); offlineSince.clear()
-            nodes.forEach { quiet -= it }
-            _session.value = SyncSession(fid, title, durMs, nodes, 0, now + LEAD_MS, true)
+            go.forEach { quiet -= it }
+            _failed.value = emptyMap()
+            val streaming = url != null
+            // A stream starts later than a file: every tablet opens the connection and fills its buffer first.
+            val lead = if (streaming) STREAM_LEAD_MS else LEAD_MS
+            wait = GroupWait(streaming).also { it.start(go) }
+            genAt = now
+            _waiting.value = null
+            _session.value = SyncSession(fid, title, durMs, go, 0, now + lead, true, url)
             planAll(now)
         }
     }
@@ -250,6 +311,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
     fun pause() {
         synchronized(lock) {
             val s = _session.value ?: return
+            wait.manualPause(); refreshWait()
             if (!s.playing) return
             _session.value = s.copy(anchorPos = s.expectedPos(clock()), playing = false)
             s.nodes.forEach { port.send(it, SyncMessages.cmdSyncPause()) }
@@ -264,8 +326,9 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         synchronized(lock) {
             val s = _session.value ?: return
             val now = clock()
+            wait.manualResume(); refreshWait()
             // Already playing: the line stays where it is, so tablets in step do not even blink.
-            if (!s.playing) _session.value = s.copy(anchorAt = now + LEAD_MS, playing = true)
+            if (!s.playing) _session.value = s.copy(anchorAt = now + leadFor(s), playing = true)
             planAll(now)
         }
     }
@@ -279,7 +342,8 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             val s = _session.value ?: return
             val now = clock()
             val target = if (s.durMs > 0) posMs.coerceIn(0, s.durMs) else posMs.coerceAtLeast(0)
-            _session.value = s.copy(anchorPos = target, anchorAt = now + LEAD_MS)
+            _session.value = s.copy(anchorPos = target, anchorAt = now + leadFor(s))
+            wait.seek(s.playing); genAt = now; refreshWait()
             planAll(now)
         }
     }
@@ -307,7 +371,10 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
     }
 
     /** Send one tablet the current plan again, for a tablet showing "Paused" while the group plays. */
-    fun rejoin(id: String) = synchronized(lock) { plan(id, LEAD_MS) }
+    fun rejoin(id: String) = synchronized(lock) { plan(id, _session.value?.let { leadFor(it) } ?: LEAD_MS) }
+
+    /** The parent has seen the failure of tablet [id] (or chose "Save to tablets instead"). */
+    fun dismissFailure(id: String) { _failed.update { it - id } }
 
     /** The next episode every tablet in the session has, or null. Drives "Next episode". */
     fun next(): LibraryItem? = _session.value?.let { Library.next(library(), it.fid, it.nodes) }
@@ -363,9 +430,41 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         quiet[id] = now + QUIET_MS
     }
 
+    /** How far ahead a start, seek or resume is scheduled: longer for a stream, which has to buffer first. */
+    private fun leadFor(s: SyncSession) = if (s.streaming) STREAM_LEAD_MS else LEAD_MS
+
+    /** Checked on every send of the address: online, a sealed link, says stream1, and in the session. */
+    private fun eligible(id: String, inSession: Boolean) =
+        port.isOnline(id) && StreamGate.masterSends(port.isSealed(id), port.status(id)?.supportsStream == true, inSession)
+
     private fun planAll(now: Long) {
         lastAnchor = now
-        _session.value?.nodes?.forEach { plan(it, LEAD_MS) }
+        _session.value?.let { s -> s.nodes.forEach { plan(it, leadFor(s)) } }
+    }
+
+    /** Carry out what the group wait asked for. Holds the lock. */
+    private fun act(acts: List<WaitAct>, now: Long) {
+        for (a in acts) when (a) {
+            is WaitAct.Pause -> {
+                val s = _session.value ?: continue
+                if (s.playing) {
+                    _session.value = s.copy(anchorPos = s.expectedPos(now), playing = false)
+                    s.nodes.forEach { port.send(it, SyncMessages.cmdSyncPause()) }
+                }
+            }
+            WaitAct.Resume -> {
+                val s = _session.value ?: continue
+                if (!s.playing) _session.value = s.copy(anchorAt = now + leadFor(s), playing = true)
+                planAll(now)
+            }
+            is WaitAct.TooSlow -> port.say(TogetherText.tooSlow(kid(a.id)))
+        }
+        refreshWait()
+    }
+
+    private fun refreshWait() {
+        val who = wait.waitingFor().map { kid(it) }
+        _waiting.value = if (who.isEmpty()) null else TogetherText.waitingFor(who)
     }
 
     private fun plan(id: String, lead: Long) { if (sendPlan(id, lead)) needPlan -= id else needPlan += id }
@@ -375,9 +474,16 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         val s = _session.value ?: return true
         if (id !in s.nodes) return true
         if (!port.isOnline(id)) return false
+        // The address has the Master's Jellyfin token in it. A tablet that is not sealed and stream1 never gets it.
+        if (s.streaming && !eligible(id, true)) {
+            port.say(TogetherText.cantStreamYet(kid(id)))
+            halt(id, clock())
+            drop(id)
+            return true
+        }
         val off = clocks[id]?.offset ?: return false
         val c = SyncPlan.planFor(s, off, clock(), lead)
-        if (!port.send(id, SyncMessages.cmdSync(c.fid, c.pos, c.at, c.title, s.nodes.size))) return false
+        if (!port.send(id, SyncMessages.cmdSync(c.fid, c.pos, c.at, c.title, s.nodes.size, c.url))) return false
         // A paused group: the tablet loads the movie, goes to the spot and waits there.
         if (!s.playing) port.send(id, SyncMessages.cmdSyncPause())
         return true
@@ -388,12 +494,17 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         needPlan -= id; offlineSince -= id
         _states.update { it - id }
         val left = s.nodes - id
-        if (left.isNotEmpty()) { _session.value = _session.value?.copy(nodes = left); return }
+        if (left.isNotEmpty()) {
+            _session.value = _session.value?.copy(nodes = left)
+            act(wait.gone(id, clock()), clock())
+            return
+        }
         end()
         if (ended) port.say("Finished on everyone's tablet")
     }
 
     private fun end() {
+        wait.stop(); _waiting.value = null
         _session.value = null
         _states.value = emptyMap()
         needPlan.clear(); offlineSince.clear()
@@ -418,13 +529,19 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
                 clocks[id]?.let { port.send(id, SyncMessages.cmdPing(it.nextPingId(), clock())) }
             }
         }
-        for (id in needPlan.toList()) if (sendPlan(id, LEAD_MS)) needPlan -= id
+        val lead = _session.value?.let { leadFor(it) } ?: LEAD_MS
+        for (id in needPlan.toList()) if (sendPlan(id, lead)) needPlan -= id
         _session.value?.let { s ->
             for (id in s.nodes) {
                 if (port.isOnline(id)) offlineSince -= id
-                else if (now - offlineSince.getOrPut(id) { now } > OFFLINE_DROP_MS) drop(id)
+                else {
+                    // A tablet that lost its link does not hold the group: the wait leaves it out at once.
+                    if (wait.enabled) act(wait.offline(id, now), now)
+                    if (now - offlineSince.getOrPut(id) { now } > OFFLINE_DROP_MS) drop(id)
+                }
             }
         }
+        if (wait.enabled) act(wait.tick(now), now)
         _session.value?.let { s ->
             if (s.playing && now - lastAnchor >= REANCHOR_MS) {
                 lastAnchor = now
@@ -439,6 +556,8 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         const val TICK_MS = 150L
         /** How far ahead a start is scheduled, so every tablet has the command before it is due. */
         const val LEAD_MS = 1500L
+        /** The same for a streamed movie: time for every tablet to connect and fill its buffer. */
+        const val STREAM_LEAD_MS = 4000L
         const val REANCHOR_MS = 60_000L
         const val OFFLINE_DROP_MS = 60_000L
         const val SCAN_WAIT_MS = 15_000L

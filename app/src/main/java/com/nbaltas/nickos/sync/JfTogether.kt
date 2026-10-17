@@ -69,6 +69,19 @@ object JfTogether {
         return if (anyLeft) "$who went offline, starting without them" else "$who went offline"
     }
 
+    /**
+     * The tablets in [selected] that can be streamed to right now: online, a sealed link and "stream1".
+     * [canStream] says that for one tablet; the rest are the ones the label names.
+     */
+    fun streamSplit(selected: Set<String>, canStream: (String) -> Boolean): Pair<Set<String>, Set<String>> =
+        selected.partition(canStream).let { it.first.toSet() to it.second.toSet() }
+
+    /** "Stream now on 2 tablets", or "Stream now on 2 tablets (Leo can't stream yet)". [cant] are names. */
+    fun streamLabel(eligible: Int, cant: List<String>): String {
+        val base = "Stream now on $eligible tablet${if (eligible == 1) "" else "s"}"
+        return if (cant.isEmpty()) base else "$base (${TogetherText.join(cant)} can't stream yet)"
+    }
+
     /** One tablet's line while getting ready. */
     fun rowText(owns: Boolean, job: SyncMessages.JobEntry?): String = when {
         owns -> "Ready"
