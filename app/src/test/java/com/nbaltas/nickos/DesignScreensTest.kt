@@ -880,6 +880,15 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun controlDeviceLandscapeBlocked1024() = deviceTabLandscape("NoPermission", landscapeBlocked)
 
+    /** The "Touch" switch under Landscape: touch turned off and the overlay shield in place. The foreman records it. */
+    @Config(qualifiers = "w960dp-h1100dp-mdpi")
+    @Test fun deviceTouchSwitch() {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin")
+            .copy(landscape = landscapeOn, caps = listOf("touch1"), touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        shot("Device-TouchSwitch") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
         com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {}, onTalkNotifications = {})
     }

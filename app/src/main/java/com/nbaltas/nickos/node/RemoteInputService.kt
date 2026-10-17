@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.nbaltas.nickos.App
@@ -62,9 +64,29 @@ class RemoteInputService : AccessibilityService() {
         return TouchMap.toPixels(xN, yN, w, h)
     }
 
-    private fun gesture(path: Path, ms: Long): Boolean = try {
-        dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, ms.coerceAtLeast(1))).build(), null, null)
-    } catch (e: Exception) { Log.w(TAG, "gesture refused", e); false }
+    /**
+     * With the touch lock on, the shield window would swallow the parent's gesture too, so it lets touches through for
+     * the length of the gesture (see [InjectGate]). Physical touches can get through only during those few hundred
+     * milliseconds. One gesture at a time while the shield is up: an extra one is dropped. The shield comes back when
+     * Android answers, when it refuses, or [TouchShield.RESTORE_SLACK_MS] after the gesture should have ended if it
+     * never answers. Each gesture's token keeps an old answer from touching a newer gesture.
+     */
+    private fun gesture(path: Path, ms: Long): Boolean {
+        val len = ms.coerceAtLeast(1)
+        val overlay = try { App.get(this).node.overlay } catch (e: Exception) { null }
+        val token = overlay?.beginInject() ?: NodeOverlay.NO_SHIELD
+        if (token == NodeOverlay.DROPPED) return false
+        val callback = if (token > 0) object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) { overlay?.endInject(token) }
+            override fun onCancelled(gestureDescription: GestureDescription?) { overlay?.endInject(token) }
+        } else null
+        if (token > 0) Handler(Looper.getMainLooper()).postDelayed({ overlay?.endInject(token) }, len + TouchShield.RESTORE_SLACK_MS)
+        val taken = try {
+            dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, len)).build(), callback, null)
+        } catch (e: Exception) { Log.w(TAG, "gesture refused", e); false }
+        if (!taken && token > 0) overlay?.endInject(token)
+        return taken
+    }
 
     companion object {
         private const val TAG = "NickOS.Remote"

@@ -568,6 +568,8 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // Hidden when the Node does not have the touch1 capability.
+                    if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
                     // An old Node has no "ring1": no button.
                     if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
                     // One short line under Lock, so Lock is never pushed out of the card.
@@ -658,11 +660,39 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             cards.chunked(cols).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).height(cardH)) } }
+                // The Touch row makes the Screen card taller: its grid row gets a fixed extra, every card keeps a bounded height.
+                val rowH = if (st?.supportsTouch == true && row.any { it === cards[0] }) cardH + 64.dp else cardH
+                Row(Modifier.height(rowH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
             }
         }
     }
     if (renaming) RenameDialog(v.node.name, onDone = { name -> renaming = false; if (name != null) m.rename(v.node.id, name) })
+}
+
+/**
+ * "Touch" under "Lock tablet now" in the Screen card. On means the kid can touch the screen. Off sends the lock; the words below it say
+ * what the tablet really does (see [TouchText]), and the Allow button asks the kid tablet for the overlay permission.
+ */
+@Composable
+private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlayOk: Boolean, m: com.nbaltas.nickos.master.MasterRuntime) {
+    val on = TouchText.touchOn(touch)
+    val change = { nowOn: Boolean ->
+        // Without the overlay permission the shield only covers NickOS: ask for the permission first.
+        if (!nowOn && !overlayOk) m.askPermission(v.node.id)
+        m.setTouchOff(v.node.id, !nowOn)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.fillMaxWidth().toggleable(on, role = androidx.compose.ui.semantics.Role.Switch) { change(it) },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Touch", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+            NickSwitch(on) { change(it) }
+        }
+        val status = TouchText.status(touch, v.node.name)
+        Text(status ?: TouchText.HINT, style = body(14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
+        if (TouchText.offerAllow(touch)) StartButton(Lucide.Settings, "Allow on ${v.node.name}", height = 40.dp) { m.askPermission(v.node.id) }
+    }
 }
 
 /**
