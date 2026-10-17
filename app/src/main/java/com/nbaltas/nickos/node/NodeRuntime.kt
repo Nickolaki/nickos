@@ -231,7 +231,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     fun endMaintenance() = relock.end()
 
     /** NickOS came to the front. */
-    fun onForeground() = relock.onForeground()
+    fun onForeground() {
+        device.clearUntrusted()
+        relock.onForeground()
+    }
 
     /** Once per app update, with a grown-up's consent: put the remote control switch back if the update dropped it. Android refusing it is final. */
     private fun reenableRemoteOncePerUpdate() {

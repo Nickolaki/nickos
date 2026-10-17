@@ -45,7 +45,7 @@ class UsageForegroundTest {
         u.from(41_000)
         assertNull(u.fold(41_000, true, emptyList(), strict = true))
         u.from(42_000)
-        assertEquals(settings, u.fold(42_000, true, listOf(res(settings)), strict = true))
+        assertNull(u.fold(42_000, true, listOf(res(settings)), strict = true))
     }
 
     @Test fun `no usage access is unknown and forgets the cache`() {
@@ -80,14 +80,44 @@ class UsageForegroundTest {
         assertNull(u.fold(44_000, true, emptyList(), strict = true))
     }
 
-    @Test fun `a fresh resume in a later incremental query is trusted again`() {
+    @Test fun `events after a clock change never make strict trusted`() {
         val u = rolledBack()
         u.from(43_000)
         assertNull(u.fold(43_000, true, emptyList(), strict = true))
         u.from(44_000)
-        assertEquals(settings, u.fold(44_000, true, listOf(res(settings)), strict = true))
+        assertNull(u.fold(44_000, true, listOf(res(settings)), strict = true))
         u.from(45_000)
-        assertEquals(settings, u.fold(45_000, true, emptyList(), strict = true))
+        assertNull(u.fold(45_000, true, listOf(res(jelly)), strict = true))
+        assertEquals(jelly, u.fold(46_000, true, emptyList(), strict = false))
+    }
+
+    @Test fun `a rollback seen by a non strict call makes strict null`() {
+        val u = UsageForeground()
+        u.from(100_000)
+        u.fold(100_000, true, listOf(res(jelly)), strict = false)
+        u.from(40_000)
+        assertEquals(null, u.fold(40_000, true, emptyList(), strict = false))
+        u.from(41_000)
+        assertNull(u.fold(41_000, true, listOf(res(jelly)), strict = true))
+    }
+
+    @Test fun `after clearUntrusted an allowed foreground is trusted again`() {
+        val u = rolledBack()
+        u.from(43_000)
+        assertNull(u.fold(43_000, true, listOf(res(settings)), strict = true))
+        u.clearUntrusted()
+        u.from(44_000)
+        assertEquals(settings, u.fold(44_000, true, emptyList(), strict = true))
+        u.from(45_000)
+        assertEquals(jelly, u.fold(45_000, true, listOf(res(jelly)), strict = true))
+    }
+
+    @Test fun `without a discontinuity strict follows the events`() {
+        val u = UsageForeground()
+        u.from(10_000)
+        assertEquals(jelly, u.fold(10_000, true, listOf(res(jelly)), strict = true))
+        u.from(11_000)
+        assertEquals(settings, u.fold(11_000, true, listOf(pau(jelly), res(settings)), strict = true))
     }
 
     @Test fun `relock goes home when the foreground is unknown`() {

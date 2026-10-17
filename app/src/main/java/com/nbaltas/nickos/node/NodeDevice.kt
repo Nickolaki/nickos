@@ -277,6 +277,10 @@ class NodeDevice(private val ctx: Context) {
 
     private val usage = UsageForeground()
 
+    /** NickOS itself is in front again, so a clock change no longer blocks the strict lookup. */
+    @Synchronized
+    fun clearUntrusted() = usage.clearUntrusted()
+
     /**
      * Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened.
      * Reads usage events incrementally: 6h back the first time, then only what's new.
