@@ -59,7 +59,9 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val canOverlay = rt.device.canOverlay()
         // The touch shield steps aside in parent mode and under the walls that already block touches. It sits lowest, so the
         // touchable "Found me!" wall above it still takes taps. Without the overlay permission NodeApp draws a box instead.
-        val shield = canOverlay && rt.shieldWanted()
+        // During a remote gesture the window is taken out altogether: Android 12+ drops touches for other apps under any overlay of ours.
+        val shield = canOverlay && rt.shieldWanted() && !injectGate.busy
+        rt.expirePin()
         scheduleShieldCheck()
         if (!canOverlay) {
             hideAll()
@@ -133,11 +135,11 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             }
             true
         }
-        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        if (injectGate.busy) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            // Kid tablets need Android 8+ (NodeSupport.MIN_SDK = 26), so this node code never runs on API 24-25 where the type is missing.
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START }
         wm.addView(v, lp)
@@ -150,30 +152,35 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
      * token to give to [endInject]. Waits (a short while) until the shield really lets touches through.
      */
     fun beginInject(): Long {
-        if (!shieldAttached()) return NO_SHIELD
+        val overlayUp = shieldAttached()
+        if (!overlayUp && !rt.boxActive.value) return NO_SHIELD
         val token = injectGate.begin() ?: return DROPPED
-        passThrough(true, wait = true)
+        rt.injecting.value = true
+        if (overlayUp) syncShield(wait = true) else waitBoxGone()
         return token
     }
 
     /** Android answered, refused or timed out. Only the injection still in flight puts the shield back. */
     fun endInject(token: Long) {
-        if (token > 0 && injectGate.finish(token)) passThrough(false, wait = false)
+        if (token > 0 && injectGate.finish(token)) {
+            rt.injecting.value = false
+            syncShield(wait = false)
+        }
     }
 
-    private fun passThrough(on: Boolean, wait: Boolean) {
-        val apply = {
-            val v = touchView
-            val lp = v?.layoutParams as? WindowManager.LayoutParams
-            if (v != null && lp != null) try {
-                lp.flags = if (on) lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-                wm.updateViewLayout(v, lp)
-            } catch (e: Exception) { android.util.Log.w("NickOS.Touch", "shield pass through", e) }
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) { apply(); return }
-        if (!wait) { main.post { apply() }; return }
+    /** The in-app Box reads [NodeRuntime.injecting] and leaves composition; wait (a short while) until it has. */
+    private fun waitBoxGone() {
+        if (Looper.myLooper() == Looper.getMainLooper()) return
+        val end = System.currentTimeMillis() + BOX_WAIT_MS
+        while (rt.boxActive.value && System.currentTimeMillis() < end) try { Thread.sleep(10) } catch (_: InterruptedException) { return }
+    }
+
+    /** Takes the shield window out (injection) or puts it back (restore) through the normal update, on the main thread. */
+    private fun syncShield(wait: Boolean) {
+        if (Looper.myLooper() == Looper.getMainLooper()) { update(); return }
+        if (!wait) { main.post { update() }; return }
         val done = java.util.concurrent.CountDownLatch(1)
-        main.post { try { apply() } finally { done.countDown() } }
+        main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Touch", "shield sync", e) } finally { done.countDown() } }
         try { done.await(GUARD_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
     }
 
@@ -278,6 +285,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     companion object {
         private const val GUARD_WAIT_MS = 1500L
         private const val TALK_WAIT_MS = 500L
+        private const val BOX_WAIT_MS = 300L
         const val NO_SHIELD = -1L
         const val DROPPED = 0L
     }

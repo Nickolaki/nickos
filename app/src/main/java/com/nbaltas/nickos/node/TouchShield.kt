@@ -10,6 +10,9 @@ object TouchShield {
     fun wanted(touchOff: Boolean, parentMode: Boolean, locked: Boolean, paused: Boolean, suspended: Boolean = false): Boolean =
         touchOff && !parentMode && !locked && !paused && !suspended
 
+    /** The emergency PIN request is still open: it was asked for and the shield is still away. Otherwise the next hold asks again. */
+    fun pinOpen(requested: Boolean, suspended: Boolean): Boolean = requested && suspended
+
     /** Top left square of the shield, in dp, where a long press asks for the parent PIN. */
     const val CORNER_DP = 80
     const val HOLD_MS = 3_000L

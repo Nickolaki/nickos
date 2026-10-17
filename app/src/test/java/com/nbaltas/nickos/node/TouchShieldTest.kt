@@ -138,6 +138,45 @@ class TouchShieldTest {
         assertEquals("none", NetMessages.effectiveShield(off = true, overlayAttached = false, inAppBox = false))
     }
 
+    @Test fun `leaving the emergency PIN by Back or Home lets the next hold reopen it`() {
+        val s = ShieldSuspension()
+        s.suspend(1_000)
+        assertTrue(TouchShield.pinOpen(requested = true, suspended = s.active(2_000)))
+        // Back, Home or a screen change all end as shieldPinDone(false): the suspension is restored and the request cleared.
+        s.restore()
+        assertFalse(TouchShield.pinOpen(requested = true, suspended = s.active(2_001)))
+        assertTrue("the shield is back", TouchShield.wanted(true, false, false, false, s.active(2_001)))
+        // The next hold suspends again and asks again.
+        s.suspend(5_000)
+        assertTrue(TouchShield.pinOpen(requested = true, suspended = s.active(5_001)))
+    }
+
+    @Test fun `a timed out emergency PIN forgets the request`() {
+        val s = ShieldSuspension()
+        s.suspend(0)
+        assertTrue(TouchShield.pinOpen(true, s.active(TouchShield.SUSPEND_MAX_MS - 1)))
+        assertFalse(TouchShield.pinOpen(true, s.active(TouchShield.SUSPEND_MAX_MS)))
+        assertFalse(TouchShield.pinOpen(false, true))
+    }
+
+    @Test fun `inapp is reported only while the box is really there`() {
+        assertEquals("none", NetMessages.effectiveShield(off = true, overlayAttached = false, inAppBox = false))
+        assertEquals("inapp", NetMessages.effectiveShield(off = true, overlayAttached = false, inAppBox = true))
+        assertEquals("none", NetMessages.effectiveShield(off = false, overlayAttached = false, inAppBox = true))
+    }
+
+    @Test fun `overlapping remote gestures are dropped and the in-app box returns only for the one in flight`() {
+        val g = InjectGate()
+        val first = g.begin()!!
+        assertTrue(g.busy)
+        assertNull("second gesture while the first is in flight", g.begin())
+        assertFalse(g.finish(first + 1))
+        assertTrue("still suspended for the first", g.busy)
+        assertTrue(g.finish(first))
+        assertFalse("the box and window are back", g.busy)
+        assertFalse("a late timeout does nothing", g.finish(first))
+    }
+
     @Test fun `the switch tells the truth`() {
         assertEquals(null, TouchText.status(NetMessages.TouchStatus(false, "none"), "Mia"))
         assertEquals("Touch is off", TouchText.status(NetMessages.TouchStatus(true, "on"), "Mia"))

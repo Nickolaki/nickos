@@ -202,6 +202,14 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** True while the shield asked for the parent PIN pad: NodeApp shows it. */
     val pinWanted: StateFlow<Boolean> = _pinWanted
 
+    /** True while the in-app Box is composed and NickOS is resumed: the only time "inapp" is truthful. */
+    val boxActive = MutableStateFlow(false)
+    /** True while a remote gesture is in flight: the overlay window and the in-app Box both step aside. */
+    val injecting = MutableStateFlow(false)
+
+    /** The prompt window ran out: forget the request, so the next corner hold reopens the PIN. */
+    fun expirePin() { if (_pinWanted.value && !TouchShield.pinOpen(true, shieldSuspension.active(System.currentTimeMillis()))) _pinWanted.value = false }
+
     /** The touch lock is wanted right now: off by the parent, and not in parent mode, under a wall or during the PIN prompt. */
     fun shieldWanted(): Boolean = TouchShield.wanted(
         store.touchOff.value, parentMode, store.lockedBy.value != null, store.pausedMsg.value != null,
@@ -225,7 +233,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     /** What is really in place, for the parent's switch: on (overlay), inapp (only the box inside NickOS) or none. */
     fun touchShieldWire(): String =
-        NetMessages.effectiveShield(shieldWanted(), overlay.shieldAttached(), inAppBox = !device.canOverlay())
+        NetMessages.effectiveShield(
+            shieldWanted(), overlay.shieldAttached() || (injecting.value && device.canOverlay()),
+            inAppBox = !device.canOverlay() && (boxActive.value || injecting.value),
+        )
 
     /** Wrong-PIN lockout for the grown-up PIN pad. Memory only: see [PinGate]. */
     val pinGate = PinGate()

@@ -568,6 +568,8 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     }
                     if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = true, leading = Lucide.LockOpen)
                     else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth(), big = true, leading = Lucide.Lock)
+                    // Hidden when the Node does not have the touch1 capability.
+                    if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
                     // An old Node has no "ring1": no button.
                     if (st?.supportsRing == true) RingButton(st.ringing) { m.ring(v.node.id, !st.ringing) }
                     // One short line under Lock, so Lock is never pushed out of the card.
@@ -626,7 +628,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                     // The cards are about 217dp tall on a 1024x768 or 960x600 tablet: three full buttons did not fit and
                     // Unlink was cut off. Short cards put Restart and Rename side by side.
                     // The landscape switch makes the card one row taller, so it uses the short layout too.
-                    if (tabletCompact(cardH) || st?.landscape != null || st?.supportsTouch == true) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (tabletCompact(cardH) || st?.landscape != null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StartButton(Lucide.RefreshCw, "Restart", Modifier.weight(1f), height = 48.dp) { m.restartJellyfin(v.node.id) }
                             StartButton(Lucide.Pencil, "Rename", Modifier.weight(1f), height = 48.dp) { renaming = true }
@@ -644,8 +646,6 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                             if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700), color = C.danger)
                             if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700), color = C.danger)
                         }
-                        // Hidden when the Node does not have the touch1 capability.
-                        if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m)
                     } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
                         StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
@@ -668,7 +668,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
 }
 
 /**
- * "Touch" under the Landscape switch. On means the kid can touch the screen. Off sends the lock; the words below it say
+ * "Touch" under "Lock tablet now" in the Screen card. On means the kid can touch the screen. Off sends the lock; the words below it say
  * what the tablet really does (see [TouchText]), and the Allow button asks the kid tablet for the overlay permission.
  */
 @Composable
