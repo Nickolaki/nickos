@@ -99,7 +99,7 @@ internal class PackageEntryPort(private val ctx: Context) : EntryPort {
 }
 
 /** Where the app opens: the one entry activity that is on. Every internal launch of the app goes through here. */
-fun entryActivity(ctx: Context): ComponentName = ComponentName(ctx.packageName, EntryFlow.current(PackageEntryPort(ctx)).className)
+fun entryActivity(ctx: Context, port: EntryPort = PackageEntryPort(ctx)): ComponentName = ComponentName(ctx.packageName, EntryFlow.current(port).className)
 
 /** A launch intent for the app's front door. */
 fun entryIntent(ctx: Context): Intent = Intent().setComponent(entryActivity(ctx))

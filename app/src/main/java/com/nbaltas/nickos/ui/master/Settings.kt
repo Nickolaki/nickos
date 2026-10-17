@@ -709,7 +709,9 @@ private fun AboutSection() {
         }
         HomeScreenRow()
         NickButton(if (confirmReset) "Tap again: forget every tablet and start over" else "Reset this tablet", {
-            if (confirmReset) app.store.resetAll() else confirmReset = true
+            if (confirmReset) {
+                if (EntrySwitch.enableMain(ctx)) app.store.resetAll()
+            } else confirmReset = true
         }, style = BtnStyle.DANGER)
     }
 }

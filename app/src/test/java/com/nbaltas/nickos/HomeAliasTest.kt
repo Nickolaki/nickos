@@ -240,6 +240,15 @@ class HomeAliasDeviceTest {
     private fun state(e: Entry) = pm.getComponentEnabledSetting(ComponentName(ctx.packageName, e.className))
     private fun makeOwner() = shadowOf(ctx.getSystemService(DevicePolicyManager::class.java)).setDeviceOwner(ComponentName(ctx, AdminReceiver::class.java))
 
+    @Test fun `entry helper uses the enabled component from its package manager port`() {
+        for ((main, parent) in listOf(true to false, false to true, true to true)) {
+            val port = FakeEntryPort(main, parent)
+            val want = if (main) Entry.MAIN else Entry.PARENT
+            assertEquals(ComponentName(ctx.packageName, want.className), entryActivity(ctx, port))
+            assertTrue(port.writes.isEmpty())
+        }
+    }
+
     @Test fun `a kid tablet never has a component state written`() {
         assertTrue(EntrySwitch.apply(ctx, Role.NODE, false))
         assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, state(Entry.MAIN))

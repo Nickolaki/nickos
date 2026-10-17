@@ -74,7 +74,7 @@ fun KioskSetup(existing: Boolean, onExpired: () -> Unit, onStart: () -> Unit) {
         state = state,
         unavailable = unavailable,
         onStep = { step ->
-            rearm()
+            if (!rearm()) return@KioskSetupScreen
             val intent: Intent = when (step) {
                 KioskStep.HOME -> rt.device.homeRequestIntent()
                 KioskStep.OVERLAY -> rt.device.overlayIntent()
@@ -83,7 +83,7 @@ fun KioskSetup(existing: Boolean, onExpired: () -> Unit, onStart: () -> Unit) {
             }
             try { launcher.launch(intent) } catch (e: ActivityNotFoundException) { unavailable = unavailable + step }
         },
-        onStart = onStart,
+        onStart = { if (rearm()) onStart() },
     )
 }
 
