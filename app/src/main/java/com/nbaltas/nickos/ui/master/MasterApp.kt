@@ -418,7 +418,7 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
             session != null && v.node.id in session!!.nodes -> Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
                 val together = session!!
                 val frac = if (together.durMs > 0) app.master.sync.expectedPos().toFloat() / together.durMs else 0f
-                com.nbaltas.nickos.ui.theme.Artwork(null, together.title, Modifier.size(124.dp, 186.dp), radius = 14.dp)
+                com.nbaltas.nickos.ui.theme.Artwork(together.art, together.title, Modifier.size(124.dp, 186.dp), radius = 14.dp)
                 Column(Modifier.weight(1f).height(186.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     EyebrowText("Watching together", C.accent)
                     Title(together.title, 32, lineHeight = 1.05f, maxLines = 1)

@@ -68,7 +68,9 @@ import com.nbaltas.nickos.master.DlState
 import com.nbaltas.nickos.master.JellyfinDownloads
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.sync.JfTogether
+import com.nbaltas.nickos.sync.JfVideo
 import com.nbaltas.nickos.sync.JobState
+import com.nbaltas.nickos.sync.StreamCodec
 import com.nbaltas.nickos.sync.Library
 import com.nbaltas.nickos.sync.LibraryItem
 import com.nbaltas.nickos.sync.Show
@@ -439,6 +441,8 @@ internal class JfStreamFail(val id: String, val text: String, val canSave: Boole
 internal class JfStreamUi(
     val count: Int, val label: String, val onStream: () -> Unit,
     val failures: List<JfStreamFail> = emptyList(), val onSaveInstead: (String) -> Unit = {},
+    /** "Leo's tablet gets a converted stream (...)", or null when every tablet plays the file directly. */
+    val convertedLine: String? = null,
 )
 
 /** Pick a Jellyfin movie or episode, choose the tablets, save it, send it, and start it on all of them in sync. */
@@ -542,15 +546,26 @@ internal fun JfPickPanel(
     // A tablet can be streamed to only when it is online, on a sealed link and says "stream1". The label counts the real ones.
     val account by App.get(LocalContext.current).store.jellyfin.collectAsState()
     val client = remember(account) { master.jellyfin() }
+    // The movie's video stream (one GET), to know which tablets cannot decode the file. Unknown until it arrives: the file as before.
+    var video by remember(item.id, account) { mutableStateOf<JfVideo?>(null) }
+    LaunchedEffect(item.id, client, account) {
+        val a = account
+        if (client != null && a != null) video = runCatching { client.video(a.userId, item.id) }.getOrNull()
+    }
     val (streamOk, streamNo) = JfTogether.streamSplit(selected) { id ->
         nodes.firstOrNull { it.node.id == id }?.let { it.online && it.status?.supportsStream == true && master.isSealed(id) } == true
     }
+    val decs = streamOk.associateWith { id -> nodes.firstOrNull { it.node.id == id }?.status?.dec }
     val stream = if (client == null) null else JfStreamUi(
         count = streamOk.size,
         label = JfTogether.streamLabel(streamOk.size, streamNo.map(nameOf)),
+        convertedLine = StreamCodec.convertedLine(StreamCodec.converted(video, decs).map { sync.kid(it) }),
         onStream = {
             note = null
-            sync.start(client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item), art = client.landscape(item) ?: client.poster(item))
+            sync.start(
+                client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item),
+                art = client.landscape(item) ?: client.poster(item), nodeUrls = client.streamUrls(item, video, decs),
+            )
         },
         failures = failures.values.filter { it.fid == client.streamFid(item) }.map { f ->
             JfStreamFail(f.id, TogetherText.streamError(nameOf(f.id), f.code), f.canSaveInstead)
@@ -564,6 +579,7 @@ internal fun JfPickPanel(
     JfPickContent(
         item = item, nodes = nodes, selected = selected, onToggle = { id, on -> selected = if (on) selected + id else selected - id },
         prep = prep, note = note, onBack = onBack, stream = stream,
+        art = client?.let { it.landscape(item) ?: it.poster(item) },
         onPrimary = { beginSave(selected) },
         onRetryRow = { id -> attempt++; lib?.let { transfer.retry(it.fid, id) } },
         onRetrySave = {
@@ -592,6 +608,8 @@ internal fun JfPickContent(
     prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
     onRetryRow: (String) -> Unit = {}, onRetrySave: () -> Unit = {}, onCancel: () -> Unit = {},
     stream: JfStreamUi? = null,
+    /** The Jellyfin artwork for the poster; null draws the placeholder. */
+    art: String? = null,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
@@ -600,7 +618,7 @@ internal fun JfPickContent(
         }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            MovieThumb(null, item.displayTitle, Modifier.size(400.dp, 225.dp), showTitle = false)
+            MovieThumb(null, item.displayTitle, Modifier.size(400.dp, 225.dp), showTitle = false, art = art)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (item.isEpisode) EyebrowText("${item.epCode} · ${item.name}")
                 Title(item.displayTitle, 44, lineHeight = 1.05f)
@@ -644,6 +662,7 @@ internal fun JfPickContent(
                     style = BtnStyle.SECONDARY, big = true, leading = Lucide.Tablet, enabled = k > 0,
                 )
                 Muted(TogetherText.STREAM_HINT, 15, Modifier.padding(top = 10.dp))
+                stream.convertedLine?.let { Muted(it, 15, Modifier.padding(top = 4.dp)) }
             } else NickButton(
                 if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
                 style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0,

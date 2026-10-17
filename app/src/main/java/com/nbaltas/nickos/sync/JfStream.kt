@@ -19,6 +19,20 @@ object JfStream {
     fun authedUrl(base: String, itemId: String, token: String): String =
         base.trimEnd('/') + "/Videos/" + itemId + "/stream?static=true&api_key=" + URLEncoder.encode(token, "UTF-8")
 
+    /**
+     * Jellyfin's HLS transcode address (H.264 + AAC stereo) for a tablet that cannot decode the file. [deviceId] is
+     * stable per tablet so each one has its own transcode. Carries the token like [authedUrl].
+     */
+    fun hlsUrl(base: String, itemId: String, sourceId: String, token: String, maxWidth: Int, deviceId: String): String =
+        base.trimEnd('/') + "/Videos/" + itemId + "/master.m3u8?MediaSourceId=" + enc(sourceId) +
+            "&VideoCodec=h264&AudioCodec=aac&MaxWidth=" + maxWidth + "&VideoBitrate=8000000&AudioBitrate=192000" +
+            "&TranscodingMaxAudioChannels=2&SegmentContainer=ts&api_key=" + enc(token) + "&DeviceId=" + enc(deviceId)
+
+    /** True for an address made by [hlsUrl]. */
+    fun isHls(url: String?): Boolean = url != null && url.contains("master.m3u8")
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+
     /** "jf:" + a short hash of the server address + ":" + the item id. The same movie on the same server gets the same fid. */
     fun fid(base: String, itemId: String): String {
         val host = base.trimEnd('/').lowercase()

@@ -4,6 +4,9 @@ import com.nbaltas.nickos.BuildConfig
 import com.nbaltas.nickos.data.JellyfinAccount
 import com.nbaltas.nickos.data.optStr
 import com.nbaltas.nickos.sync.JfStream
+import com.nbaltas.nickos.sync.JfVideo
+import com.nbaltas.nickos.sync.NodeDec
+import com.nbaltas.nickos.sync.StreamCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -225,6 +228,13 @@ class Jellyfin(val account: JellyfinAccount, private val deviceName: String, pri
     fun streamUrl(item: JfItem) = "$base/Videos/${item.id}/stream?static=true"
     /** The stream address with the token in it, for a tablet that streams. Only for a sealed link; never log it. */
     fun authedStreamUrl(item: JfItem) = JfStream.authedUrl(base, item.id, account.token)
+    /** The video stream of [id] (codec, profile, bit depth, size): one GET of the item. Null when the item shows none. */
+    suspend fun video(uid: String, id: String): JfVideo? = JfVideo.from(get("/Users/$uid/Items/$id"))
+
+    /** One address per tablet: the file where the tablet can decode it, else a converted stream. Carries the token; never log it. */
+    fun streamUrls(item: JfItem, video: JfVideo?, decs: Map<String, NodeDec?>): Map<String, String> =
+        decs.mapValues { (nodeId, dec) -> StreamCodec.urlFor(base, account.token, item.id, video, dec, nodeId) }
+
     /** The fid a streamed copy of [item] plays under. */
     fun streamFid(item: JfItem) = JfStream.fid(base, item.id)
 

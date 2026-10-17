@@ -749,6 +749,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("version", BuildConfig.VERSION_NAME)
             .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP + NetMessages.HEARTBEAT_CAP + NetMessages.TOUCH_CAP))
             .put("touchOff", store.touchOff.value).put("touchShield", touchShieldWire())
+            .apply { DecoderProbe.get()?.let { put(com.nbaltas.nickos.sync.NodeDec.KEY, com.nbaltas.nickos.sync.NodeDec.encode(it)) } }
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("power", NetMessages.encodePower(powerRunner.status()))

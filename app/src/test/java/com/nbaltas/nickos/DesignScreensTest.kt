@@ -516,6 +516,23 @@ class DesignScreensTest {
         }
     }
 
+    @Test fun togetherJellyfinStreamConverted() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-Stream-Converted") {
+            val nodes = rememberNodeViews()
+            val selected = nodes.filter { it.online }.map { it.node.id }.toSet()
+            val (ok, no) = JfTogether.streamSplit(selected) { id -> nodes.first { it.node.id == id }.node.name.startsWith("Hailey") }
+            val stream = JfStreamUi(
+                ok.size, JfTogether.streamLabel(ok.size, no.map { id -> nodes.first { it.node.id == id }.node.name }), onStream = {},
+                convertedLine = com.nbaltas.nickos.sync.StreamCodec.convertedLine(listOf("Leo")),
+            )
+            JfPickContent(
+                jfMovie(), nodes, selected, { _, _ -> },
+                prep = null, note = null, onBack = {}, onPrimary = {}, stream = stream,
+            )
+        }
+    }
+
     @Test fun togetherStreamWaiting() {
         val m = app.master
         val now = android.os.SystemClock.elapsedRealtime()

@@ -291,7 +291,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
      * Play [fid] from the start on [nodes] (one tablet is simply a group of one). Replaces any
      * session; tablets of the old one that are not in the new one are stopped.
      */
-    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>, url: String? = null, art: String? = null) {
+    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>, url: String? = null, art: String? = null, nodeUrls: Map<String, String> = emptyMap()) {
         synchronized(lock) {
             // A stream goes only to tablets that are online, sealed and say stream1. The rest are left out.
             val go = if (url == null) nodes else nodes.filter { eligible(it, true) }.toSet()
@@ -304,11 +304,12 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             _failed.value = emptyMap()
             val streaming = url != null
             // A stream starts later than a file: every tablet opens the connection and fills its buffer first.
-            val lead = if (streaming) STREAM_LEAD_MS else LEAD_MS
+            val session = SyncSession(fid, title, durMs, go, 0, 0, true, url, art, nodeUrls.filterKeys { it in go })
+            val lead = leadFor(session)
             wait = GroupWait(streaming).also { it.start(go) }
             genAt = now
             _waiting.value = null
-            _session.value = SyncSession(fid, title, durMs, go, 0, now + lead, true, url, art)
+            _session.value = session.copy(anchorAt = now + lead)
             planAll(now)
         }
     }
@@ -437,7 +438,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
     }
 
     /** How far ahead a start, seek or resume is scheduled: longer for a stream, which has to buffer first. */
-    private fun leadFor(s: SyncSession) = if (s.streaming) STREAM_LEAD_MS else LEAD_MS
+    private fun leadFor(s: SyncSession) = if (!s.streaming) LEAD_MS else if (s.converted) CONVERTED_LEAD_MS else STREAM_LEAD_MS
 
     /** Checked on every send of the address: online, a sealed link, says stream1, and in the session. */
     private fun eligible(id: String, inSession: Boolean) =
@@ -488,7 +489,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             return true
         }
         val off = clocks[id]?.offset ?: return false
-        val c = SyncPlan.planFor(s, off, clock(), lead)
+        val c = SyncPlan.planFor(s, off, clock(), lead, id)
         if (!port.send(id, SyncMessages.cmdSync(c.fid, c.pos, c.at, c.title, s.nodes.size, c.url))) return false
         // A paused group: the tablet loads the movie, goes to the spot and waits there.
         if (!s.playing) port.send(id, SyncMessages.cmdSyncPause())
@@ -564,6 +565,8 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
         const val LEAD_MS = 1500L
         /** The same for a streamed movie: time for every tablet to connect and fill its buffer. */
         const val STREAM_LEAD_MS = 4000L
+        /** The same when a tablet gets a converted stream: the server has to start the transcode first. */
+        const val CONVERTED_LEAD_MS = 8000L
         const val REANCHOR_MS = 60_000L
         const val OFFLINE_DROP_MS = 60_000L
         const val SCAN_WAIT_MS = 15_000L
