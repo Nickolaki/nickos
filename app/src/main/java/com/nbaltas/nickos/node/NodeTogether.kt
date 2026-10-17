@@ -5,6 +5,8 @@ import android.os.SystemClock
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
+import android.util.Log
+import com.nbaltas.nickos.sync.StreamGate
 import com.nbaltas.nickos.sync.SyncMessages
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -47,7 +49,7 @@ class NodeTogether(
      * the Master that sent it; [reply] answers that Master only (a pong must not reach another
      * Master, whose ping ids are its own).
      */
-    fun command(c: String, m: JSONObject, reply: (JSONObject) -> Unit): Boolean {
+    fun command(c: String, m: JSONObject, sealed: Boolean, reply: (JSONObject) -> Unit): Boolean {
         when (c) {
             "ping" -> {
                 val t1 = SystemClock.elapsedRealtime()
@@ -55,7 +57,8 @@ class NodeTogether(
             }
             // Scanning hashes new files and makes thumbnails: not on the socket thread, pings wait behind it.
             "videos" -> scope.launch { reply(videosMessage()) }
-            "sync" -> SyncMessages.decodeSyncCmd(m)?.let { player.onSync(it) }
+            // A stream address carries the Master's token: followed only when it came over a sealed link.
+            "sync" -> SyncMessages.decodeSyncCmd(m)?.let { if (StreamGate.nodeAllows(sealed, it.url)) player.onSync(it) else Log.w(TAG, "stream refused on an unsealed link") }
             "syncPause" -> player.onPause()
             "syncStop" -> player.stop()
             "serve" -> m.optString("fid").takeIf { it.isNotEmpty() }?.let { fid -> scope.launch { reply(serving(fid)) } }
@@ -103,7 +106,8 @@ class NodeTogether(
 
     companion object {
         /** What this build tells a Master it can do, inside `status`. */
-        val CAPS = listOf("sync1", "del1")
+        val CAPS = listOf("sync1", "del1", SyncMessages.STREAM_CAP)
+        private const val TAG = "NickOS.Together"
         /** Commands that mean the parent wants this tablet doing something else: the movie stops. */
         val LEAVES_PLAYER = setOf("home", "open", "lockApp", "unlink")
     }

@@ -283,7 +283,7 @@ fun loadHomeApp(ctx: android.content.Context, pkg: String): HomeApp? = try {
 
 /** "Grown-ups only" card. Calls [onOk] when the 4 digits match [pin]. */
 @Composable
-fun PinPad(pin: String, onOk: () -> Unit, onCancel: () -> Unit, subtitle: String = "Enter the parent PIN to leave kid mode") {
+fun PinPad(pin: String, onOk: () -> Unit, onCancel: () -> Unit, subtitle: String = "Enter the parent PIN to leave kid mode", onFail: () -> Unit = {}) {
     // The wrong-PIN counter lives on the runtime (not here), or Cancel and holding the avatar again would reset it.
     val gate = App.get(LocalContext.current).node.pinGate
     var entered by remember { mutableStateOf("") }
@@ -321,8 +321,8 @@ fun PinPad(pin: String, onOk: () -> Unit, onCancel: () -> Unit, subtitle: String
                         if (entered.length == 4) {
                             when (val r = gate.tryPin(entered, pin, screenNow())) {
                                 PinResult.Ok -> { entered = ""; onOk() }
-                                is PinResult.Wrong -> { wrong = true; left = r.left; entered = "" }
-                                is PinResult.Locked -> { wrong = false; lockedUntil = r.untilMs; entered = "" }
+                                is PinResult.Wrong -> { wrong = true; left = r.left; entered = ""; onFail() }
+                                is PinResult.Locked -> { wrong = false; lockedUntil = r.untilMs; entered = ""; onFail() }
                             }
                         }
                     }

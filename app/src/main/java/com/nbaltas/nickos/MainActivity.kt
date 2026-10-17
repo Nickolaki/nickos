@@ -65,9 +65,10 @@ open class MainActivity : ComponentActivity() {
                         Role.NONE -> SetupFlow()
                         Role.MASTER -> MasterApp()
                         Role.NODE -> if (!com.nbaltas.nickos.node.NodeSupport.ok()) androidx.compose.material3.Text(com.nbaltas.nickos.node.NodeSupport.REFUSAL_COPY, color = C.text) else NodeApp(
-                            onKidMode = { app.node.parentUntil = 0; enterKidMode() },
+                            onKidMode = { app.node.parentUntil = 0; app.node.overlay.refresh(); enterKidMode() },
                             onParentMode = {
                                 app.node.parentUntil = System.currentTimeMillis() + PARENT_MINUTES * 60_000L
+                                app.node.overlay.refresh()
                                 app.node.device.pauseLockdown()
                                 try { stopLockTask() } catch (_: Exception) {}
                                 // A screen-off (lockNow) leaves the keyguard pending behind lock task;

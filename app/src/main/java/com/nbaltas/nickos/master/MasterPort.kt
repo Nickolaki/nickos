@@ -16,6 +16,8 @@ interface MasterPort {
     fun say(msg: String)
     fun isOnline(id: String): Boolean
     fun status(id: String): NodeStatus?
+    /** True only when tablet [id] has a live link that is sealed. False when offline. No default: every port says so. */
+    fun isSealed(id: String): Boolean
     fun nodes(): List<LinkedNode>
     /** This tablet's own library, scanned now. Blocking: call from a background thread. */
     fun localVideos(): SyncMessages.VideosMsg
@@ -35,6 +37,7 @@ class RuntimePort(private val rt: MasterRuntime, private val store: Store) : Mas
     override fun say(msg: String) = rt.say(msg)
     override fun isOnline(id: String) = id in rt.online.value
     override fun status(id: String) = rt.status.value[id]
+    override fun isSealed(id: String) = rt.isSealed(id)
     override fun nodes() = store.nodes.value
     override fun localVideos() = rt.videos.reply()
     override fun lanAddress() = rt.lanAddress()

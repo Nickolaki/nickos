@@ -17,13 +17,18 @@ class FakeMasterPort : MasterPort {
     var local = SyncMessages.VideosMsg(true, emptyList())
 
     /** Adds an online tablet. [capable] false is a tablet on a NickOS from before Watch together. */
-    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}", canDelete: Boolean = capable) {
+    fun add(id: String, name: String, capable: Boolean = true, host: String? = "192.168.1.${20 + linked.size}", canDelete: Boolean = capable, stream: Boolean = false, sealed: Boolean = false) {
         linked = linked + LinkedNode(id, name, 0, "initial", "token", host = host)
         online += id
+        if (sealed) sealedLinks += id
         val o = JSONObject().put("volume", 50)
-        if (capable) o.put("caps", JSONArray(if (canDelete) listOf("sync1", "del1") else listOf("sync1")))
+        if (capable) o.put("caps", JSONArray((if (canDelete) listOf("sync1", "del1") else listOf("sync1")) + (if (stream) listOf("stream1") else emptyList())))
         statuses[id] = NodeStatus.from(o)
     }
+
+    /** Tablets whose link is sealed. A test removes one to make it an old unsealed link. */
+    val sealedLinks = HashSet<String>()
+    override fun isSealed(id: String) = id in online && id in sealedLinks
 
     /** Runs inside [send], after the message is recorded: lets a test deliver a reply before send returns. */
     var onSend: ((String, JSONObject) -> Unit)? = null

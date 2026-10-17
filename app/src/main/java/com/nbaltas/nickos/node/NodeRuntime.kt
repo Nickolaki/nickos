@@ -244,6 +244,48 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         if (may && !device.reenableRemoteInput()) store.setRemoteReenableUnsupported()
     }
 
+    /** The emergency PIN prompt (3 second hold in the shield's top left corner) keeps the shield away while it is up. */
+    val shieldSuspension = ShieldSuspension()
+    private val _pinWanted = MutableStateFlow(false)
+    /** True while the shield asked for the parent PIN pad: NodeApp shows it. */
+    val pinWanted: StateFlow<Boolean> = _pinWanted
+
+    /** True while the in-app Box is composed and NickOS is resumed: the only time "inapp" is truthful. */
+    val boxActive = MutableStateFlow(false)
+    /** True while a remote gesture is in flight: the overlay window and the in-app Box both step aside. */
+    val injecting = MutableStateFlow(false)
+
+    /** The prompt window ran out: forget the request, so the next corner hold reopens the PIN. */
+    fun expirePin() { if (_pinWanted.value && !TouchShield.pinOpen(true, shieldSuspension.active(System.currentTimeMillis()))) _pinWanted.value = false }
+
+    /** The touch lock is wanted right now: off by the parent, and not in parent mode or the settings window, under a wall or during the PIN prompt. */
+    fun shieldWanted(): Boolean = TouchShield.wanted(
+        store.touchOff.value, lockPaused, store.lockedBy.value != null, store.pausedMsg.value != null,
+        shieldSuspension.active(System.currentTimeMillis()),
+    )
+
+    /** The hold finished: take every shield away, then open the existing parent PIN pad on the home screen. */
+    fun requestShieldPin() {
+        shieldSuspension.suspend(System.currentTimeMillis())
+        _pinWanted.value = true
+        overlay.refresh()
+        device.goHome()
+    }
+
+    /** The PIN pad closed. A right PIN is parent mode (the shield stays away by itself); cancel or a wrong PIN puts the shield back at once. */
+    fun shieldPinDone(entered: Boolean) {
+        _pinWanted.value = false
+        if (!entered) shieldSuspension.restore()
+        overlay.refresh()
+    }
+
+    /** What is really in place, for the parent's switch: on (overlay), inapp (only the box inside NickOS) or none. */
+    fun touchShieldWire(): String =
+        NetMessages.effectiveShield(
+            shieldWanted(), overlay.shieldAttached() || (injecting.value && device.canOverlay()),
+            inAppBox = !device.canOverlay() && (boxActive.value || injecting.value),
+        )
+
     /** Wrong-PIN lockout for the grown-up PIN pad. Memory only: see [PinGate]. */
     val pinGate = PinGate()
 
@@ -360,6 +402,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh(LanAddress.ownIdentity(ctx)) }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         applyLandscape()
+        overlay.refresh() // the touch lock comes back by itself after a reboot or an app update
         powerRunner.start()
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
@@ -380,6 +423,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private val pairGate = PairGate(onChange = { _pairingCode.value = it })
 
     fun openPairing(): String {
+        // Below Android 8 the Node never opens its port, so a code would be a dead screen.
+        if (!NodeSupport.ok()) return ""
         val code = pairGate.open()
         scope.launch { delay(PairGate.TTL_MS + 100); pairGate.expireIfDue() }
         return code
@@ -459,7 +504,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                 val msg = c.read() ?: break
                 // Screen start, stop and touch only on a sealed link, like talk: a legacy clear text session (v1) gets no key and no control.
                 if (msg.optString("t") == "cmd" && (RemoteMessages.isScreenCmd(msg.optString("c")) || msg.optString("c") == NetMessages.ASK_CONTROL) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
-                else if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                else if (msg.optString("t") == "cmd") try { command(id, msg, c.isSealed) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
                 // And only on a sealed link: a legacy clear text session (v1) is refused talk.
                 else if (TalkMessages.isTalk(msg)) {
@@ -567,11 +612,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     }
 
     // ---- commands from a Master ----
-    private fun command(masterId: String, m: JSONObject) {
+    private fun command(masterId: String, m: JSONObject, sealed: Boolean) {
         val master = store.masters.value.firstOrNull { it.id == masterId }
         val c = m.getString("c")
         // Watch together answers the asking Master only, and never with a status broadcast (pings are frequent).
-        if (together.command(c, m) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
+        if (together.command(c, m, sealed) { o -> sessions.firstOrNull { it.first == masterId }?.second?.send(o) }) return
         if (c in NodeTogether.LEAVES_PLAYER) syncPlayer.stop()
         when (c) {
             // The camera answers with its own camState, never with a status broadcast.
@@ -655,10 +700,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
             "unlink" -> {
                 store.removeMaster(masterId); talk.onMasterGone(masterId); screen.masterGone(masterId)
-                if (store.masters.value.isEmpty()) { releaseLandscape(); clearPause(); powerRunner.release(); screen.release() }
+                if (store.masters.value.isEmpty()) { releaseLandscape(); store.setTouchOff(false); overlay.refresh(); clearPause(); powerRunner.release(); screen.release() }
             }
             NetMessages.POWER -> NetMessages.decodePower(m)?.let { if (store.setPower(it.wake, it.offMin)) powerRunner.refresh() else Log.w(TAG, "could not save the power choice") }
-            NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
+            NetMessages.TOUCH -> NetMessages.parseTouch(m)?.let { if (store.setTouchOff(it)) overlay.refresh() else Log.w(TAG, "could not save the touch choice") }
+            NetMessages.ORIENTATION ->NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
         }
@@ -701,7 +747,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP + NetMessages.HEARTBEAT_CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP + NetMessages.HEARTBEAT_CAP + NetMessages.TOUCH_CAP))
+            .put("touchOff", store.touchOff.value).put("touchShield", touchShieldWire())
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("power", NetMessages.encodePower(powerRunner.status()))
@@ -715,6 +762,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             delay(1500)
             // Also with no parent connected: the lock must hold after a reboot, and a permission may arrive later.
             applyLandscape()
+            overlay.refresh() // parent mode runs out on its own: the shield has to come back then
             powerRunner.refresh()
             if (sessions.isEmpty()) continue
             val s = status()

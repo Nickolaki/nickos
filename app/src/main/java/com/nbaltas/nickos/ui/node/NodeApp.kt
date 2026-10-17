@@ -78,6 +78,9 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     }
     // Where Cancel on the PIN pad goes back to, and where a right PIN goes.
     var pinFromAsk by remember { mutableStateOf(false) }
+    // The touch shield's emergency hold asks for the same PIN pad as holding the avatar does.
+    val shieldPin by rt.pinWanted.collectAsState()
+    LaunchedEffect(shieldPin) { if (shieldPin) { pinFromAsk = false; screen = NodeScreen.PIN } }
     // The parent window ran out while the setup was open on an existing Node: back to the card, watchdog on.
     LaunchedEffect(screen, existing) {
         while (screen in setOf(NodeScreen.KIOSK, NodeScreen.MENU, NodeScreen.DRAWER, NodeScreen.PAIR)) {
@@ -92,6 +95,16 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     fun guarded(f: () -> Unit): () -> Unit = { if (windowOpen()) f() }
     val kioskStatus = remember(screen) { KioskPolicy.status(rt.device.kioskState()) }
 
+    // Every way out of the emergency PIN (Back, Home, a screen change) ends the request, so the shield returns and the next hold reopens it.
+    LaunchedEffect(screen) { if (screen != NodeScreen.PIN && rt.pinWanted.value) rt.shieldPinDone(entered = false) }
+    val pinOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(pinOwner) {
+        val watch = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP && rt.pinWanted.value) { screen = NodeScreen.HOME; rt.shieldPinDone(entered = false) }
+        }
+        pinOwner.lifecycle.addObserver(watch)
+        onDispose { pinOwner.lifecycle.removeObserver(watch); if (rt.pinWanted.value) rt.shieldPinDone(entered = false) }
+    }
     BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU && screen != NodeScreen.KIOSK && screen != NodeScreen.ASK) screen = NodeScreen.HOME }
 
     // Re-checked when the allowlist changes: Jellyfin may be installed after NickOS started.
@@ -192,9 +205,11 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onOk = {
                 val fromAsk = pinFromAsk; pinFromAsk = false
                 onParentMode()
+                rt.shieldPinDone(entered = true)
                 screen = if (fromAsk && KioskPolicy.setupNeeded(rt.device.kioskState())) NodeScreen.KIOSK else NodeScreen.MENU
             },
-            onCancel = { screen = if (pinFromAsk) NodeScreen.ASK else NodeScreen.HOME; pinFromAsk = false },
+            onCancel = { screen = if (pinFromAsk) NodeScreen.ASK else NodeScreen.HOME; pinFromAsk = false; rt.shieldPinDone(entered = false) },
+            onFail = { rt.shieldPinDone(entered = false) },
         )
         if (screen == NodeScreen.MENU) ParentMenu(
             kiosk = kioskStatus,
@@ -218,7 +233,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
-                    store.resetAll()
+                    com.nbaltas.nickos.RoleReset.run(ctx, App.get(ctx))
                     com.nbaltas.nickos.power.PowerRecovery.retry(ctx, store)
                     com.nbaltas.nickos.node.RotationRecovery.retry(ctx, store) // a restore that could not finish is kept and tried again
                     // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
@@ -256,5 +271,14 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         if (!canOverlay && ringing) FoundMeScreen { rt.stopRing(com.nbaltas.nickos.node.RingMachine.Stop.TAP) }
         // After the locked wall, so the banner is drawn over it: the speech is audible there too.
         if (!canOverlay) talkBanner?.let { TalkBannerAtBottom(it) }
+        // The touch lock without the overlay permission: only blocks touches inside NickOS. Last, so it is above the PIN pad
+        // too; the emergency hold takes it away (rt.shieldWanted is false while the PIN prompt is up).
+        val touchOff by store.touchOff.collectAsState()
+        // It also steps aside while a remote gesture is injected (rt.injecting), so the parent's tap reaches the control below.
+        val injecting by rt.injecting.collectAsState()
+        val shieldOn by produceState(false, touchOff, lockedBy, pausedMsg, canOverlay, injecting) {
+            while (true) { value = !canOverlay && !injecting && rt.shieldWanted(); kotlinx.coroutines.delay(300) }
+        }
+        if (shieldOn) TouchShieldBox(onActive = { rt.boxActive.value = it }, onHold = { rt.requestShieldPin() })
     }
 }
