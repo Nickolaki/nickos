@@ -12,6 +12,33 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 
 /**
+ * One pair() call. Its sockets are closed on cancel or timeout, and [commit] (the persistence step) runs only while the
+ * attempt is live, under the same lock the cancel takes, so a handshake finishing late can never save a node.
+ */
+class PairAttempt {
+    private val lock = Any()
+    private var cancelled = false
+    private val open = HashSet<java.io.Closeable>()
+
+    /** Registers [c]; false (and [c] closed) when the attempt is already cancelled. */
+    fun track(c: java.io.Closeable): Boolean {
+        val ok = synchronized(lock) { if (!cancelled) { open += c; true } else false }
+        if (!ok) runCatching { c.close() }
+        return ok
+    }
+
+    fun untrack(c: java.io.Closeable) { synchronized(lock) { open -= c } }
+
+    fun cancel() {
+        val toClose = synchronized(lock) { cancelled = true; open.toList().also { open.clear() } }
+        toClose.forEach { runCatching { it.close() } }
+    }
+
+    /** Runs [block] under the lock if not cancelled; null otherwise. */
+    fun <T : Any> commit(block: () -> T): T? = synchronized(lock) { if (cancelled) null else block() }
+}
+
+/**
  * Pairing without mDNS. If the NSD search found nothing for [WAIT_MS] and no address was typed, the /24 is swept once
  * on the Node port, and each open host gets one pair try. The first success wins and stops the rest.
  */

@@ -39,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -470,42 +471,54 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         }
         val startedAt = System.currentTimeMillis()
         var swept = false
-        withTimeoutOrNull(15_000) {
-            while (true) {
-                val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
-                val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code) } }
-                tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
-                // NSD found nothing and no address was typed: one sweep of the /24 for tablets mDNS cannot reach.
-                if (PairFallback.due(System.currentTimeMillis() - startedAt, found.entries().size, typed != null, swept)) {
-                    swept = true
-                    PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code) }
-                        ?.let { return@withTimeoutOrNull it }
-                }
-                delay(1500)
+        val attempt = PairAttempt()
+        try {
+            withTimeoutOrNull(15_000) {
+                // Closes the attempt's sockets the moment the scope is cancelled (timeout or the caller leaving).
+                val watchdog = launch { try { awaitCancellation() } finally { attempt.cancel() } }
+                try {
+                    while (true) {
+                        val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
+                        val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code, attempt) } }
+                        tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
+                        // NSD found nothing and no address was typed: one sweep of the /24 for tablets mDNS cannot reach.
+                        if (PairFallback.due(System.currentTimeMillis() - startedAt, found.entries().size, typed != null, swept)) {
+                            swept = true
+                            PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code, attempt) }
+                                ?.let { return@withTimeoutOrNull it }
+                        }
+                        delay(1500)
+                    }
+                    @Suppress("UNREACHABLE_CODE") null
+                } finally { watchdog.cancel() }
             }
-            @Suppress("UNREACHABLE_CODE") null
-        }
+        } finally { attempt.cancel() }
     }
 
-    private fun tryPair(id: String, addr: Pair<String, Int>, code: String): PairResult? = try {
+    private fun tryPair(id: String, addr: Pair<String, Int>, code: String, attempt: PairAttempt): PairResult? = try {
         val c = Conn.open(addr.first, addr.second, 2500)
-        c.socket.soTimeout = 4000
-        // No PIN goes out here: it reaches the Node on the first sealed session (runLink). A tablet that cannot
-        // produce the code's mac, or that claims a different id than the one we dialed, is dropped.
-        val out = try { Handshake.pair(c, store.deviceId, displayName, code, expectNodeId = id) } finally { c.close() }
-        if (out != null) {
-            val r = out.reply
-            val node = LinkedNode(
-                id = out.nodeId, name = r.optString("name"), color = r.optInt("color"),
-                avatar = r.optString("avatar", "initial"), token = out.token,
-                host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
-            )
-            store.upsertNode(node)
-            linkFlags.setSec2(node.id, true)
-            val st = NodeStatus.from(r)
-            _status.update { it + (node.id to st) }
-            PairResult(node, st)
-        } else null
+        if (!attempt.track(c.socket)) { c.close(); null } else {
+            c.socket.soTimeout = 4000
+            // No PIN goes out here: it reaches the Node on the first sealed session (runLink). A tablet that cannot
+            // produce the code's mac, or that claims a different id than the one we dialed, is dropped.
+            val out = try { Handshake.pair(c, store.deviceId, displayName, code, expectNodeId = id) } finally { attempt.untrack(c.socket); c.close() }
+            if (out != null) {
+                val r = out.reply
+                val node = LinkedNode(
+                    id = out.nodeId, name = r.optString("name"), color = r.optInt("color"),
+                    avatar = r.optString("avatar", "initial"), token = out.token,
+                    host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
+                )
+                // A cancelled attempt discards the reply: nothing is stored, flagged or published.
+                attempt.commit {
+                    store.upsertNode(node)
+                    linkFlags.setSec2(node.id, true)
+                    val st = NodeStatus.from(r)
+                    _status.update { it + (node.id to st) }
+                    PairResult(node, st)
+                }
+            } else null
+        }
     } catch (e: Exception) { null }
 
     // ---- per-node link ----

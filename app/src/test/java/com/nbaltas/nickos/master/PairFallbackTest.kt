@@ -100,4 +100,54 @@ class PairFallbackTest {
         val r = PairFallback.sweep(emptyList(), { _, _ -> "x" }, 47470) { _, _ -> "never" }
         assertNull(r)
     }
+
+    private class FakeSocket : java.io.Closeable {
+        val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+        override fun close() { closed.set(true) }
+    }
+
+    /** Mirrors tryPair: track, blocking handshake, then commit the writes. */
+    private fun fakeTryPair(a: PairAttempt, s: FakeSocket, handshake: () -> Boolean, writes: AtomicInteger): String? {
+        if (!a.track(s)) return null
+        val ok = try { handshake() } finally { a.untrack(s); s.close() }
+        return if (ok) a.commit { writes.incrementAndGet(); "paired" } else null
+    }
+
+    @Test fun cancelledAttemptNeverSaves() {
+        val a = PairAttempt()
+        val s = FakeSocket()
+        val writes = AtomicInteger()
+        val started = java.util.concurrent.CountDownLatch(1)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicReference<String?>("unset")
+        val t = Thread {
+            result.set(fakeTryPair(a, s, { started.countDown(); gate.await(); true }, writes))
+        }
+        t.start()
+        started.await()
+        a.cancel()
+        assertTrue(s.closed.get())
+        gate.countDown() // the blocked handshake returns a valid reply after the cancel
+        t.join(5_000)
+        assertNull(result.get())
+        assertEquals(0, writes.get())
+        assertTrue(s.closed.get())
+    }
+
+    @Test fun socketOpenedAfterCancelIsClosed() {
+        val a = PairAttempt()
+        a.cancel()
+        val s = FakeSocket()
+        assertFalse(a.track(s))
+        assertTrue(s.closed.get())
+    }
+
+    @Test fun liveAttemptSavesOnce() {
+        val a = PairAttempt()
+        val s = FakeSocket()
+        val writes = AtomicInteger()
+        assertEquals("paired", fakeTryPair(a, s, { true }, writes))
+        assertEquals(1, writes.get())
+        assertTrue(s.closed.get())
+    }
 }
