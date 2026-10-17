@@ -11,11 +11,14 @@ class UsageForeground {
     private var cursor = 0L
     private var last: String? = null
     private var lastResumed = false
-    private var discontinuity = false
+    // Set by a clock discontinuity; only a fresh RESUMED from an incremental query clears it.
+    private var untrusted = false
+    private var recovery = false
 
     /** Start of the next query. A reversed interval (clock went back) drops the cache. */
     fun from(now: Long): Long {
         if (cursor != 0L && now < cursor) reset(flag = true)
+        recovery = cursor == 0L
         return if (cursor == 0L) now - 6 * 60 * 60 * 1000L else cursor - 2000
     }
 
@@ -23,20 +26,21 @@ class UsageForeground {
         cursor = 0L
         last = null
         lastResumed = false
-        discontinuity = flag
+        if (flag) untrusted = true
     }
 
     /** [events] are those returned for the interval starting at [from]. Returns the package, or null. */
     fun fold(now: Long, access: Boolean, events: List<Ev>, strict: Boolean): String? {
         if (!access) { reset(); return null }
         for (e in events) {
-            if (e.kind == Kind.RESUMED) { last = e.pkg; lastResumed = true }
-            else if (e.pkg == last) lastResumed = false
+            if (e.kind == Kind.RESUMED) {
+                last = e.pkg; lastResumed = true
+                // Historical recovery events refresh the cache only; they are not fresh evidence.
+                if (!recovery) untrusted = false
+            } else if (e.pkg == last) lastResumed = false
         }
         cursor = now
-        val broke = discontinuity
-        discontinuity = false
-        if (strict && (broke || !lastResumed)) return null
+        if (strict && (untrusted || !lastResumed)) return null
         return last
     }
 }

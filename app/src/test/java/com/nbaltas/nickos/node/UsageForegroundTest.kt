@@ -57,6 +57,39 @@ class UsageForegroundTest {
         assertNull(u.fold(12_000, true, emptyList(), strict = true))
     }
 
+    private fun rolledBack(): UsageForeground {
+        val u = UsageForeground()
+        u.from(100_000)
+        u.fold(100_000, true, listOf(res(jelly)), strict = true)
+        u.from(40_000)
+        assertNull(u.fold(40_000, true, listOf(res(jelly)), strict = true))
+        return u
+    }
+
+    @Test fun `historical recovery events do not become trusted on a later empty query`() {
+        val u = rolledBack()
+        u.from(43_000)
+        assertNull(u.fold(43_000, true, emptyList(), strict = true))
+    }
+
+    @Test fun `a status read after the rollback does not launder the historical cache`() {
+        val u = rolledBack()
+        u.from(43_000)
+        assertEquals(jelly, u.fold(43_000, true, emptyList(), strict = false))
+        u.from(44_000)
+        assertNull(u.fold(44_000, true, emptyList(), strict = true))
+    }
+
+    @Test fun `a fresh resume in a later incremental query is trusted again`() {
+        val u = rolledBack()
+        u.from(43_000)
+        assertNull(u.fold(43_000, true, emptyList(), strict = true))
+        u.from(44_000)
+        assertEquals(settings, u.fold(44_000, true, listOf(res(settings)), strict = true))
+        u.from(45_000)
+        assertEquals(settings, u.fold(45_000, true, emptyList(), strict = true))
+    }
+
     @Test fun `relock goes home when the foreground is unknown`() {
         var homes = 0
         val u = UsageForeground()
