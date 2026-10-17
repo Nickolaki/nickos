@@ -276,6 +276,26 @@ class DesignScreensTest {
             }
         }
     }
+    /** A phone picture with the system font at 2.0, written to design/screens/phone/<name>.png. Phone only, so no tablet picture. */
+    private fun phoneFont200(name: String, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/phone/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) {
+            NickTheme {
+                Box(Modifier.fillMaxSize().background(C.bg)) {
+                    val d = androidx.compose.ui.platform.LocalDensity.current
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 2f)) {
+                        ParentLayoutProvider { content() }
+                    }
+                }
+            }
+        }
+    }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun controlDevicePhoneFont200() = phoneFont200("Control-Device-font200") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun controlNowPlayingPhoneFont200() = phoneFont200("Control-NowPlaying-font200") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     @Test fun masterHomeEmpty() {
         listOf("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc").forEach { app.store.removeNode(it) }
         shot("Master-Home-Empty") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
