@@ -94,6 +94,7 @@ import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.NickLogo
 import com.nbaltas.nickos.ui.theme.OnAvatar
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import com.nbaltas.nickos.ui.theme.SetupHeader
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
@@ -129,7 +130,9 @@ fun SetupFlow() {
     }
     BackHandler(enabled = back != null) { back?.invoke() }
 
-    Box(Modifier.fillMaxSize().background(C.bg)) {
+    // The parent destinations know whether they are on a phone; the kid-only steps (name, code) never do.
+    val parentStep = step != Step.NODE_NAME && step != Step.NODE_CODE
+    val stepContent: @Composable () -> Unit = {
         when (step) {
             Step.WELCOME -> Welcome { step = Step.ROLE }
             Step.ROLE -> RoleScreen(back!!, onMaster = { app.master.start(); step = Step.MASTER_NET }, onNode = { step = Step.NODE_NAME })
@@ -144,6 +147,9 @@ fun SetupFlow() {
             }
             Step.MASTER_JELLYFIN -> JellyfinSetupScreen(back!!) { app.store.setRole(Role.MASTER) }
         }
+    }
+    Box(Modifier.fillMaxSize().background(C.bg)) {
+        if (parentStep) ParentLayoutProvider(stepContent) else stepContent()
     }
 }
 

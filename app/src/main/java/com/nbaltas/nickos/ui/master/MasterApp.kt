@@ -2,8 +2,24 @@ package com.nbaltas.nickos.ui.master
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -132,8 +148,16 @@ fun MasterApp() {
     val toast by app.master.toast.collectAsState()
     LaunchedEffect(toast) { if (toast != null) { delay(5000); app.master.clearToast() } }
 
+    ParentLayoutProvider {
+    val phone = LocalPhone.current
     Box(Modifier.fillMaxSize().background(C.bg)) {
-        when (val s = screen) {
+        // Phone: pages without players or polling fade in over 150ms. Control, Cameras and Together are never wrapped (no fade over live feeds).
+        val s = screen
+        val key = if (s is MScreen.Home || s is MScreen.AddTablet || s is MScreen.Linked || s is MScreen.Settings || s is MScreen.QrSetup || s is MScreen.Drawer) s::class else null
+        val fade = remember(key) { Animatable(if (phone && key != null) 0f else 1f) }
+        LaunchedEffect(key) { if (fade.value < 1f) fade.animateTo(1f, tween(150)) }
+        Box(Modifier.fillMaxSize().then(if (phone) Modifier.graphicsLayer { alpha = fade.value } else Modifier)) {
+        when (s) {
             MScreen.Home -> MasterHome(
                 onOpen = { screen = MScreen.Control(it) },
                 onAdd = { screen = MScreen.AddTablet },
@@ -166,7 +190,16 @@ fun MasterApp() {
                 )
             }
         }
-        toast?.let { Toast(it, Modifier.align(Alignment.BottomCenter)) }
+        }
+        if (phone) {
+            // Keep the last text while the toast fades out.
+            var lastToast by remember { mutableStateOf("") }
+            toast?.let { lastToast = it }
+            AnimatedVisibility(toast != null, Modifier.align(Alignment.BottomCenter), enter = fadeIn(tween(120)), exit = fadeOut(tween(120))) {
+                Toast(lastToast, Modifier)
+            }
+        } else toast?.let { Toast(it, Modifier.align(Alignment.BottomCenter)) }
+    }
     }
 }
 
@@ -176,6 +209,13 @@ fun launchLocal(ctx: android.content.Context, pkg: String) {
 
 @Composable
 private fun Toast(text: String, modifier: Modifier) {
+    if (LocalPhone.current) {
+        Box(
+            modifier.padding(bottom = 24.dp, start = 16.dp, end = 16.dp).shadow(12.dp, RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp)).background(C.surface2).padding(horizontal = 16.dp, vertical = 12.dp)
+        ) { Text(text, style = body(16.sp, 700), color = C.text) }
+        return
+    }
     Box(
         modifier.padding(bottom = 32.dp, start = 24.dp, end = 24.dp).shadow(20.dp, RoundedCornerShape(22.dp))
             .clip(RoundedCornerShape(22.dp)).background(C.surface2).padding(horizontal = 26.dp, vertical = 18.dp)
@@ -192,22 +232,28 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
     val jf = remember(account) { app.master.jellyfin() }
     val poster: ((JfItem) -> String?)? = jf?.let { j -> { i: JfItem -> j.poster(i, 400) } }
     val portrait = LocalConfiguration.current.let { it.screenHeightDp > it.screenWidthDp }
-    val pad = if (portrait) 32.dp else 40.dp
+    val phone = LocalPhone.current
+    val pad = if (phone) PhoneMetrics.gutter else if (portrait) 32.dp else 40.dp
     var pauseSheet by remember { mutableStateOf(false) }
     val pausedMsg by app.store.pausedMsg.collectAsState()
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
+        if (phone) PhoneTopBar(onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
+        else TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
         CarNetBanner(pad, onSettings)
         if (views.isEmpty()) {
             EmptyHome(onAdd)
             return@Column
         }
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = pad, end = pad, top = 12.dp, bottom = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(start = pad, end = pad, top = if (phone) 4.dp else 12.dp, bottom = if (phone) 24.dp else 40.dp),
+            verticalArrangement = Arrangement.spacedBy(if (phone) PhoneMetrics.cardGap else 24.dp),
         ) {
-            if (portrait) {
+            if (phone) {
+                views.forEach { v -> PhoneNodeCard(v, poster, Modifier.fillMaxWidth()) { onOpen(v.node.id) } }
+                AddCard(true, Modifier.fillMaxWidth(), onAdd)
+            } else if (portrait) {
                 views.forEach { v -> NodeCard(v, poster, Modifier.fillMaxWidth().heightIn(min = 250.dp)) { onOpen(v.node.id) } }
                 AddCard(true, Modifier.fillMaxWidth().height(136.dp), onAdd)
             } else {
@@ -246,6 +292,18 @@ private fun CarNetBanner(pad: Dp, onSettings: () -> Unit) {
     val now = rememberNow(1000)
     val why = carNetBannerWhy(app.master.offlineReasons(now).values) ?: return
     val shape = RoundedCornerShape(20.dp)
+    if (LocalPhone.current) {
+        // Compact: 20dp icon, 14sp text, 12dp padding; the whole reason stays on screen.
+        Row(
+            Modifier.fillMaxWidth().padding(start = pad, end = pad, bottom = 12.dp).clip(shape).background(C.surface)
+                .border(2.dp, C.dangerLine, shape).clickable(role = Role.Button, onClick = onSettings).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Lucide.WifiOff, null, tint = C.danger, modifier = Modifier.size(20.dp))
+            Text(carNetBanner(why), style = body(14.sp, 700, 1.3f), color = C.text, modifier = Modifier.weight(1f))
+        }
+        return
+    }
     Row(
         Modifier.fillMaxWidth().padding(start = pad, end = pad, bottom = 12.dp).clip(shape).background(C.surface)
             .border(2.dp, C.dangerLine, shape).clickable(onClick = onSettings).padding(horizontal = 22.dp, vertical = 16.dp),
@@ -319,8 +377,76 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
     }
 }
 
+/** Phone Home header: NickOS + Settings on top (a badge when an update is waiting), four equal labelled quick actions below. */
+@Composable
+private fun PhoneTopBar(onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit, paused: Boolean, onPause: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val session by app.master.sync.session.collectAsState()
+    val now = rememberNow(1000)
+    val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
+    val hasUpdate = update is com.nbaltas.nickos.update.UpdateState.Available
+    Column(Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("NickOS", style = disp(24.sp, 800, 1.15f), color = C.text, maxLines = 1)
+                Text(SimpleDateFormat("h:mm · EEE d MMM", Locale.getDefault()).format(Date(now)), style = body(14.sp, 600, 1.3f), color = C.muted, maxLines = 1)
+            }
+            Box {
+                IconCircle(Lucide.Settings, if (hasUpdate) onUpdate else onSettings, label = if (hasUpdate) "Settings, update available" else "Settings")
+                if (hasUpdate) Box(Modifier.align(Alignment.TopEnd).size(14.dp).clip(CircleShape).background(C.accent).border(2.dp, C.bg, CircleShape))
+            }
+        }
+        val together = session != null
+        val actions: List<@Composable (Modifier) -> Unit> = listOf(
+            { m -> QuickAction(Lucide.LayoutGrid, "Apps", false, onDrawer, m) },
+            { m -> QuickAction(if (paused) Solid.Play else Solid.Pause, if (paused) "Resume" else "Pause all", paused, onPause, m) },
+            { m -> QuickAction(Lucide.Cctv, "Cameras", false, onCameras, m) },
+            { m -> QuickAction(Lucide.Tv, "Together", together, onTogether, m, dot = together) },
+        )
+        // Large system fonts would break the labels mid-word in four columns: two rows of two instead.
+        val perRow = if (LocalDensity.current.fontScale > 1.3f) 2 else 4
+        Column(verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+            actions.chunked(perRow).forEach { rowActions ->
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+                    rowActions.forEach { it(Modifier.weight(1f).fillMaxHeight()) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickAction(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit, modifier: Modifier, dot: Boolean = false) {
+    val fg = if (active) C.onAccent else C.text
+    Column(
+        modifier.heightIn(min = 64.dp).clip(RoundedCornerShape(16.dp)).background(if (active) C.accent else C.surface2)
+            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 4.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+    ) {
+        Box {
+            Icon(icon, null, tint = fg, modifier = Modifier.size(22.dp))
+            if (dot) Box(Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-2).dp).size(8.dp).clip(CircleShape).background(C.onAccent))
+        }
+        Text(label, style = body(12.sp, 700, 16f / 12f), color = fg, maxLines = 2, textAlign = TextAlign.Center)
+    }
+}
+
 @Composable
 private fun EmptyHome(onAdd: () -> Unit) {
+    if (LocalPhone.current) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = PhoneMetrics.gutter, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        ) {
+            Box(Modifier.size(96.dp, 64.dp).dashed(C.line, 16.dp), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Link, null, tint = C.muted, modifier = Modifier.size(28.dp))
+            }
+            Text("No tablets linked yet", style = disp(28.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center)
+            Text("Set up the kid's tablet as a Node. It will show a 6-digit code. Enter it here.", style = body(16.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center)
+            NickButton("Add tablet", onAdd, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, leading = Lucide.Plus)
+        }
+        return
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 80.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
@@ -456,6 +582,111 @@ private fun NodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modi
     }
 }
 
+/**
+ * Phone tablet card: 40dp avatar, name up to two lines, battery, then a body sized to its content
+ * (64×96 artwork + weighted text while playing). The same states as [NodeCard].
+ */
+@Composable
+private fun PhoneNodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modifier, onClick: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val session by app.master.sync.session.collectAsState()
+    val receiving = app.master.transfer.receiving(v.node.id)
+    Column(
+        modifier.clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).clickable(role = Role.Button, onClick = onClick).padding(PhoneMetrics.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Avatar(v.node.name, v.node.color, v.node.avatar, 40.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(v.node.name, style = disp(18.sp, 800, 1.15f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                PhoneStatusLine(v)
+            }
+            Battery(v.battery, v.status?.charging == true && v.online, 14, 20.dp)
+        }
+        val pb = v.playback
+        val item = pb?.item
+        when {
+            !v.online -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.size(56.dp).dashed(C.line, 16.dp), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.WifiOff, null, tint = C.muted, modifier = Modifier.size(24.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    CardTitle("Can't reach this tablet")
+                    Text("Check it's switched on and on the same WiFi. Reset it? Unlink it from the Device tab.", style = body(14.sp, 500, 1.4f), color = C.muted)
+                }
+            }
+            pb != null && item != null -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Artwork(poster?.invoke(item), item.displayTitle, Modifier.size(64.dp, 96.dp), radius = 12.dp, showTitle = false)
+                Column(Modifier.weight(1f).heightIn(min = 96.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(10.dp))
+                        EyebrowText(if (pb.session.paused) "Paused" else "Now playing", C.accent)
+                    }
+                    CardTitle(item.displayTitle)
+                    Text(episodeLine(item), style = body(14.sp, 500, 1.3f), color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.weight(1f))
+                    val now = rememberNow(1000)
+                    val pos = pb.positionTicks(now)
+                    ProgressBar(if (item.runTicks > 0) pos.toFloat() / item.runTicks else 0f, height = 6.dp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(fmtTicks(pos), style = body(14.sp, 600).copy(fontFeatureSettings = "tnum"), color = C.muted)
+                        Text("${(item.runTicks - pos).coerceAtLeast(0) / JfItem.TICKS_PER_MIN} min left", style = body(14.sp, 600), color = C.muted)
+                    }
+                }
+            }
+            session != null && v.node.id in session!!.nodes -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val together = session!!
+                val frac = if (together.durMs > 0) app.master.sync.expectedPos().toFloat() / together.durMs else 0f
+                Artwork(together.art, together.title, Modifier.size(64.dp, 96.dp), radius = 12.dp, showTitle = false)
+                Column(Modifier.weight(1f).heightIn(min = 96.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    EyebrowText("Watching together", C.accent)
+                    CardTitle(together.title)
+                    Spacer(Modifier.weight(1f))
+                    ProgressBar(frac, height = 6.dp)
+                }
+            }
+            receiving != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val locked = v.status?.lockedBy != null
+                AppTileIcon(if (locked) null else v.fgApp, Lucide.Download, 56.dp, 16.dp, v.node.color)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    EyebrowText("Receiving")
+                    val pct = com.nbaltas.nickos.sync.TogetherText.percent(receiving.done, receiving.size)
+                    CardTitle(receiving.title.ifEmpty { "a movie" })
+                    Text("Receiving ${receiving.title} · $pct%", style = body(14.sp, 500, 1.3f), color = C.muted)
+                }
+            }
+            else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val st = v.status
+                val locked = st?.lockedBy != null
+                val (eyebrow, title) = when {
+                    locked -> "Locked" to "Screen locked"
+                    st?.fg != null -> "In an app" to (st.fgLabel ?: "An app")
+                    else -> "Home screen" to "Home"
+                }
+                AppTileIcon(if (locked) null else v.fgApp, if (locked) Lucide.Lock else if (st?.fg == null) Lucide.House else Lucide.LayoutGrid, 56.dp, 16.dp, v.node.color)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    EyebrowText(eyebrow)
+                    CardTitle(title)
+                    Text("Nothing playing", style = body(14.sp, 500, 1.3f), color = C.muted)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardTitle(text: String) =
+    Text(text, style = disp(18.sp, 800, 1.15f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+
+/** 14sp status with an 8dp dot; may wrap rather than clip. */
+@Composable
+private fun PhoneStatusLine(v: NodeView) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Dot(if (v.online) C.online else C.offline, 8.dp)
+        Text(statusText(v), style = body(14.sp, 600, 1.3f), color = C.muted)
+    }
+}
+
 /** App icon on a tile: the real icon when the Node sent it, else a Lucide glyph on the kid's colour. */
 @Composable
 fun AppTileIcon(app: RemoteApp?, fallback: ImageVector, size: Dp, radius: Dp, colorIndex: Int) {
@@ -471,12 +702,24 @@ fun AppTileIcon(app: RemoteApp?, fallback: ImageVector, size: Dp, radius: Dp, co
 
 @Composable
 private fun AddCard(row: Boolean, modifier: Modifier, onAdd: () -> Unit) {
+    val phone = LocalPhone.current
     val plus: @Composable () -> Unit = {
-        Box(Modifier.size(if (row) 64.dp else 88.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
-            Icon(Lucide.Plus, null, tint = C.onAccent, modifier = Modifier.size(if (row) 30.dp else 40.dp))
+        Box(Modifier.size(if (phone) 48.dp else if (row) 64.dp else 88.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+            Icon(Lucide.Plus, null, tint = C.onAccent, modifier = Modifier.size(if (phone) 22.dp else if (row) 30.dp else 40.dp))
         }
     }
-    if (row) {
+    if (phone) {
+        Row(
+            modifier.heightIn(min = 80.dp).dashed(C.line, 20.dp, 2.dp).clip(RoundedCornerShape(20.dp)).clickable(role = Role.Button, onClick = onAdd).padding(PhoneMetrics.cardPadding),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            plus()
+            Column(Modifier.weight(1f)) {
+                Text("Add tablet", style = disp(18.sp, 800, 1.15f), color = C.text)
+                Text("Pair a kid's tablet with its 6-digit code", style = body(14.sp, 500, 1.4f), color = C.muted)
+            }
+        }
+    } else if (row) {
         Row(
             modifier.dashed(C.line, 30.dp).clip(RoundedCornerShape(30.dp)).clickable(onClick = onAdd),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),

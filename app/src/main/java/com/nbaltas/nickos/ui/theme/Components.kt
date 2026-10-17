@@ -1,8 +1,18 @@
 package com.nbaltas.nickos.ui.theme
 
 import android.graphics.drawable.Drawable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.ripple
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -83,9 +93,26 @@ import kotlin.math.roundToInt
 
 // Sizes below are the design's px values at 1280×800, used 1:1 as dp (a 10" tablet is ~1280×800dp).
 
+/** A click with no press feedback on a tablet; on a phone it gets a bounded ripple so a tap is felt. */
 @Composable
 fun Modifier.tap(onClick: () -> Unit): Modifier =
-    clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+    clickable(interactionSource = remember { MutableInteractionSource() }, indication = if (LocalPhone.current) ripple() else null, onClick = onClick)
+
+/** Phone type mapping for [Title] (spec §1): the tablet size in, the phone size out. Sizes under 24 are already small. */
+fun phoneTitleSize(requested: Int): Int = when {
+    requested < 24 -> requested
+    requested <= 26 -> 18
+    requested <= 32 -> 20
+    requested <= 36 -> 22
+    requested <= 48 -> 24
+    else -> 28
+}
+
+/** Phone type mapping for [Muted]. */
+fun phoneMutedSize(requested: Int): Int = when {
+    requested <= 15 -> if (requested == 15) 14 else requested
+    else -> 16
+}
 
 enum class BtnStyle { PRIMARY, SECONDARY, GHOST, DANGER }
 
@@ -102,7 +129,8 @@ fun NickButton(
     enabled: Boolean = true,
 ) {
     val c = C
-    val shape = RoundedCornerShape(if (big) 22.dp else 18.dp)
+    val phone = LocalPhone.current
+    val shape = RoundedCornerShape(if (phone) 16.dp else if (big) 22.dp else 18.dp)
     val bg = when (style) {
         BtnStyle.PRIMARY -> c.accent
         BtnStyle.SECONDARY -> c.surface2
@@ -117,6 +145,35 @@ fun NickButton(
         BtnStyle.GHOST -> BorderStroke(2.dp, c.line)
         BtnStyle.DANGER -> BorderStroke(2.dp, c.dangerLine)
         else -> null
+    }
+    if (phone) {
+        // Min heights, not fixed: a long label or device name wraps to two lines and the button grows.
+        val minH = when {
+            sub != null -> PhoneMetrics.subButtonHeight
+            big -> PhoneMetrics.bigButtonHeight
+            style == BtnStyle.PRIMARY -> PhoneMetrics.buttonHeight
+            else -> PhoneMetrics.secondaryButtonHeight
+        }
+        val alpha = if (enabled) 1f else 0.45f
+        Row(
+            modifier
+                .heightIn(min = minH)
+                .clip(shape)
+                .background(bg)
+                .then(if (border != null) Modifier.border(border, shape) else Modifier)
+                .then(if (enabled) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (leading != null) Icon(leading, null, tint = fg.copy(alpha = alpha), modifier = Modifier.size(20.dp))
+            Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text, style = body(16.sp, 700, 1.25f), color = fg.copy(alpha = alpha), maxLines = 2, textAlign = TextAlign.Center)
+                if (sub != null) Text(sub, style = body(13.sp, 700, 18f / 13f), color = fg.copy(alpha = 0.75f * alpha), maxLines = 2, textAlign = TextAlign.Center)
+            }
+            if (trailing != null) Icon(trailing, null, tint = fg.copy(alpha = alpha), modifier = Modifier.size(20.dp))
+        }
+        return
     }
     Row(
         modifier
@@ -139,16 +196,36 @@ fun NickButton(
     }
 }
 
+/** [label] is what a screen reader says; the icon has no text. On a phone the default 60dp circle is the 48dp target with a 22dp icon. */
 @Composable
-fun IconCircle(icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 60.dp, bg: Color = C.surface2, tint: Color = C.text) {
+fun IconCircle(icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 60.dp, bg: Color = C.surface2, tint: Color = C.text, label: String? = null) {
+    val phone = LocalPhone.current && size == 60.dp
+    val s = if (phone) PhoneMetrics.iconCircle else size
     Box(
-        modifier.size(size).clip(CircleShape).background(bg).clickable(onClick = onClick),
+        modifier.size(s).clip(CircleShape).background(bg).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, null, tint = tint, modifier = Modifier.size(size * 0.4f)) }
+    ) { Icon(icon, label, tint = tint, modifier = Modifier.size(if (phone) 22.dp else size * 0.4f)) }
 }
 
 @Composable
-fun BackButton(onClick: () -> Unit) = IconCircle(Lucide.ChevronLeft, onClick)
+fun BackButton(onClick: () -> Unit) = IconCircle(Lucide.ChevronLeft, onClick, label = "Back")
+
+/**
+ * The phone screen header: back (48), a weighted title that may take two lines, and at most two 48dp actions.
+ * Minimum height 64dp, 16dp gutters. Tablets keep their own headers.
+ */
+@Composable
+fun PhoneHeader(title: String, onBack: (() -> Unit)?, modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight).padding(horizontal = PhoneMetrics.gutter),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+    ) {
+        if (onBack != null) BackButton(onBack)
+        Text(title, style = disp(24.sp, 800, 1.15f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        actions()
+    }
+}
 
 /** The NickOS mark: amber rounded square with a 2×2 grid, first cell solid. */
 @Composable
@@ -247,10 +324,12 @@ fun minutesLeft(ms: Long): Int = ((ms.coerceAtLeast(0) + 59_999) / 60_000).toInt
 
 @Composable
 fun EyebrowText(text: String, color: Color = C.muted, modifier: Modifier = Modifier) =
-    Text(text.uppercase(), style = Eyebrow, color = color, modifier = modifier)
+    Text(text.uppercase(), style = if (LocalPhone.current) PhoneEyebrow else Eyebrow, color = color, modifier = modifier)
 
 @Composable
-fun FieldLabel(text: String) = Text(text, style = body(15.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 10.dp))
+fun FieldLabel(text: String) =
+    if (LocalPhone.current) Text(text, style = body(14.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 6.dp))
+    else Text(text, style = body(15.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 10.dp))
 
 @Composable
 fun NickField(
@@ -263,23 +342,24 @@ fun NickField(
 ) {
     val c = C
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(18.dp)
+    val phone = LocalPhone.current
+    val shape = RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 18.dp)
     BasicTextField(
         value = value,
         onValueChange = onChange,
         singleLine = true,
-        textStyle = body(21.sp, 500).copy(color = c.text),
+        textStyle = body(if (phone) 16.sp else 21.sp, 500).copy(color = c.text),
         cursorBrush = SolidColor(c.accent),
         visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboard),
         modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
         decorationBox = { inner ->
             Box(
-                Modifier.fillMaxWidth().height(68.dp).clip(shape).background(c.surface2)
-                    .border(2.dp, if (focused) c.accent else c.line, shape).padding(horizontal = 22.dp),
+                Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.fieldHeight) else Modifier.height(68.dp)).clip(shape).background(c.surface2)
+                    .border(2.dp, if (focused) c.accent else c.line, shape).padding(horizontal = if (phone) 16.dp else 22.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = body(21.sp), color = c.muted)
+                if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = body(if (phone) 16.sp else 21.sp), color = c.muted)
                 inner()
             }
         },
@@ -300,6 +380,9 @@ fun Keypad(
     onLeft: () -> Unit = {},
 ) {
     val c = C
+    val phone = LocalPhone.current
+    val gap = if (phone) 8.dp else gap
+    val keyHeight = if (phone) 56.dp else keyHeight
     Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
         val rows = listOf("123", "456", "789")
         rows.forEach { r ->
@@ -324,17 +407,19 @@ fun Keypad(
 @Composable
 private fun Key(label: String, bg: Color, h: Dp, modifier: Modifier, onClick: () -> Unit) {
     Box(modifier.height(h).clip(RoundedCornerShape(22.dp)).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, style = body(34.sp, 700), color = C.text)
+        Text(label, style = body(if (LocalPhone.current) 26.sp else 34.sp, 700), color = C.text)
     }
 }
 
 @Composable
 fun PinDots(filled: Int, total: Int = 4, color: Color = C.text) {
     val c = C
-    Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+    val phone = LocalPhone.current
+    val dot = if (phone) 16.dp else 22.dp
+    Row(horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 22.dp)) {
         repeat(total) { i ->
-            if (i < filled) Box(Modifier.size(22.dp).clip(CircleShape).background(color))
-            else Box(Modifier.size(22.dp).clip(CircleShape).border(3.dp, c.muted, CircleShape))
+            if (i < filled) Box(Modifier.size(dot).clip(CircleShape).background(color))
+            else Box(Modifier.size(dot).clip(CircleShape).border(if (phone) 2.dp else 3.dp, c.muted, CircleShape))
         }
     }
 }
@@ -356,10 +441,15 @@ fun NickSlider(
     trackColor: Color = C.line,
 ) {
     val c = C
+    // Phone: the default slider becomes a 6dp track and 24dp thumb inside a 48dp touch box.
+    val phone = LocalPhone.current && thumb == 38.dp
+    val trackHeight = if (phone) 6.dp else trackHeight
+    val thumb = if (phone) 24.dp else thumb
+    val boxHeight = if (phone) PhoneMetrics.minTarget else thumb
     var dragging by remember { mutableStateOf(false) }
     var local by remember { mutableFloatStateOf(value) }
     val shown = if (dragging) local else value
-    BoxWithConstraints(modifier.fillMaxWidth().height(thumb)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(boxHeight)) {
         val w = constraints.maxWidth.toFloat()
         val thumbPx = with(LocalDensity.current) { thumb.toPx() }
         fun frac(x: Float) = ((x - thumbPx / 2) / (w - thumbPx)).coerceIn(0f, 1f)
@@ -382,7 +472,7 @@ fun NickSlider(
                     .clip(RoundedCornerShape(trackHeight / 2)).background(c.accent)
             )
             Box(
-                Modifier.offset { IntOffset(((w - thumbPx) * shown).roundToInt(), 0) }
+                Modifier.align(Alignment.CenterStart).offset { IntOffset(((w - thumbPx) * shown).roundToInt(), 0) }
                     .size(thumb).shadow(6.dp, CircleShape).clip(CircleShape).background(Color.White)
             )
         }
@@ -392,6 +482,10 @@ fun NickSlider(
 @Composable
 fun NickSwitch(on: Boolean, enabled: Boolean = true, onToggle: (Boolean) -> Unit) {
     val c = C
+    if (LocalPhone.current) {
+        PhoneSwitch(on, enabled, onToggle)
+        return
+    }
     Box(
         Modifier.size(60.dp, 34.dp).clip(RoundedCornerShape(17.dp))
             .background((if (on) c.accent else c.line).copy(alpha = if (enabled) 1f else 0.4f))
@@ -401,6 +495,28 @@ fun NickSwitch(on: Boolean, enabled: Boolean = true, onToggle: (Boolean) -> Unit
             Modifier.padding(4.dp).offset(x = if (on) 26.dp else 0.dp).size(26.dp).clip(CircleShape)
                 .background((if (on) c.onAccent else Color(0xFFC5CBD6)).copy(alpha = if (enabled) 1f else 0.6f))
         )
+    }
+}
+
+/** 52×32 track, 24dp thumb, in a 48dp-high toggleable box. The thumb and colour glide over 140ms; the state flips at once. */
+@Composable
+private fun PhoneSwitch(on: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val c = C
+    val alpha = if (enabled) 1f else 0.4f
+    val track by animateColorAsState(if (on) c.accent else c.line, tween(140), label = "switchTrack")
+    val thumb by animateColorAsState(if (on) c.onAccent else Color(0xFFC5CBD6), tween(140), label = "switchThumb")
+    val x by animateDpAsState(if (on) 20.dp else 0.dp, tween(140), label = "switchThumbX")
+    Box(
+        Modifier.size(52.dp, PhoneMetrics.minTarget)
+            .toggleable(value = on, enabled = enabled, role = Role.Switch, onValueChange = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(52.dp, 32.dp).clip(CircleShape).background(track.copy(alpha = track.alpha * alpha))) {
+            Box(
+                Modifier.align(Alignment.CenterStart).padding(4.dp).offset(x = x).size(24.dp).clip(CircleShape)
+                    .background(thumb.copy(alpha = thumb.alpha * (if (enabled) 1f else 0.6f)))
+            )
+        }
     }
 }
 
@@ -423,6 +539,10 @@ fun Segmented(
     compact: Boolean = false,
 ) {
     val c = C
+    if (LocalPhone.current) {
+        PhoneSegmented(items, selected, onSelect, modifier, compact)
+        return
+    }
     Row(
         modifier.clip(RoundedCornerShape(20.dp)).background(c.surface).padding(6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -443,8 +563,49 @@ fun Segmented(
     }
 }
 
+/**
+ * Phone segments: 2 to 4 options share the width equally (each at least 48dp high, labels may take two lines);
+ * more than 4 scroll sideways instead of clipping. Selected colours fade over 120ms.
+ */
+@Composable
+private fun PhoneSegmented(items: List<Pair<String, ImageVector?>>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier, compact: Boolean) {
+    val c = C
+    val scrolls = items.size > 4
+    Row(
+        modifier.clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(c.surface).padding(4.dp)
+            .then(if (scrolls) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        items.forEachIndexed { i, (label, icon) ->
+            val on = i == selected
+            val bg by animateColorAsState(if (on) c.accent else Color.Transparent, tween(120), label = "segBg")
+            val col by animateColorAsState(if (on) c.onAccent else c.muted, tween(120), label = "segText")
+            Row(
+                (if (scrolls) Modifier else Modifier.weight(1f)).heightIn(min = PhoneMetrics.minTarget).clip(RoundedCornerShape(10.dp)).background(bg)
+                    .clickable(role = Role.Tab) { onSelect(i) }.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            ) {
+                if (icon != null) Icon(icon, if (compact) label else null, tint = col, modifier = Modifier.size(20.dp))
+                if (!compact || icon == null) Text(label, style = body(14.sp, 700, 18f / 14f), color = col, maxLines = if (scrolls) 1 else 2, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
 @Composable
 fun Chip(modifier: Modifier = Modifier, height: Dp = 44.dp, bg: Color = C.surface2, padding: PaddingValues = PaddingValues(horizontal = 18.dp), content: @Composable RowScope.() -> Unit) {
+    if (LocalPhone.current) {
+        // Phone pill: the height is a minimum so text can wrap; symmetric 12dp sides; 14sp text comes from the caller.
+        Row(
+            modifier.heightIn(min = height).clip(RoundedCornerShape(50)).background(bg)
+                .padding(if (padding == PaddingValues(horizontal = 18.dp)) PaddingValues(horizontal = 12.dp) else padding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            content = content,
+        )
+        return
+    }
     Row(
         modifier.height(height).clip(RoundedCornerShape(height / 2)).background(bg).padding(padding),
         verticalAlignment = Alignment.CenterVertically,
@@ -531,13 +692,19 @@ fun Drawable.toSmallBitmap(px: Int = 144) = toBitmap(px, px)
 
 @Composable
 fun Title(text: String, size: Int, modifier: Modifier = Modifier, color: Color = C.text, lineHeight: Float = 1.0f, maxLines: Int = 2) =
-    Text(text, style = disp(size.sp, 800, lineHeight), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    if (LocalPhone.current) Text(text, style = disp(phoneTitleSize(size).sp, 800, 1.15f), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    else Text(text, style = disp(size.sp, 800, lineHeight), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
+/** On a phone the default three-line limit is lifted: essential instructions are never cut with "…". An explicit smaller limit still applies. */
 @Composable
 fun Muted(text: String, size: Int, modifier: Modifier = Modifier, weight: Int = 500, maxLines: Int = 3) =
-    Text(text, style = body(size.sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    if (LocalPhone.current) Text(text, style = body(phoneMutedSize(size).sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = if (maxLines == 3) Int.MAX_VALUE else maxLines, overflow = TextOverflow.Ellipsis)
+    else Text(text, style = body(size.sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
 @Composable
 fun Card(modifier: Modifier = Modifier, radius: Dp = 28.dp, bg: Color = C.surface, padding: PaddingValues = PaddingValues(28.dp), content: @Composable () -> Unit) {
-    Box(modifier.clip(RoundedCornerShape(radius)).background(bg).padding(padding)) { content() }
+    val phone = LocalPhone.current
+    val r = if (phone && radius == 28.dp) PhoneMetrics.cardRadius else radius
+    val p = if (phone && padding == PaddingValues(28.dp)) PaddingValues(PhoneMetrics.cardPadding) else padding
+    Box(modifier.clip(RoundedCornerShape(r)).background(bg).padding(p)) { content() }
 }

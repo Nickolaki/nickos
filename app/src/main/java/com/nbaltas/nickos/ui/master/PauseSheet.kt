@@ -9,7 +9,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.semantics.Role
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.disp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +51,38 @@ val PAUSE_PRESETS = listOf("Look out the window!", "Toilet stop", "Time to eat",
 @Composable
 fun PauseAllSheet(paused: Boolean, startMsg: String = "", onSubmit: (Boolean, String) -> Unit, onClose: () -> Unit) {
     var msg by remember { mutableStateOf(startMsg) }
+    if (LocalPhone.current) {
+        // Bottom sheet: 16dp padding, full-width wrapping presets (no ellipsis), equal 52dp actions. Parent insets come from MainActivity.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onClose), contentAlignment = Alignment.BottomCenter) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)).background(C.surface).tap {}
+                    .verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(if (paused) "Everyone is paused" else "Pause all tablets", style = disp(24.sp, 800, 1.15f), color = C.text)
+                if (!paused) {
+                    PAUSE_PRESETS.forEach { p ->
+                        val sel = msg == p
+                        Box(
+                            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(if (sel) C.accent else C.surface2)
+                                .selectable(selected = sel, role = Role.RadioButton) { msg = p }.padding(horizontal = 16.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) { Text(p, style = body(16.sp, 700, 1.25f), color = if (sel) C.onAccent else C.text) }
+                    }
+                    NickField(msg, { msg = it.take(NetMessages.MAX_PAUSE_MSG) }, placeholder = "Or type a message")
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NickButton("Cancel", onClose, Modifier.weight(1f), style = BtnStyle.GHOST)
+                    NickButton(
+                        if (paused) "Resume everyone" else "Pause everyone", { onSubmit(!paused, msg) }, Modifier.weight(1f),
+                        style = BtnStyle.PRIMARY, leading = if (paused) Solid.Play else Solid.Pause,
+                        enabled = PauseAll.canSubmit(paused, msg),
+                    )
+                }
+            }
+        }
+        return
+    }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onClose), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}.padding(32.dp),
