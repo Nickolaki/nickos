@@ -21,7 +21,8 @@ The Master prints a short code under the QR. It matches the NickOS on the update
 server is unreachable, the NickOS on the parent tablet. If the tablet refuses the code, the update
 server is serving a different build than the code says.
 
-When setup ends, NickOS is already the home screen, so the Home button comes back to it.
+When setup ends, NickOS is already the home screen, so the Home button comes back to it. Only a kid
+tablet is made the home screen like this. A tablet with no role yet also offers NickOS as a home screen.
 
 The APK comes from `https://nickflix-config.nbaltas.org/nickos/nickos-latest.apk` (public on
 purpose: it holds no secrets). This only works on a tablet with no accounts yet, which is
@@ -74,6 +75,11 @@ back to NickOS when another app comes up that is not on the allowed list. This i
 Owner: a kid who knows Android can still find a way out. After a restart, open NickOS once.
 The grown-up menu shows **Finish kid lock** while steps are missing.
 
+Updating from NickOS 0.8 keeps the same MainActivity home entry on kid tablets. Launcher mode
+keeps its selected home app, and Device Owner keeps its persistent home choice. No home migration
+or component switch is needed. If the kid lock is later undone, an existing tablet requires the
+parent PIN before opening repair setup. A new tablet still opens setup directly.
+
 On a PC, the same steps can be skipped for a Device Owner tablet with the adb line below.
 
 ### Getting out
@@ -89,7 +95,17 @@ While Device Owner is set, NickOS can't be uninstalled until you use that button
 2. Type the 6-digit code from the kid's tablet.
 3. Optionally connect Jellyfin (server address, username, password). An admin login lets the
    Master see every tablet's playback and choose which Jellyfin user each tablet shows.
-4. Make NickOS the Home app if you want it as the tablet's launcher.
+
+NickOS does not need to be the parent tablet's home screen. It works like any other app: Back
+leaves it for the tablet's own home screen, and the car network keeps running in the background.
+NickOS does not even offer itself to Android as a home screen on the parent tablet, so setup never asks
+you to pick it after the parent role is saved. On first start after updating, a parent tablet switches
+to a separate launcher entry. A parent already using NickOS as Home keeps that choice. If you do want it as the home screen, turn on Settings → About → "Use NickOS as this
+tablet's home screen". Android then asks you to confirm, and the line under the switch shows what
+Android really did. Turn the switch off and Android goes back to your other launcher.
+
+The parent tablet hosts the car network (Wi-Fi Direct). It can drain the battery, so Settings →
+Tablets has a Car network switch. Off means the kid tablets use your home WiFi or a hotspot instead.
 
 Rename the Master under Settings → Linked tablets (it shows up on kid tablets as
 "Linked to Dad's tablet" and "Screen locked by Dad").
@@ -100,7 +116,19 @@ The Master's Cameras screen shows the kids' tablets' front cameras next to any R
 
 A tablet camera only runs while the Cameras screen is open on the Master, and it turns off by itself after the time you pick in Settings, Cameras (10 minutes unless you change it). A tablet that gets warm drops to a smaller picture; one that gets too hot turns its camera off for two minutes. Both are shown on the tile.
 
-Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound: the microphone is never used.
+Kid tablets with the kid lock get camera access by themselves on most tablets. If a tile says "Camera permission needed", open the grown-up menu on that tablet (hold the avatar, parent PIN) and tap Allow camera, or run the adb line above. Android shows its own small camera dot on the kid's tablet while the camera is on; NickOS adds nothing else there. There is no sound from the kid tablets: their microphones are never used.
+
+### Talk to the kids
+
+Under the chips on the Cameras screen, a **Hold to talk** button speaks to every kid tablet that is on the screen (never to an RTSP camera), and the line beside it says who hears ("Hold to talk to Hailey, Leo"; with more than three it shows a count). While you hold it the button is lit and says "Talking to ...". Each tablet tile also has its own small microphone that talks to that tablet only. Let go and it stops.
+
+- The first press on the parent tablet asks Android for the microphone and does not talk. Allow it, then hold the button again. Only the parent tablet asks; kid tablets never do.
+- Who hears is fixed when you start pressing, so a tablet that turns on halfway does not suddenly listen.
+- On the kid tablet the speaker plays your voice, the movie gets quieter, and a banner says "Dad is talking" (your tablet's name, or "Parent is talking"). The banner stays for as long as the voice is audible, also on the locked screen. Over other apps it needs the show over other apps permission; without it a "Parent is talking" notification stands in for it while the voice plays. Talk only works on a sealed link (current NickOS on both tablets). It stops by itself if your tablet goes quiet for a second and a half, and no talk lasts more than two minutes.
+- Talking stops when you let go, leave the Cameras screen, switch to another app, lose the microphone permission, or every tablet goes offline.
+- A tablet on an older NickOS shows a greyed microphone and "Update this tablet". The Node reports `talk1` in its capabilities.
+- If talk notifications are disabled, enter the parent PIN on the kid tablet and open **Talk notifications** in the grown up menu to open that channel settings page.
+- If the kid hears nothing, check the tablet's call volume (talk uses the voice stream, not the movie volume) and that Wi-Fi is up.
 
 ## Tapo camera in the car
 

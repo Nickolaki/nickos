@@ -68,11 +68,16 @@ import com.composables.icons.lucide.Wifi
 import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
+import com.nbaltas.nickos.EntrySwitch
+import com.nbaltas.nickos.homeRequestIntent
+import com.nbaltas.nickos.homeStateLine
+import com.nbaltas.nickos.isDefaultHome
 import com.nbaltas.nickos.cam.CamPrefs
 import com.nbaltas.nickos.data.Hotspot
 import com.nbaltas.nickos.data.LinkedNode
 import com.nbaltas.nickos.master.CarNetState
 import com.nbaltas.nickos.master.NodeNet
+import com.nbaltas.nickos.master.effectiveCarNetState
 import com.nbaltas.nickos.master.OnlinePolicy
 import com.nbaltas.nickos.master.Reason
 import com.nbaltas.nickos.master.Why
@@ -97,6 +102,7 @@ import com.nbaltas.nickos.ui.theme.LightColors
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickLogo
+import com.nbaltas.nickos.ui.theme.NickSwitch
 import com.nbaltas.nickos.ui.theme.PinDots
 import com.nbaltas.nickos.ui.theme.Segmented
 import com.nbaltas.nickos.ui.theme.Title
@@ -257,6 +263,10 @@ internal fun carNetCopy(state: CarNetState, manual: Hotspot?, sdk: Int): CardCop
             "Use a phone or tablet hotspot instead. Enter its name and password here and the tablets will join that.",
             fields = true,
         )
+        Why.TURNED_OFF -> CardCopy(
+            "Car network is off", "Turn it on above when you want it back. Until then the tablets use your home WiFi or a hotspot.",
+            ghost = CarButton("Use a different hotspot", CarAction.DIFFERENT), fields = manual != null,
+        )
         Why.MANUAL -> CardCopy(
             manual?.ssid ?: "Hotspot", "The tablets join this hotspot when it is on. Switch it on each trip.",
             ghost = if (sdk >= 29) CarButton("Use the car network instead", CarAction.USE_CAR_NET) else null,
@@ -292,7 +302,11 @@ internal fun carNetWhy(why: Why): String = when (why) {
     Why.TETHERING_ON -> "your hotspot is on"
     Why.FAILED, Why.UNSUPPORTED -> "it can't run on this tablet"
     Why.MANUAL -> "you are using your own hotspot"
+    Why.TURNED_OFF -> "you switched it off"
 }
+
+/** The banner never nags about a switch the parent chose. */
+internal fun carNetBannerWhy(reasons: Collection<Reason>): Why? = carNetDownWhy(reasons)?.takeIf { it != Why.TURNED_OFF }
 
 internal fun carNetBanner(why: Why): String = "Car network is off: ${carNetWhy(why)}. Tap to fix."
 
@@ -303,7 +317,7 @@ internal enum class TipIcon { WIFI_OFF, WIFI, POWER }
 
 /** The tips on a tablet's offline page. [manualSsid] is set when the parent typed a hotspot in. */
 internal fun offlineTips(reason: Reason?, manualSsid: String?): List<Pair<TipIcon, String>> = when (reason) {
-    is Reason.CarNetDown -> listOf(TipIcon.WIFI_OFF to "The car network is off: ${carNetWhy(reason.why)}. Fix it in Settings, Tablets.")
+    is Reason.CarNetDown -> if (reason.why == Why.TURNED_OFF) listOf(TipIcon.WIFI_OFF to "The car network is switched off. Turn it on in Settings, Tablets.") else listOf(TipIcon.WIFI_OFF to "The car network is off: ${carNetWhy(reason.why)}. Fix it in Settings, Tablets.")
     is Reason.MasterNotOnWifi -> listOf(TipIcon.WIFI to "Switch on the hotspot ${manualSsid ?: ""} and it will join.")
     is Reason.NoHotspotDetails -> listOf(TipIcon.WIFI to "It hasn't got the car network yet. Link it on the home WiFi once.")
     else -> listOf(
@@ -316,8 +330,11 @@ internal fun offlineTips(reason: Reason?, manualSsid: String?): List<Pair<TipIco
 private fun CarNetCard() {
     val ctx = LocalContext.current
     val app = App.get(ctx)
-    val state by app.master.carNet.state.collectAsState()
+    val runtime by app.master.carNet.state.collectAsState()
     val hotspot by app.store.hotspot.collectAsState()
+    val switchedOn by app.store.carNetOn.collectAsState()
+    // Off means off: the card follows the preference, not the async runtime state that may lag behind it.
+    val state = effectiveCarNetState(runtime, switchedOn)
     val manual = hotspot?.takeIf { !it.direct }
     val copy = carNetCopy(state, manual, Build.VERSION.SDK_INT)
     var reveal by rememberSaveable { mutableStateOf(false) }
@@ -342,7 +359,13 @@ private fun CarNetCard() {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 22.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        EyebrowText("Car network")
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Car network", style = body(20.sp, 800), color = C.text)
+                Muted(CARNET_SWITCH_HELP, 15)
+            }
+            NickSwitch(switchedOn) { app.store.setCarNetOn(it) }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(26.dp))
             Text(copy.title, style = body(22.sp, 800), color = C.text, maxLines = 2, modifier = Modifier.weight(1f))
@@ -368,6 +391,8 @@ private fun CarNetCard() {
         }
     }
 }
+
+internal const val CARNET_SWITCH_HELP = "Turning this off can save battery. Kid tablets then need your home WiFi or a hotspot."
 
 /** Test hook: the car network card opens with the name and password already shown. */
 internal var carNetStartRevealed = false
@@ -682,9 +707,70 @@ private fun AboutSection() {
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
             InfoRow("Connection", "Local WiFi only")
         }
+        HomeScreenRow()
         NickButton(if (confirmReset) "Tap again: forget every tablet and start over" else "Reset this tablet", {
-            if (confirmReset) app.store.resetAll() else confirmReset = true
+            if (confirmReset) {
+                if (EntrySwitch.enableMain(ctx)) app.store.resetAll()
+            } else confirmReset = true
         }, style = BtnStyle.DANGER)
+    }
+}
+
+/**
+ * The parent's choice to use NickOS as this tablet's home screen. The switch is the choice; the line under it is what
+ * Android really says, so a cancelled prompt leaves the switch on with the line telling the truth.
+ */
+@Composable
+private fun HomeScreenRow() {
+    val ctx = LocalContext.current
+    val app = App.get(ctx)
+    val optIn by app.store.masterHomeOptIn.collectAsState()
+    var isHome by remember { mutableStateOf(isDefaultHome(ctx)) }
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) {
+        isHome = isDefaultHome(ctx)
+        app.store.setMasterHomeOptIn(isHome == true)
+        EntrySwitch.applyStored(ctx)
+    }
+    // Turning it off opens no page, so look again right after any switch change. Android takes a moment to settle.
+    androidx.compose.runtime.LaunchedEffect(optIn) {
+        for (wait in listOf(0L, 400L, 1200L)) {
+            kotlinx.coroutines.delay(wait)
+            isHome = isDefaultHome(ctx)
+        }
+    }
+    // Look again when the parent comes back from the system page.
+    val lifecycle = (ctx as? androidx.lifecycle.LifecycleOwner)?.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+            isHome = isDefaultHome(ctx)
+            app.store.setMasterHomeOptIn(isHome == true)
+            EntrySwitch.applyStored(ctx)
+        } }
+        lifecycle?.addObserver(obs)
+        onDispose { lifecycle?.removeObserver(obs) }
+    }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Use NickOS as this tablet's home screen", style = body(19.sp, 700), color = C.text)
+            Muted(homeStateLine(isHome), 15)
+        }
+        NickSwitch(optIn) { on ->
+            // On: the HOME offer is switched on before the system is asked. Off: the running activity switches the door back.
+            if (on) EntrySwitch.enableMain(ctx)
+            if (!on) app.store.setMasterHomeOptIn(false)
+            if (on) {
+                val request = homeRequestIntent(ctx)
+                if (request != null) {
+                    try { ask.launch(request) } catch (_: android.content.ActivityNotFoundException) { EntrySwitch.applyStored(ctx) }
+                } else {
+                    app.store.setMasterHomeOptIn(isDefaultHome(ctx) == true)
+                    EntrySwitch.applyStored(ctx)
+                }
+            }
+        }
     }
 }
 

@@ -20,7 +20,9 @@ import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
+import com.nbaltas.nickos.EntrySwitch
 import com.nbaltas.nickos.MainActivity
+import com.nbaltas.nickos.entryIntent
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
@@ -30,8 +32,9 @@ class AdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(ctx: Context, intent: Intent) {
         @Suppress("DEPRECATION")
         Provisioning.remember(ctx, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
+        EntrySwitch.applyStored(ctx)
         NodeDevice.makeHome(ctx)
-        ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(entryIntent(ctx).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -85,7 +88,10 @@ class NodeDevice(private val ctx: Context) {
     fun batteryTemperatureTenths(): Int =
         ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
 
-    fun hasCameraPermission() = ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    /** The notification permission Android 13+ asks for (before that there is nothing to ask). A Device Owner is granted it by policy. */
+    val notificationsOk get() = Build.VERSION.SDK_INT < 33 || ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    fun hasCameraPermission() =ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
     val screenOn get() = power.isInteractive
 
@@ -177,7 +183,7 @@ class NodeDevice(private val ctx: Context) {
     fun goHome() {
         lastLaunched = null
         ctx.startActivity(
-            Intent(ctx, MainActivity::class.java)
+            entryIntent(ctx)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
     }
@@ -251,15 +257,11 @@ class NodeDevice(private val ctx: Context) {
     }
 
     /** Asks for the home role: the system dialog on Android 10+, else the Home app settings page. */
-    fun homeRequestIntent(): Intent {
-        if (Build.VERSION.SDK_INT >= 29) {
-            val rm = ctx.getSystemService(android.app.role.RoleManager::class.java)
-            if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
-                return rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
-            }
-        }
-        return Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
+    fun homeRequestIntent(): Intent =
+        com.nbaltas.nickos.homeRequestIntent(ctx) ?: Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** The notification settings for the "Parent talking" channel (the app's notification page before Android 8). */
+    fun talkChannelSettingsIntent(): Intent = TalkNotice.channelSettingsIntent(ctx)
 
     fun overlayIntent() = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
 
@@ -282,7 +284,7 @@ class NodeDevice(private val ctx: Context) {
         try {
             dpm.setLockTaskPackages(admin, (listOf(ctx.packageName) + packages).distinct().toTypedArray())
             if (Build.VERSION.SDK_INT >= 28) dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
-            dpm.addPersistentPreferredActivity(admin, homeFilter(), ComponentName(ctx, MainActivity::class.java))
+            makeHome(ctx)
             dpm.setKeyguardDisabled(admin, true)
             if (Build.VERSION.SDK_INT >= 33) dpm.setPermissionGrantState(
                 admin, ctx.packageName, android.Manifest.permission.POST_NOTIFICATIONS, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
@@ -343,11 +345,13 @@ class NodeDevice(private val ctx: Context) {
         /**
          * Device Owner only: make NickOS the persistent home screen. Never throws, because a crash during the
          * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set.
+         * Always [MainActivity], the component an updated kid tablet already has as its preference.
          */
         fun makeHome(ctx: Context): Boolean = try {
             val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
             if (dpm.isDeviceOwnerApp(ctx.packageName)) {
                 dpm.addPersistentPreferredActivity(ComponentName(ctx, AdminReceiver::class.java), homeFilter(), ComponentName(ctx, MainActivity::class.java))
+                Log.i(TAG, "home preference set")
                 true
             } else false
         } catch (e: Throwable) { Log.w(TAG, "make home", e); false }

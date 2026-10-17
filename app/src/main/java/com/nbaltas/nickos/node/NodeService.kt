@@ -92,7 +92,7 @@ class BootReceiver : BroadcastReceiver() {
         NodeService.start(ctx)
         // After a self-update the kiosk task died with the old process: put the kid home back.
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            ctx.startActivity(Intent(ctx, com.nbaltas.nickos.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            ctx.startActivity(com.nbaltas.nickos.entryIntent(ctx).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 }

@@ -231,9 +231,10 @@ private fun CarNetBanner(pad: Dp, onSettings: () -> Unit) {
     // Read so the banner recomposes when any input of offlineReasons() changes.
     app.master.carNet.state.collectAsState().value
     app.store.hotspot.collectAsState().value
+    app.store.carNetOn.collectAsState().value
     app.master.online.collectAsState().value
     val now = rememberNow(1000)
-    val why = carNetDownWhy(app.master.offlineReasons(now).values) ?: return
+    val why = carNetBannerWhy(app.master.offlineReasons(now).values) ?: return
     val shape = RoundedCornerShape(20.dp)
     Row(
         Modifier.fillMaxWidth().padding(start = pad, end = pad, bottom = 12.dp).clip(shape).background(C.surface)

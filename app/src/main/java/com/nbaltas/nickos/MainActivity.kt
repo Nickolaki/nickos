@@ -30,7 +30,7 @@ import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
 import com.nbaltas.nickos.ui.theme.ThemeMode
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private val app get() = App.get(this)
     private val main = Handler(Looper.getMainLooper())
 
@@ -40,6 +40,15 @@ class MainActivity : ComponentActivity() {
             val role by app.store.role.collectAsState()
             val theme by app.store.theme.collectAsState()
             LaunchedEffect(role) { onRoleChanged(role) }
+            // Which door this tablet uses follows the role: see EntryFlow. A kid tablet never changes anything here.
+            val homeOptIn by app.store.masterHomeOptIn.collectAsState()
+            LaunchedEffect(role, homeOptIn) { EntrySwitch.reconcile(this@MainActivity, role, homeOptIn) }
+            // The parent's "lock to landscape" for a kid tablet. Both landscape directions; other apps are handled by NodeRuntime.
+            val landscape by app.store.landscapeLock.collectAsState()
+            LaunchedEffect(landscape, role) {
+                requestedOrientation = if (landscape && role == Role.NODE) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
             val mode = if (role == Role.MASTER) ThemeMode.valueOf(theme) else ThemeMode.DARK
             val dark = mode == ThemeMode.DARK || (mode == ThemeMode.SYSTEM && isSystemInDarkTheme())
             // Dark status/nav bar icons on the light theme, or they vanish into the background.
@@ -88,7 +97,7 @@ class MainActivity : ComponentActivity() {
     /** The Wi-Fi Direct group needs one permission (nearby devices, or location on older Android). Asked once per start. */
     private fun askForCarNetPermission() {
         val perms = app.master.carNet.permissionToRequest()
-        if (perms.isEmpty() || askedCarNet) return
+        if (perms.isEmpty() || askedCarNet || !app.store.carNetOn.value) return
         askedCarNet = true
         try { requestPermissions(perms.toTypedArray(), REQ_CARNET) } catch (_: Exception) {}
     }
@@ -103,6 +112,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (app.store.role.value == Role.MASTER && app.store.masterHomeOptIn.value && isDefaultHome(this) != true) {
+            app.store.setMasterHomeOptIn(false)
+            EntrySwitch.applyStored(this)
+        }
+        com.nbaltas.nickos.node.RotationRecovery.retry(this, app.store)
         if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = true
             app.node.device.lastLaunched = null
@@ -151,6 +165,8 @@ class MainActivity : ComponentActivity() {
     override fun onBackPressed() {
         // Home screen: Back never leaves it. Compose BackHandlers still get it first.
         if (onBackPressedDispatcher.hasEnabledCallbacks()) onBackPressedDispatcher.onBackPressed()
+        // The parent tablet is a normal app unless it is set as the home screen: Back goes to its own home.
+        else if (masterBackLeaves(app.store.role.value, isDefaultHome(this))) moveTaskToBack(true)
     }
 
     companion object { const val PARENT_MINUTES = 10; private const val REQ_CARNET = 41 }

@@ -52,7 +52,16 @@ class FakeP2p : P2pPort {
         creates.incrementAndGet(); events += "create"
         return create(ssid, pass)
     }
-    override suspend fun removeGroup(): Boolean { removes.incrementAndGet(); events += "remove"; group = null; return true }
+    /** The next this many removes fail and leave the group where it is. */
+    val removeFails = AtomicInteger()
+    /** When set, removeGroup waits for it after being counted (a removal that takes a while). */
+    @Volatile var removeGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun removeGroup(): Boolean {
+        removes.incrementAndGet(); events += "remove"
+        removeGate?.await()
+        if (removeFails.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) return false
+        group = null; return true
+    }
     override fun close() { events += "close" }
 }
 
@@ -333,6 +342,7 @@ class CarNetTest {
         waitFor("on") { n.isOn() }
         p.tethering = true; p.fire()
         waitFor("paused") { n.off() == Why.TETHERING_ON }
+        waitFor("group removed") { p.removes.get() >= 1 }
         val creates = p.creates.get()
         val removes = p.removes.get()
         Thread.sleep(200)                          // several watchdog laps
