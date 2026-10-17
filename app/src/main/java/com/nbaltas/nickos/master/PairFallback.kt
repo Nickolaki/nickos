@@ -34,8 +34,8 @@ class PairAttempt {
         toClose.forEach { runCatching { it.close() } }
     }
 
-    /** Runs [block] under the lock if not cancelled; null otherwise. */
-    fun <T : Any> commit(block: () -> T): T? = synchronized(lock) { if (cancelled) null else block() }
+    /** Runs [block] under the lock if not cancelled and the owning [job] is still active; null otherwise. */
+    fun <T : Any> commit(job: Job, block: () -> T): T? = synchronized(lock) { if (cancelled || !job.isActive) null else block() }
 }
 
 /**

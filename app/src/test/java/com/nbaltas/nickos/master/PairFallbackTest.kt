@@ -1,6 +1,7 @@
 package com.nbaltas.nickos.master
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -107,32 +108,58 @@ class PairFallbackTest {
     }
 
     /** Mirrors tryPair: track, blocking handshake, then commit the writes. */
-    private fun fakeTryPair(a: PairAttempt, s: FakeSocket, handshake: () -> Boolean, writes: AtomicInteger): String? {
+    private fun fakeTryPair(a: PairAttempt, job: kotlinx.coroutines.Job, s: FakeSocket, handshake: () -> Boolean, writes: AtomicInteger): String? {
         if (!a.track(s)) return null
         val ok = try { handshake() } finally { a.untrack(s); s.close() }
-        return if (ok) a.commit { writes.incrementAndGet(); "paired" } else null
+        return if (ok) a.commit(job) { writes.incrementAndGet(); "paired" } else null
     }
 
-    @Test fun cancelledAttemptNeverSaves() {
+    /** Blocking handshake in a real coroutine; [cancelIt] cancels it for real, then a valid reply is released. */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    private fun cancelRun(timeout: Boolean) {
         val a = PairAttempt()
         val s = FakeSocket()
         val writes = AtomicInteger()
         val started = java.util.concurrent.CountDownLatch(1)
         val gate = java.util.concurrent.CountDownLatch(1)
         val result = java.util.concurrent.atomic.AtomicReference<String?>("unset")
-        val t = Thread {
-            result.set(fakeTryPair(a, s, { started.countDown(); gate.await(); true }, writes))
+        val finished = java.util.concurrent.CountDownLatch(1)
+        runBlocking {
+            val pairing = launch(kotlinx.coroutines.Dispatchers.IO) {
+                val owner = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]!!
+                val h1 = owner.invokeOnCompletion(onCancelling = true) { a.cancel() }
+                try {
+                    if (timeout) {
+                        kotlinx.coroutines.withTimeoutOrNull(150) {
+                            val sj = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]!!
+                            sj.invokeOnCompletion(onCancelling = true) { a.cancel() }
+                            result.set(fakeTryPair(a, sj, s, { started.countDown(); gate.await(); true }, writes))
+                        }
+                    } else {
+                        result.set(fakeTryPair(a, owner, s, { started.countDown(); gate.await(); true }, writes))
+                    }
+                } finally { h1.dispose(); finished.countDown() }
+            }
+            started.await()
+            if (timeout) {
+                // Wait for the timeout to close the socket, with no help from us.
+                val end = System.currentTimeMillis() + 5_000
+                while (!s.closed.get() && System.currentTimeMillis() < end) Thread.sleep(10)
+            } else {
+                pairing.cancel()
+            }
+            assertTrue(s.closed.get())
+            gate.countDown() // the blocked handshake returns a valid reply after the cancel
+            finished.await(5, java.util.concurrent.TimeUnit.SECONDS)
         }
-        t.start()
-        started.await()
-        a.cancel()
-        assertTrue(s.closed.get())
-        gate.countDown() // the blocked handshake returns a valid reply after the cancel
-        t.join(5_000)
         assertNull(result.get())
         assertEquals(0, writes.get())
         assertTrue(s.closed.get())
     }
+
+    @Test fun cancellingThePairingJobNeverSaves() = cancelRun(timeout = false)
+
+    @Test fun timeoutNeverSaves() = cancelRun(timeout = true)
 
     @Test fun socketOpenedAfterCancelIsClosed() {
         val a = PairAttempt()
@@ -146,7 +173,7 @@ class PairFallbackTest {
         val a = PairAttempt()
         val s = FakeSocket()
         val writes = AtomicInteger()
-        assertEquals("paired", fakeTryPair(a, s, { true }, writes))
+        assertEquals("paired", fakeTryPair(a, kotlinx.coroutines.Job(), s, { true }, writes))
         assertEquals(1, writes.get())
         assertTrue(s.closed.get())
     }

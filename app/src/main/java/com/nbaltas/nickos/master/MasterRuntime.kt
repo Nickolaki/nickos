@@ -464,6 +464,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      * Tries the code against every NickOS tablet on the WiFi; only the one showing it accepts.
      * [manual] ("192.168.1.23" or "host:port") is tried too, for networks where mDNS doesn't get through.
      */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
     suspend fun pair(code: String, manual: String? = null): PairResult? = withContext(Dispatchers.IO) {
         val typed = manual?.trim()?.takeIf { it.isNotEmpty() }?.let { a ->
             val host = a.substringBeforeLast(':').takeIf { ':' in a } ?: a
@@ -472,30 +473,34 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         val startedAt = System.currentTimeMillis()
         var swept = false
         val attempt = PairAttempt()
+        val owner = coroutineContext[Job]!!
+        // Closes the attempt's sockets synchronously the moment cancellation starts (the caller leaving).
+        val ownerHandle = owner.invokeOnCompletion(onCancelling = true) { attempt.cancel() }
         try {
             withTimeoutOrNull(15_000) {
-                // Closes the attempt's sockets the moment the scope is cancelled (timeout or the caller leaving).
-                val watchdog = launch { try { awaitCancellation() } finally { attempt.cancel() } }
+                val scopeJob = coroutineContext[Job]!!
+                // Same for the timeout scope.
+                val scopeHandle = scopeJob.invokeOnCompletion(onCancelling = true) { attempt.cancel() }
                 try {
                     while (true) {
                         val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
-                        val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code, attempt) } }
+                        val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code, attempt, scopeJob) } }
                         tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
                         // NSD found nothing and no address was typed: one sweep of the /24 for tablets mDNS cannot reach.
                         if (PairFallback.due(System.currentTimeMillis() - startedAt, found.entries().size, typed != null, swept)) {
                             swept = true
-                            PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code, attempt) }
+                            PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code, attempt, scopeJob) }
                                 ?.let { return@withTimeoutOrNull it }
                         }
                         delay(1500)
                     }
                     @Suppress("UNREACHABLE_CODE") null
-                } finally { watchdog.cancel() }
+                } finally { scopeHandle.dispose() }
             }
-        } finally { attempt.cancel() }
+        } finally { ownerHandle.dispose(); attempt.cancel() }
     }
 
-    private fun tryPair(id: String, addr: Pair<String, Int>, code: String, attempt: PairAttempt): PairResult? = try {
+    private fun tryPair(id: String, addr: Pair<String, Int>, code: String, attempt: PairAttempt, job: Job): PairResult? = try {
         val c = Conn.open(addr.first, addr.second, 2500)
         if (!attempt.track(c.socket)) { c.close(); null } else {
             c.socket.soTimeout = 4000
@@ -510,7 +515,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                     host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
                 )
                 // A cancelled attempt discards the reply: nothing is stored, flagged or published.
-                attempt.commit {
+                attempt.commit(job) {
                     store.upsertNode(node)
                     linkFlags.setSec2(node.id, true)
                     val st = NodeStatus.from(r)
