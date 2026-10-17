@@ -2,7 +2,9 @@ package com.nbaltas.nickos.link
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -82,18 +84,45 @@ object LanAddress {
      * Who this tablet is on the network it is on: interface name, IPv4 and default gateway as one key. The same IPv4 on
      * another interface or behind another gateway (home WiFi, then the car's Wi-Fi Direct) is a different network.
      */
-    fun identity(iface: String?, ip: String?, gateway: String?): String? = ip?.let { "${iface.orEmpty()}|$it|${gateway.orEmpty()}" }
+    fun identity(
+        iface: String?, ip: String?, gateway: String?,
+        dns: List<String> = emptyList(), domain: String? = null, dhcp: String? = null, ssid: String? = null,
+    ): String? = ip?.let {
+        // An absent part is empty, so it only equals another absent part. The band (BSSID, frequency) is never in the key.
+        val name = ssid?.takeIf { s -> s.isNotEmpty() && s != "<unknown ssid>" }.orEmpty()
+        "${iface.orEmpty()}|$it|${gateway.orEmpty()}|${dns.sorted().joinToString(",")}|${domain.orEmpty()}|${dhcp.orEmpty()}|$name"
+    }
 
     /** [identity] of [own], or null when not on a network. */
     fun ownIdentity(ctx: Context): String? {
         val ip = own(ctx) ?: return null
         val iface = interfaces().firstOrNull { it.second == ip }?.first
-        val gw = try {
+        var gw: String? = null
+        var dns: List<String> = emptyList()
+        var domain: String? = null
+        var dhcp: String? = null
+        var ssid: String? = null
+        try {
             val cm = ctx.getSystemService(ConnectivityManager::class.java)
-            cm.allNetworks.mapNotNull { cm.getLinkProperties(it) }.firstOrNull { it.interfaceName == iface }
-                ?.routes?.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway?.hostAddress
-        } catch (e: Exception) { null }
-        return identity(iface, ip, gw)
+            val net = cm.allNetworks.firstOrNull { cm.getLinkProperties(it)?.interfaceName == iface }
+            val lp = net?.let { cm.getLinkProperties(it) }
+            if (lp != null) {
+                gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway?.hostAddress
+                dns = lp.dnsServers.mapNotNull { it.hostAddress }
+                domain = lp.domains
+                if (Build.VERSION.SDK_INT >= 30) dhcp = lp.dhcpServerAddress?.hostAddress
+            }
+            if (net != null && Build.VERSION.SDK_INT >= 31) {
+                ssid = (cm.getNetworkCapabilities(net)?.transportInfo as? WifiInfo)?.ssid
+            }
+        } catch (e: Exception) { }
+        if (ssid == null) {
+            ssid = try {
+                @Suppress("DEPRECATION")
+                (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).connectionInfo?.ssid
+            } catch (e: Exception) { null }
+        }
+        return identity(iface, ip, gw, dns, domain, dhcp, ssid)
     }
 
     private val WIFI_NAMES =listOf("wlan", "swlan", "ap", "softap", "wl")

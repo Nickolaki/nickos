@@ -90,6 +90,21 @@ class AdvertiserTest {
     }
 
     @Test
+    fun `a different ssid on the same interface, address and gateway re-registers`() {
+        val g = FakeGate()
+        val a = advertiser(g)
+        val home = com.nbaltas.nickos.link.LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("192.168.1.1"), null, "192.168.1.1", "\"Home\"")
+        val other = com.nbaltas.nickos.link.LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("192.168.1.1"), null, "192.168.1.1", "\"Cafe\"")
+        a.start(47470, home)
+        waitFor("first") { g.registers.get() == 1 }
+        a.refresh(home)
+        Thread.sleep(80)
+        assertEquals(1, g.registers.get())
+        a.refresh(other)
+        waitFor("second") { g.registers.get() == 2 }
+    }
+
+    @Test
     fun `the new registration waits for the old one's ack`() {
         val g = FakeGate()
         val a = advertiser(g, ackMs = 2000)

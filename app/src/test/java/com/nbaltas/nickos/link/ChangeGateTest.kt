@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -95,6 +96,34 @@ class ChangeGateTest {
         val id = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1")
         gate.address(id); settle()
         gate.lost(); gate.available(); gate.address(id); settle()
+        assertEquals(1, fired.get())
+    }
+
+    @Test
+    fun `a different ssid or dns with the same interface, ip and gateway is a change`() {
+        val a = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("8.8.8.8"), null, "192.168.1.1", "\"Home\"")
+        val otherSsid = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("8.8.8.8"), null, "192.168.1.1", "\"Cafe\"")
+        val noSsid = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("8.8.8.8"), null, "192.168.1.1", "<unknown ssid>")
+        val otherDns = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("1.1.1.1"), null, "192.168.1.1", "\"Home\"")
+        assertNotEquals(a, otherSsid)
+        assertNotEquals(a, noSsid)
+        assertNotEquals(a, otherDns)
+        gate.address(a); settle()
+        assertEquals(1, fired.get())
+        gate.lost(); gate.available(); gate.address(otherSsid); settle()
+        assertEquals(2, fired.get())
+        gate.lost(); gate.available(); gate.address(otherDns); settle()
+        assertEquals(3, fired.get())
+    }
+
+    @Test
+    fun `the same network seen on another band keeps its identity`() {
+        // The band (BSSID, frequency) is not part of identity(), so a 2.4 to 5 GHz roam produces the same key.
+        val g = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("8.8.4.4", "8.8.8.8"), "lan", "192.168.1.1", "\"Home\"")
+        val roamed = LanAddress.identity("wlan0", "192.168.1.9", "192.168.1.1", listOf("8.8.8.8", "8.8.4.4"), "lan", "192.168.1.1", "\"Home\"")
+        assertEquals(g, roamed)
+        gate.address(g); settle()
+        gate.lost(); gate.available(); gate.address(roamed); settle()
         assertEquals(1, fired.get())
     }
 
