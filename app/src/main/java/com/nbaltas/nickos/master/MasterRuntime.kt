@@ -39,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -315,6 +316,31 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
+    /** Leaving the Master role: the group, discovery, network watch, sweep and every loop stop. A later [start] brings them back. */
+    @Synchronized
+    fun stop() {
+        carNet.stop()
+        sweep.stop()
+        netWatch?.stop()
+        netWatch = null
+        discoveryListener?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
+        discoveryListener = null
+        // Cancelling the loops cannot reach the blocking parts: close the links and the media server too.
+        scope.coroutineContext[Job]?.children?.forEach { it.cancel() }
+        // A handshake still in flight must not claim a link after this: new generation first, then close its sockets.
+        links.invalidate()
+        handshaking.toList().forEach { try { it.close() } catch (_: Exception) {} }
+        links.ids().forEach { id -> links.drop(id)?.close() }
+        try { server.stop() } catch (_: Exception) {}
+        // The role collector is cancelled above, so leaving Master gives the power settings back here.
+        powerRunner.stop()
+        powerRunner.release()
+        started = false
+    }
+
+    /** Waits at most [timeoutMs] for the car network removal that [stop] started. */
+    fun awaitStopped(timeoutMs: Long): Boolean = kotlinx.coroutines.runBlocking { carNet.awaitStopped(timeoutMs) }
+
     @Synchronized
     fun start() {
         // Idempotent, and outside the guard below: after a reset the Master starts again without a new process.
@@ -444,41 +470,66 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      * Tries the code against every NickOS tablet on the WiFi; only the one showing it accepts.
      * [manual] ("192.168.1.23" or "host:port") is tried too, for networks where mDNS doesn't get through.
      */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
     suspend fun pair(code: String, manual: String? = null): PairResult? = withContext(Dispatchers.IO) {
         val typed = manual?.trim()?.takeIf { it.isNotEmpty() }?.let { a ->
             val host = a.substringBeforeLast(':').takeIf { ':' in a } ?: a
             host to (a.substringAfterLast(':', "").toIntOrNull() ?: Wire.PORT)
         }
-        withTimeoutOrNull(15_000) {
-            while (true) {
-                val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
-                val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code) } }
-                tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
-                delay(1500)
+        val startedAt = System.currentTimeMillis()
+        var swept = false
+        val attempt = PairAttempt()
+        val owner = coroutineContext[Job]!!
+        // Closes the attempt's sockets synchronously the moment cancellation starts (the caller leaving).
+        val ownerHandle = owner.invokeOnCompletion(onCancelling = true) { attempt.cancel() }
+        try {
+            withTimeoutOrNull(15_000) {
+                val scopeJob = coroutineContext[Job]!!
+                // Same for the timeout scope.
+                val scopeHandle = scopeJob.invokeOnCompletion(onCancelling = true) { attempt.cancel() }
+                try {
+                    while (true) {
+                        val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
+                        val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code, attempt, scopeJob) } }
+                        tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
+                        // NSD found nothing and no address was typed: one sweep of the /24 for tablets mDNS cannot reach.
+                        if (PairFallback.due(System.currentTimeMillis() - startedAt, found.entries().size, typed != null, swept)) {
+                            swept = true
+                            PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code, attempt, scopeJob) }
+                                ?.let { return@withTimeoutOrNull it }
+                        }
+                        delay(1500)
+                    }
+                    @Suppress("UNREACHABLE_CODE") null
+                } finally { scopeHandle.dispose() }
             }
-            @Suppress("UNREACHABLE_CODE") null
-        }
+        } finally { ownerHandle.dispose(); attempt.cancel() }
     }
 
-    private fun tryPair(id: String, addr: Pair<String, Int>, code: String): PairResult? = try {
+    private fun tryPair(id: String, addr: Pair<String, Int>, code: String, attempt: PairAttempt, job: Job): PairResult? = try {
         val c = Conn.open(addr.first, addr.second, 2500)
-        c.socket.soTimeout = 4000
-        // No PIN goes out here: it reaches the Node on the first sealed session (runLink). A tablet that cannot
-        // produce the code's mac, or that claims a different id than the one we dialed, is dropped.
-        val out = try { Handshake.pair(c, store.deviceId, displayName, code, expectNodeId = id) } finally { c.close() }
-        if (out != null) {
-            val r = out.reply
-            val node = LinkedNode(
-                id = out.nodeId, name = r.optString("name"), color = r.optInt("color"),
-                avatar = r.optString("avatar", "initial"), token = out.token,
-                host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
-            )
-            store.upsertNode(node)
-            linkFlags.setSec2(node.id, true)
-            val st = NodeStatus.from(r)
-            _status.update { it + (node.id to st) }
-            PairResult(node, st)
-        } else null
+        if (!attempt.track(c.socket)) { c.close(); null } else {
+            c.socket.soTimeout = 4000
+            // No PIN goes out here: it reaches the Node on the first sealed session (runLink). A tablet that cannot
+            // produce the code's mac, or that claims a different id than the one we dialed, is dropped.
+            val out = try { Handshake.pair(c, store.deviceId, displayName, code, expectNodeId = id) } finally { attempt.untrack(c.socket); c.close() }
+            if (out != null) {
+                val r = out.reply
+                val node = LinkedNode(
+                    id = out.nodeId, name = r.optString("name"), color = r.optInt("color"),
+                    avatar = r.optString("avatar", "initial"), token = out.token,
+                    host = addr.first, port = addr.second, lastSeen = System.currentTimeMillis(), lastBattery = r.optInt("battery"),
+                )
+                // A cancelled attempt discards the reply: nothing is stored, flagged or published.
+                attempt.commit(job) {
+                    store.upsertNode(node)
+                    linkFlags.setSec2(node.id, true)
+                    val st = NodeStatus.from(r)
+                    _status.update { it + (node.id to st) }
+                    PairResult(node, st)
+                }
+            } else null
+        }
     } catch (e: Exception) { null }
 
     // ---- per-node link ----
@@ -513,8 +564,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     /** How long the link lasted from the welcome, in ms (even if it later dropped); -1 when the Node could not be reached. */
+    private val handshaking: MutableSet<Conn> = ConcurrentHashMap.newKeySet()
+
     private fun session(n: LinkedNode, addr: Pair<String, Int>): Long {
+        val gen = links.generation()
         var c = Conn.open(addr.first, addr.second)
+        handshaking.add(c)
         var claimed = false
         try {
             // An old Node may be silent for 11.5 s: long until a status says "hb3" (then 8 s, see runLink).
@@ -527,7 +582,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 Handshake.Hello.DENIED -> {
                     if (!Handshake.mayFallBack(linkFlags, n.id)) return -1
                     c.close()
+                    handshaking.remove(c)
                     c = Conn.open(addr.first, addr.second)
+                    handshaking.add(c)
                     c.socket.soTimeout = LinkTimeout.LEGACY_MS
                     if (!Handshake.legacyHello(c, store.deviceId, displayName, n.token)) return -1
                     legacy = true
@@ -535,8 +592,10 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 Handshake.Hello.FAIL -> return -1
             }
             val welcomed = System.currentTimeMillis()
-            links.claim(n.id, c)?.close() // a second link to the same Node (a reconnect racing discovery) replaces the old one
+            // A second link to the same Node (a reconnect racing discovery) replaces the old one; a stale generation (stop ran) cannot claim.
+            if (!links.claimIfCurrent(n.id, c, gen) { it.close() }) return -1
             claimed = true
+            handshaking.remove(c)
             if (legacy) send(n.id, cmd("update")) // the Node installs the sec2 build from the track and the link comes back sealed
             // A read timeout or reset ends a link that did work: it still counts as welcomed (so the loop redials at once).
             try { runLink(n, c) } catch (e: Exception) { Log.d(TAG, "link ${n.id}: ${e.message}") }
@@ -557,6 +616,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 cam.onDisconnected(n.id)
                 screen.onDisconnected(n.id)
             }
+            handshaking.remove(c)
             delivery(c, n.id).close()
             c.close()
         }
@@ -601,6 +661,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
+        if (links[n.id] !== c) { c.close(); return } // stop() dropped it between the claim and here
         live.add(n.id)
         grace.connected(n.id)
         send(n.id, cmd("pin").put("pin", store.pin.value))
@@ -941,6 +1002,21 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
  */
 class LinkTable<C : Any> {
     private val map = ConcurrentHashMap<String, C>()
+    private val gen = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Captured before a handshake; [claimIfCurrent] refuses it once [invalidate] ran. */
+    fun generation(): Int = gen.get()
+
+    /** Bumped by stop(): every handshake begun before it can no longer claim. */
+    @Synchronized fun invalidate() { gen.incrementAndGet() }
+
+    /** Like [claim], but only while [expected] is still the current generation. A replaced link goes to [onReplaced]. */
+    @Synchronized fun claimIfCurrent(id: String, c: C, expected: Int, onReplaced: (C) -> Unit): Boolean {
+        if (gen.get() != expected) return false
+        map.put(id, c)?.let(onReplaced)
+        return true
+    }
+
     operator fun get(id: String): C? = map[id]
     fun ids(): Set<String> = map.keys.toSet()
 

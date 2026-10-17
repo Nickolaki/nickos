@@ -233,7 +233,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
-                    store.resetAll()
+                    com.nbaltas.nickos.RoleReset.run(ctx, App.get(ctx))
                     com.nbaltas.nickos.power.PowerRecovery.retry(ctx, store)
                     com.nbaltas.nickos.node.RotationRecovery.retry(ctx, store) // a restore that could not finish is kept and tried again
                     // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
