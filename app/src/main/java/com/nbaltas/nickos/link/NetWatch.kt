@@ -29,13 +29,16 @@ import java.net.Inet4Address
  * Events within [debounceMs] of each other collapse into one call, fired [debounceMs] after the LAST event, so a
  * reconnect that flaps on, off, on produces a single restart after things settle.
  */
-class ChangeGate(private val scope: CoroutineScope, private val debounceMs: Long = 1500, private val onChange: () -> Unit) {
+class ChangeGate(private val scope: CoroutineScope, private val debounceMs: Long = 800, private val onChange: () -> Unit) {
     private var pending: Job? = null
     private var lastIp: String? = null
+    /** The address the last [onChange] saw. A loss followed, inside the debounce, by this same address is a band switch, not a change. */
+    private var settledIp: String? = null
+    private var lostInBurst = false
     private var closed = false
 
     fun available() = fire()
-    fun lost() { synchronized(this) { lastIp = null }; fire() }
+    fun lost() { synchronized(this) { lastIp = null; lostInBurst = true }; fire() }
 
     /** [ip] is the current IPv4 address on the watched interface, null when it has none. */
     fun address(ip: String?) {
@@ -49,8 +52,14 @@ class ChangeGate(private val scope: CoroutineScope, private val debounceMs: Long
         pending?.cancel()
         pending = scope.launch {
             delay(debounceMs)
-            if (synchronized(this@ChangeGate) { closed }) return@launch
-            onChange()
+            val go = synchronized(this@ChangeGate) {
+                if (closed) return@synchronized false
+                val sameRoam = lostInBurst && lastIp != null && lastIp == settledIp
+                lostInBurst = false
+                settledIp = lastIp
+                !sameRoam
+            }
+            if (go) onChange()
         }
     }
 
@@ -68,7 +77,7 @@ class ChangeGate(private val scope: CoroutineScope, private val debounceMs: Long
  * The first event of any kind fires too, so each runtime restarts discovery once shortly after it starts.
  * That is cheap and wanted.
  */
-class NetWatch(private val ctx: Context, debounceMs: Long = 1500, private val pollMs: Long = 5000, onChange: () -> Unit) {
+class NetWatch(private val ctx: Context, debounceMs: Long = 800, private val pollMs: Long = 5000, onChange: () -> Unit) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = ChangeGate(scope, debounceMs, onChange)
     private var cm: ConnectivityManager? = null

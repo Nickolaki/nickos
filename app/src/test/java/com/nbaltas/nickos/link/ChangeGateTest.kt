@@ -63,6 +63,21 @@ class ChangeGateTest {
     }
 
     @Test
+    fun `a band switch that comes back with the same ipv4 is not a change`() {
+        gate.address("192.168.1.9"); settle()
+        assertEquals(1, fired.get())
+        gate.lost(); gate.available(); gate.address("192.168.1.9"); settle()
+        assertEquals(1, fired.get())
+    }
+
+    @Test
+    fun `a loss followed by a different ipv4 is a change`() {
+        gate.address("192.168.1.9"); settle()
+        gate.lost(); gate.available(); gate.address("192.168.1.30"); settle()
+        assertEquals(2, fired.get())
+    }
+
+    @Test
     fun `close cancels a pending change and ignores later ones`() {
         gate.available()
         gate.close()

@@ -14,6 +14,7 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.link.AcceptGate
 import com.nbaltas.nickos.link.Conn
 import com.nbaltas.nickos.link.Handshake
+import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.link.LinkFlags
 import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
@@ -108,19 +109,24 @@ class Advertiser(
     @Volatile private var stopped = true
     private var port = 0
     private var current: Any? = null
+    private var registeredIp: String? = null
 
-    fun start(port: Int) {
+    fun start(port: Int, ip: String? = null) {
+        registeredIp = ip
         stopped = false
         scope.launch { lock.withLock { this@Advertiser.port = port; if (!stopped) register() } }
     }
 
-    fun refresh() {
+    /** [ip] is the address now; the same one as at the last registration means nothing to announce (null: always re-register). */
+    fun refresh(ip: String? = null) {
         if (stopped || !queued.compareAndSet(false, true)) return
         scope.launch {
             lock.withLock {
                 queued.set(false)
                 if (stopped) return@withLock
+                if (ip != null && ip == registeredIp && current != null) return@withLock
                 unregister()
+                registeredIp = ip
                 if (!stopped) register()
             }
         }
@@ -298,12 +304,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         }
         server = ss
         Wire.multicastLock(ctx)
-        advertiser.start(ss.localPort)
+        advertiser.start(ss.localPort, LanAddress.own(ctx))
         wifi.ensureOn()
         approvalReceiver = wifi.watchApproval()
         // Every network change: advertise again (the old mDNS record points at the old network), and turn WiFi
         // back on if it dropped. The ServerSocket binds the wildcard address, so it needs nothing.
-        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh() }.also { it.start() }
+        netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh(LanAddress.own(ctx)) }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         applyLandscape()
         powerRunner.start()
@@ -650,7 +656,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             val s = status()
             val key = s.toString().replace(Regex("\"now\":\\d+"), "")
             val now = System.currentTimeMillis()
-            if (key != last || now - lastSent > 10_000) {
+            if (key != last || now - lastSent > 3_000) { // the Master's read timeout is 8s: three missed beats and it knows the link is dead
                 broadcast(s); last = key; lastSent = now
             }
         }
