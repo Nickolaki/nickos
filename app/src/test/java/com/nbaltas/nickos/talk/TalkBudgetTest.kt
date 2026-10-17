@@ -51,9 +51,10 @@ class TalkBudgetTest {
     }
 
     @Test fun `what can still be heard after the parent lets go is inside the release budget`() {
-        // The cushion plus the speaker's own buffer is the most that can be queued; the drain wait is cut at the budget.
-        assertTrue("tail ${TalkBudget.releaseTailMs}", TalkBudget.releaseTailMs <= TalkBudget.RELEASE_TO_SILENCE_MS)
-        assertTrue(TalkBudget.DRAIN_MS <= TalkBudget.RELEASE_TO_SILENCE_MS)
+        // At most the tail frames are still written, then the drain wait, then the track is paused and flushed.
+        assertTrue("tail ${TalkBudget.releaseTailMs}", TalkBudget.releaseTailMs + TalkBudget.NETWORK_ALLOWANCE_MS <= TalkBudget.RELEASE_TO_SILENCE_MS)
+        assertTrue(TalkBudget.DRAIN_MS <= 100)
+        assertTrue(TalkBudget.TAIL_FRAMES * TalkMessages.FRAME_MS <= 120)
     }
 
     @Test fun `a talkEnd flushes the cushion at once, nothing waits for the idle timeout`() {

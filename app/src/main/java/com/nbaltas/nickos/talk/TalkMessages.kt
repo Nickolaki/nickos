@@ -13,7 +13,9 @@ object TalkGate {
  * What the parent should feel on the same WiFi, and the knobs that decide it. The numbers on a real tablet are on
  * Nick's device checklist; what a unit test can check is that the knobs add up inside the budget.
  *  - Start to hear: the first frame is ready after one frame of speech; the Node then holds [PREFILL_FRAMES] frames of cushion.
- *  - Release to silence: the Node plays out at most its cushion plus the speaker's own buffer ([TRACK_FRAMES]) and never waits longer than [DRAIN_MS].
+ *  - Release to silence: on talkEnd the Node keeps at most [TAIL_FRAMES] of queued speech (about 100 ms), drops the rest,
+ *    lets the speaker play for at most [DRAIN_MS] more, then pauses and flushes the track. The speaker's own buffer
+ *    ([TRACK_FRAMES]) is cut by that flush, not played out.
  *  - A sender that dies without an end: the Node goes quiet after [TalkReceiver.IDLE_MS].
  */
 object TalkBudget {
@@ -23,11 +25,16 @@ object TalkBudget {
     const val PREFILL_FRAMES = 3
     /** The speaker's buffer, in frames. */
     const val TRACK_FRAMES = 4
-    /** The longest wait for the end of a sentence to play out after the parent lets go. */
-    const val DRAIN_MS = 300L
+    /** Queued speech kept at the end of a talk session: 3 x 40 ms, the same as the cushion. The rest is dropped. */
+    const val TAIL_FRAMES = 3
+    /** The longest the speaker plays on after the last tail frame is written, before the track is paused and flushed. */
+    const val DRAIN_MS = 100L
+    /** What the network and the Node's link thread may add between the parent letting go and talkEnd being handled. */
+    const val NETWORK_ALLOWANCE_MS = 80
     /** Time the sender and the network get in the start to hear budget once the cushion is counted. */
     val startHeadroomMs get() = START_TO_HEAR_MS - TalkMessages.FRAME_MS * PREFILL_FRAMES
-    val releaseTailMs get() = TalkMessages.FRAME_MS * (PREFILL_FRAMES + TRACK_FRAMES)
+    /** Worst case from talkEnd being handled to silence: the tail frames still to be written, then the drain wait. */
+    val releaseTailMs get() = TalkMessages.FRAME_MS * TAIL_FRAMES + DRAIN_MS.toInt()
 }
 
 /**

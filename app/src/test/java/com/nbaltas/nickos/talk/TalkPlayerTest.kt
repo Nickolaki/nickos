@@ -2,6 +2,7 @@ package com.nbaltas.nickos.talk
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,7 +25,9 @@ class TalkPlayerTest {
         val allocated = AtomicInteger(0)
         val closes = CopyOnWriteArrayList<Boolean>()
         val written = AtomicInteger(0)
+        @Volatile var onOpen: () -> Unit = {}
         override fun open() {
+            onOpen()
             allocated.incrementAndGet()
             if (openFails != null) throw IllegalStateException(openFails)
         }
@@ -42,9 +45,10 @@ class TalkPlayerTest {
         @Volatile var text: String? = null
         @Volatile var availableNow = true
         @Volatile var holds = true
+        @Volatile var showOk = true
         override fun available() = availableNow
         override fun maintain() = holds
-        override fun show(text: String) { this.text = text; log += "show $text" }
+        override fun show(text: String): Boolean { log += "show $text"; if (showOk) this.text = text; return showOk }
         override fun clear() { text = null; log += "clear" }
     }
 
@@ -65,7 +69,7 @@ class TalkPlayerTest {
     private val frame = ByteArray(1280)
 
     // ---- the indicator lives as long as the sound ----
-    @Test fun `a normal end keeps the banner until what is queued has played`() {
+    @Test fun `a normal end keeps the banner until the short tail has played, and drops the rest of the queue`() {
         val gate = CountDownLatch(1)
         val sp = FakeSpeaker(holdWrites = gate)
         val ind = Indicator()
@@ -78,8 +82,129 @@ class TalkPlayerTest {
         assertEquals("still audible, so still shown", "Dad", ind.text)
         gate.countDown()
         until("banner cleared") { ind.text == null }
-        assertEquals("every queued frame played", 10 * 1280, sp.written.get())
+        // The frame the writer already held, plus the tail. Not the ten that were queued.
+        assertTrue("written ${sp.written.get()}", sp.written.get() <= (1 + TalkBudget.TAIL_FRAMES) * 1280)
+        assertTrue("the tail was played", sp.written.get() >= TalkBudget.TAIL_FRAMES * 1280)
         assertEquals(listOf(true), sp.closes.toList())
+    }
+
+    @Test fun `release to silence does not depend on how much was queued`() {
+        // A slow speaker that takes 20 ms per write: a second of queued speech must not play after the end.
+        val sp = FakeSpeaker(writeResult = { Thread.sleep(20); it })
+        val ind = Indicator()
+        val p = player(ind, sp)
+        p.begin("s1", "m")
+        repeat(TalkPlayer.MAX_WAITING) { p.play(frame) }
+        val t0 = System.currentTimeMillis()
+        p.end(flush = true)
+        until("banner cleared", 2000) { ind.text == null }
+        val took = System.currentTimeMillis() - t0
+        assertTrue("took $took ms", took <= TalkBudget.RELEASE_TO_SILENCE_MS - TalkBudget.NETWORK_ALLOWANCE_MS)
+        assertTrue("written ${sp.written.get()}", sp.written.get() < TalkPlayer.MAX_WAITING * 1280 / 2)
+    }
+
+    @Test fun `a cut during the drain wins over the tail that is playing`() {
+        val gate = CountDownLatch(1)
+        val sp = FakeSpeaker(holdWrites = gate)
+        val ind = Indicator()
+        val p = player(ind, sp)
+        p.begin("s1", "m")
+        repeat(6) { p.play(frame) }
+        p.end(flush = true)
+        ind.holds = false
+        assertFalse(p.indicatorHolds())
+        gate.countDown()
+        until("banner cleared") { ind.text == null }
+        assertEquals("cut, not drained", listOf(false), sp.closes.toList())
+    }
+
+    @Test fun `the indicator is maintained while the tail drains, after the session ended`() {
+        val gate = CountDownLatch(1)
+        val sp = FakeSpeaker(holdWrites = gate)
+        val maintained = AtomicInteger(0)
+        val ind = object : TalkIndicator {
+            @Volatile var text: String? = null
+            override fun available() = true
+            override fun show(text: String): Boolean { this.text = text; return true }
+            override fun maintain(): Boolean { maintained.incrementAndGet(); return true }
+            override fun clear() { text = null }
+        }
+        val q = ArrayDeque(listOf(sp))
+        val p = TalkPlayer({ q.removeFirst() }, ind, { "Dad" }, { })
+        p.begin("s1", "m")
+        repeat(4) { p.play(frame) }
+        p.end(flush = true)               // the receiver's session is over, the speaker is not
+        assertTrue(p.indicatorHolds())
+        assertEquals("still asked while audible", 1, maintained.get())
+        gate.countDown()
+        until("banner cleared") { ind.text == null }
+        assertTrue("idle again", p.indicatorHolds())
+        assertEquals("not asked once nothing is audible", 1, maintained.get())
+    }
+
+    // ---- the indicator comes first ----
+    @Test fun `the speaker is opened only after the indicator is really up`() {
+        val ind = Indicator()
+        val sp = FakeSpeaker()
+        var upAtOpen: String? = "unset"
+        sp.onOpen = { upAtOpen = ind.text }
+        val p = player(ind, sp)
+        assertTrue(p.begin("s1", "m"))
+        assertEquals("Dad", upAtOpen)
+        p.end(flush = false)
+        until("banner cleared") { ind.text == null }
+    }
+
+    @Test fun `an indicator that could not be shown means no speaker at all`() {
+        val ind = Indicator().also { it.showOk = false }
+        val sp = FakeSpeaker()
+        val p = player(ind, sp)
+        assertFalse(p.begin("s1", "m"))
+        assertEquals("nothing was opened", 0, sp.allocated.get())
+        assertTrue(sp.closes.isEmpty())
+        assertNull(ind.text)
+        assertEquals(listOf("show Dad", "clear"), ind.log.toList())
+    }
+
+    @Test fun `an indicator that throws means no speaker at all`() {
+        val sp = FakeSpeaker()
+        val ind = object : TalkIndicator {
+            override fun available() = true
+            override fun show(text: String): Boolean = throw IllegalStateException("window manager")
+            override fun maintain() = true
+            override fun clear() {}
+        }
+        val q = ArrayDeque(listOf(sp))
+        val p = TalkPlayer({ q.removeFirst() }, ind, { "Dad" }, { })
+        assertFalse(p.begin("s1", "m"))
+        assertEquals(0, sp.allocated.get())
+    }
+
+    @Test fun `a receiver whose indicator cannot be shown plays nothing`() {
+        val ind = Indicator().also { it.showOk = false }
+        val sp = FakeSpeaker()
+        val p = player(ind, sp)
+        val rx = TalkReceiver(p, { true }, { 1_000L })
+        val sid = "0123456789abcdef"
+        assertEquals(TalkReceiver.Result.REJECTED, rx.onMessage("m", TalkMessages.start(sid)))
+        for (i in 1L..4L) rx.onMessage("m", TalkMessages.frame(sid, i, frame))
+        assertEquals(0, sp.written.get())
+        assertEquals(0, sp.allocated.get())
+    }
+
+    @Test fun `losing the indicator while it plays stops the playback`() {
+        val gate = CountDownLatch(1)
+        val sp = FakeSpeaker(holdWrites = gate)
+        val ind = Indicator()
+        val p = player(ind, sp)
+        p.begin("s1", "m")
+        repeat(5) { p.play(frame) }
+        ind.holds = false
+        assertFalse(p.indicatorHolds())
+        gate.countDown()
+        until("stopped and cleared") { ind.text == null }
+        assertEquals(listOf(false), sp.closes.toList())
+        assertTrue("written ${sp.written.get()}", sp.written.get() <= 1280)
     }
 
     @Test fun `an idle timeout drains the same way and clears the banner afterwards`() {
@@ -136,14 +261,15 @@ class TalkPlayerTest {
     }
 
     // ---- setup is all or nothing ----
-    @Test fun `a speaker that fails to start is closed, nothing is shown and begin says no`() {
+    @Test fun `a speaker that fails to start is closed, the banner is taken down and begin says no`() {
         val sp = FakeSpeaker(openFails = "play failed")
         val ind = Indicator()
         val p = player(ind, sp)
         assertFalse(p.begin("s1", "m"))
         assertEquals("allocated once", 1, sp.allocated.get())
         assertEquals("released", listOf(false), sp.closes.toList())
-        assertTrue("no banner", ind.log.isEmpty())
+        assertNull("no banner left", ind.text)
+        assertEquals(listOf("show Dad", "clear"), ind.log.toList())
         assertTrue(failed.isEmpty())
     }
 
@@ -153,7 +279,7 @@ class TalkPlayerTest {
         val p = player(ind, sp, thread = { _, _ -> throw OutOfMemoryError("no thread") })
         assertFalse(p.begin("s1", "m"))
         assertEquals(listOf(false), sp.closes.toList())
-        assertTrue(ind.log.isEmpty())
+        assertNull(ind.text)
     }
 
     @Test fun `the receiver drops a session whose speaker would not start`() {
@@ -163,7 +289,7 @@ class TalkPlayerTest {
         val sid = "0123456789abcdef"
         assertEquals(TalkReceiver.Result.REJECTED, rx.onMessage("m", TalkMessages.start(sid)))
         assertFalse(rx.active)
-        assertTrue(ind.log.isEmpty())
+        assertNull("no banner left", ind.text)
     }
 
     // ---- write errors ----

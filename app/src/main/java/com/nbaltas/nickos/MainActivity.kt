@@ -30,7 +30,7 @@ import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
 import com.nbaltas.nickos.ui.theme.ThemeMode
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private val app get() = App.get(this)
     private val main = Handler(Looper.getMainLooper())
 
@@ -40,6 +40,9 @@ class MainActivity : ComponentActivity() {
             val role by app.store.role.collectAsState()
             val theme by app.store.theme.collectAsState()
             LaunchedEffect(role) { onRoleChanged(role) }
+            // Which door this tablet uses follows the role: see EntryFlow. A kid tablet never changes anything here.
+            val homeOptIn by app.store.masterHomeOptIn.collectAsState()
+            LaunchedEffect(role, homeOptIn) { EntrySwitch.reconcile(this@MainActivity, role, homeOptIn) }
             // The parent's "lock to landscape" for a kid tablet. Both landscape directions; other apps are handled by NodeRuntime.
             val landscape by app.store.landscapeLock.collectAsState()
             LaunchedEffect(landscape, role) {

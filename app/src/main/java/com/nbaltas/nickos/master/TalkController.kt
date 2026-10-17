@@ -150,8 +150,10 @@ data class TalkState(
  * Who owns what, so presses cannot trample each other:
  *  - Every stop names its press (its sid), also the ones raised inside the press (microphone error, all gone, time
  *    cap): an old press's late failure can never end a newer one.
- *  - The microphone is started and closed under one lock per press. A stop that comes first wins: the microphone is
- *    never even started. A new press waits for the old microphone to be closed before it opens its own.
+ *  - Start admission, start, cancellation and close of the microphone share one lock per press, and [stop] takes it
+ *    before it returns (briefly, only a start in progress holds it). A stop that comes first wins: the microphone is
+ *    never even started, and none is started after stop returned. A new press waits for the old microphone to be
+ *    closed before it opens its own.
  *  - Each tablet's link belongs to the newest press ([TalkGate]), so an old press cannot put a late talkStart on the
  *    wire after a newer press has begun.
  * [io] runs the microphone loop and its closing; [lanes] runs the per tablet senders.
@@ -171,9 +173,9 @@ class TalkController(
 
     private inner class Session(val sender: TalkSender, val mic: MicPort) {
         @Volatile var active = true
-        /** Start and close of the microphone never overlap, and a start never follows a close. */
-        val micLock = Any()
-        /** Set under [micLock] by the close: from then on this press never starts its microphone. */
+        /** Start admission, start, cancellation and close of the microphone all go through this one lock. */
+        val micLock = java.util.concurrent.locks.ReentrantLock()
+        /** Set under [micLock] by the cancellation or the close: from then on this press never starts its microphone. */
         var closed = false
         /** Counted down once this press's microphone is closed. */
         val released = CountDownLatch(1)
@@ -228,15 +230,27 @@ class TalkController(
             s
         }
         s.sender.finish()
-        // The caller (a finger lifting, a lifecycle callback) never waits for the microphone: closing happens here,
-        // after any start that is already in progress has finished.
+        // Cancellation and start admission share [Session.micLock]: when this returns, a start that was already
+        // admitted has finished and no later one is admitted, so a released press never opens the microphone afterwards.
+        // Only a start that hangs past the wait can still open it; it is closed the moment it returns, nothing is read.
+        if (!cancelStart(s)) android.util.Log.w("NickOS.Talk", "microphone start still running at release")
+        // The microphone itself is closed off the caller's thread (a finger lifting never waits for a slow close).
         scope.launch(io) { closeMic(s) }
         onStopped(reason)
     }
 
-    // Every stop ends here, under the same lock the start takes (run off the caller's thread so a finger lifting never
-    // waits for a slow start). Once it has run, a start that was already past its check finds [closed] and does not open.
-    private fun closeMic(s: Session) { synchronized(s.micLock) { s.closed = true; try { s.mic.stop() } catch (_: Exception) {} } }
+    /** False when the lock was not free in time (a start is hanging). */
+    private fun cancelStart(s: Session): Boolean {
+        if (!s.micLock.tryLock(CANCEL_WAIT_MS, TimeUnit.MILLISECONDS)) return false
+        try { s.closed = true } finally { s.micLock.unlock() }
+        return true
+    }
+
+    // Every stop ends here, under the same lock the start takes (run off the caller's thread).
+    private fun closeMic(s: Session) {
+        s.micLock.lock()
+        try { s.closed = true; try { s.mic.stop() } catch (_: Exception) {} } finally { s.micLock.unlock() }
+    }
 
     private fun checkGone(s: Session) {
         if (s.active && s.sender.liveRecipients <= 0) stop(TalkStop.ALL_GONE, s.sender.sid)
@@ -257,9 +271,8 @@ class TalkController(
                 scope.launch(io) { before.await(); s.released.countDown() }
                 return
             }
-            val started = synchronized(s.micLock) {
-                if (!s.active || s.closed) false else { s.mic.start(); true }
-            }
+            s.micLock.lock()
+            val started = try { if (!s.active || s.closed) false else { s.mic.start(); true } } finally { s.micLock.unlock() }
             if (!started) return
             val buf = ByteArray(TalkMessages.FRAME_BYTES)
             while (s.active) {
@@ -283,7 +296,7 @@ class TalkController(
         }
     }
 
-    companion object { const val OLD_CLOSE_WAIT_MS = 2_000L }
+    companion object { const val OLD_CLOSE_WAIT_MS = 2_000L; const val CANCEL_WAIT_MS = 400L }
 }
 
 /** 16 kHz mono 16 bit from the voice communication source, which also cancels echo from the tablet's own speaker. */

@@ -20,8 +20,9 @@ import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
-import com.nbaltas.nickos.HomeAlias
+import com.nbaltas.nickos.EntrySwitch
 import com.nbaltas.nickos.MainActivity
+import com.nbaltas.nickos.entryIntent
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
@@ -31,18 +32,10 @@ class AdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(ctx: Context, intent: Intent) {
         @Suppress("DEPRECATION")
         Provisioning.remember(ctx, intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE))
-        applyHomeAlias(ctx)
+        EntrySwitch.applyStored(ctx)
         NodeDevice.makeHome(ctx)
-        ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(entryIntent(ctx).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
-}
-
-/** Sets the home screen offer from the stored role before [NodeDevice.makeHome]. Never throws: provisioning must not fail on it. */
-internal fun applyHomeAlias(ctx: Context) {
-    try {
-        val s = com.nbaltas.nickos.App.get(ctx).store
-        HomeAlias.apply(ctx, s.role.value, s.masterHomeOptIn.value)
-    } catch (e: Throwable) { Log.w("NickOS.Device", "home alias", e) }
 }
 
 data class InstalledApp(val pkg: String, val label: String)
@@ -190,7 +183,7 @@ class NodeDevice(private val ctx: Context) {
     fun goHome() {
         lastLaunched = null
         ctx.startActivity(
-            Intent(ctx, MainActivity::class.java)
+            entryIntent(ctx)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
     }
@@ -266,6 +259,9 @@ class NodeDevice(private val ctx: Context) {
     /** Asks for the home role: the system dialog on Android 10+, else the Home app settings page. */
     fun homeRequestIntent(): Intent =
         com.nbaltas.nickos.homeRequestIntent(ctx) ?: Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** The notification settings for the "Parent talking" channel (the app's notification page before Android 8). */
+    fun talkChannelSettingsIntent(): Intent = TalkNotice.channelSettingsIntent(ctx)
 
     fun overlayIntent() = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
 
@@ -348,15 +344,16 @@ class NodeDevice(private val ctx: Context) {
 
         /**
          * Device Owner only: make NickOS the persistent home screen. Never throws, because a crash during the
-         * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set and checked.
-         * The one way every Device Owner path sets HOME: App start, lockdown and the provisioning callbacks.
-         * The HOME preference is the only persistent preferred activity this package sets, so the package wide clear
-         * inside [HomeSteps] only drops the old MainActivity one.
+         * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set.
+         * Always [MainActivity], the component an updated kid tablet already has as its preference.
          */
-        @Synchronized
         fun makeHome(ctx: Context): Boolean = try {
             val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
-            if (dpm.isDeviceOwnerApp(ctx.packageName)) HomeSteps.run(RealHomePort(ctx, dpm)) { Log.i(TAG, it) } else false
+            if (dpm.isDeviceOwnerApp(ctx.packageName)) {
+                dpm.addPersistentPreferredActivity(ComponentName(ctx, AdminReceiver::class.java), homeFilter(), ComponentName(ctx, MainActivity::class.java))
+                Log.i(TAG, "home preference set")
+                true
+            } else false
         } catch (e: Throwable) { Log.w(TAG, "make home", e); false }
         val JELLYFIN_PACKAGES = listOf("org.jellyfin.mobile", "org.jellyfin.androidtv")
     }

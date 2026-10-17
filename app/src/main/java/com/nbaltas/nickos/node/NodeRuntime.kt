@@ -220,17 +220,23 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         @Volatile private var noticeUp = false
         private fun way() = TalkBannerPolicy.way(device.canOverlay(), talkNotice.ready())
         override fun available() = way() != TalkBannerPolicy.Way.NONE
-        override fun show(text: String) {
-            _talkBanner.value = text; overlay.refresh()
-            // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
-            if (TalkBannerPolicy.needsNotification(device.canOverlay())) { talkNotice.show(text); noticeUp = true }
-        }
-        override fun maintain(): Boolean {
-            val text = _talkBanner.value ?: return true
+        /** True only when the banner window was really attached (or the home screen draws it), or the notification was posted. */
+        override fun show(text: String): Boolean {
+            _talkBanner.value = text
             return when (way()) {
-                TalkBannerPolicy.Way.OVERLAY -> true
+                TalkBannerPolicy.Way.OVERLAY -> overlay.refreshTalkAndWait()
+                // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
+                TalkBannerPolicy.Way.NOTICE -> talkNotice.show(text).also { noticeUp = it }
+                TalkBannerPolicy.Way.NONE -> false
+            }
+        }
+        /** Asked until the audio has drained. Looks at what is really on screen, and puts it back or switches to the notification if it is not. */
+        override fun maintain(): Boolean {
+            val text = _talkBanner.value ?: return false
+            return when (way()) {
+                TalkBannerPolicy.Way.OVERLAY -> overlay.talkOnScreen() || overlay.refreshTalkAndWait() || talkNotice.show(text).also { noticeUp = it }
                 // The overlay was lost mid session: the notification takes over.
-                TalkBannerPolicy.Way.NOTICE -> { if (!noticeUp) { talkNotice.show(text); noticeUp = true }; true }
+                TalkBannerPolicy.Way.NOTICE -> noticeUp || talkNotice.show(text).also { noticeUp = it }
                 TalkBannerPolicy.Way.NONE -> false
             }
         }

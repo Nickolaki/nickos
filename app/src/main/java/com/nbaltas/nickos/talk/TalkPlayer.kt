@@ -9,7 +9,10 @@ interface Speaker {
     fun open()
     /** Plays [len] bytes from [off]. Returns the bytes taken, or below zero for an error. May take fewer than asked. */
     fun write(pcm: ByteArray, off: Int, len: Int): Int
-    /** [flush]: play out what is buffered, then release the track and give up focus. Otherwise cut it off. Safe to call twice. */
+    /**
+     * [flush]: let the speaker play on for at most [TalkBudget.DRAIN_MS], then pause and flush the track, release it and
+     * give up focus. Otherwise cut it off at once. Either way nothing buffered is played out later. Safe to call twice.
+     */
     fun close(flush: Boolean)
 }
 
@@ -17,10 +20,15 @@ interface Speaker {
 interface TalkIndicator {
     /** True when "Parent is talking" can be made visible right now (the overlay banner, or a notification that will show). */
     fun available(): Boolean
-    fun show(text: String)
     /**
-     * Called a few times a second while a session plays. Keeps the indicator visible if the way it was shown was lost
-     * (the overlay permission taken away: post the notification instead). False when no way is left: the session must end.
+     * Shows it and says whether it really is up: the overlay was added without an exception, or the notification was
+     * posted and its channel is on. False means nothing is visible, and no audio may play.
+     */
+    fun show(text: String): Boolean
+    /**
+     * Called a few times a second until the session has finished playing (also while the last of it drains). Keeps the
+     * indicator visible if the way it was shown was lost (the overlay permission taken away: post the notification
+     * instead). False when no way is left: the audio must stop.
      */
     fun maintain(): Boolean
     fun clear()
@@ -52,10 +60,15 @@ object TalkBannerPolicy {
 
 /**
  * Plays a talk session's audio and keeps the "Parent is talking" indicator for exactly as long as it is audible.
- *  - Setup is all or nothing: if the speaker cannot start, it is closed, nothing is shown, and [begin] says false so
- *    the receiver drops the session.
- *  - The indicator belongs to the session that showed it. It clears when THAT session has finished playing (also what
- *    was still queued after a normal end), and a session that was replaced cannot clear a newer one's indicator.
+ *  - The indicator comes first: the speaker is only opened (so nothing can play) after [TalkIndicator.show] said it is
+ *    really up. If it was not, nothing is opened and [begin] says false.
+ *  - Setup is all or nothing: if the speaker cannot start, it is closed, the indicator is taken down again, and [begin]
+ *    says false so the receiver drops the session.
+ *  - The indicator belongs to the session that showed it. It clears when THAT session has finished playing (also the
+ *    short tail that is still queued after a normal end), and a session that was replaced cannot clear a newer one's.
+ *    It is maintained until then, not only while the receiver's session is open ([indicatorHolds]).
+ *  - A normal end keeps at most [TalkBudget.TAIL_FRAMES] of queued speech and drops the rest; the speaker then pauses and
+ *    flushes: release to silence is short, not the length of whatever was queued.
  *  - A write that fails (error, or no progress) ends the session and tells [onFailed].
  * Each session has its own writer thread, so the link's reading thread only ever hands over a frame.
  */
@@ -78,19 +91,37 @@ class TalkPlayer(
         // No visible indicator, no audio: nothing is opened, the receiver drops the session.
         if (!indicator.available()) { log("talk refused: no way to show that a parent is talking"); return false }
         val p = Playing(sid, newSpeaker())
-        if (!p.open()) return false
-        current = p
+        // Nothing can sound before the indicator is up: the speaker is only opened after it.
+        val up = try { indicator.show(nameOf(masterId)) } catch (e: Throwable) { log("talk indicator failed: ${e.message}"); false }
+        if (!up) {
+            try { indicator.clear() } catch (_: Throwable) {}
+            log("talk refused: the indicator could not be shown")
+            return false
+        }
         shown = p
-        indicator.show(nameOf(masterId))
+        if (!p.open()) {
+            shown = null
+            try { indicator.clear() } catch (_: Throwable) {}
+            return false
+        }
+        current = p
         return true
     }
 
     @Synchronized
     override fun play(pcm: ByteArray) { current?.offer(pcm) }
 
-    /** False when a session is playing and its indicator can no longer be kept visible: the caller ends the session. */
+    /**
+     * False when audio is still audible (also the tail draining after the end) and its indicator can no longer be
+     * kept visible: the audio is cut off here, and the caller ends the session.
+     */
     @Synchronized
-    fun indicatorHolds(): Boolean = current == null || indicator.maintain()
+    fun indicatorHolds(): Boolean {
+        val p = shown ?: return true
+        val holds = try { indicator.maintain() } catch (e: Throwable) { false }
+        if (!holds) { log("talk audio stopped: the indicator was lost"); p.close(flush = false) }
+        return holds
+    }
 
     /** The indicator stays until the writer has played out what is left. */
     @Synchronized
@@ -127,7 +158,21 @@ class TalkPlayer(
         /** Never blocks: when the speaker is behind, the oldest waiting frame goes. */
         fun offer(pcm: ByteArray) { if (mode == Mode.OPEN) while (!queue.offer(pcm)) queue.poll() }
 
-        fun close(flush: Boolean) { if (mode == Mode.OPEN) mode = if (flush) Mode.FLUSHING else Mode.CUT }
+        /** [flush]: keep only the short tail and play it. A cut always wins, also over a tail that is already playing. */
+        fun close(flush: Boolean) {
+            if (mode == Mode.OPEN) {
+                if (flush) dropAllButTail()
+                mode = if (flush) Mode.FLUSHING else Mode.CUT
+            } else if (!flush && mode == Mode.FLUSHING) mode = Mode.CUT
+        }
+
+        /** The oldest [TalkBudget.TAIL_FRAMES] stay (the speech carries on from what is playing), the rest is dropped. */
+        private fun dropAllButTail() {
+            val keep = ArrayList<ByteArray>(TalkBudget.TAIL_FRAMES)
+            queue.drainTo(keep, TalkBudget.TAIL_FRAMES)
+            queue.clear()
+            keep.forEach { queue.offer(it) }
+        }
 
         private fun writeAll(f: ByteArray): Boolean {
             var off = 0

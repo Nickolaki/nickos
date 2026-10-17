@@ -37,7 +37,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var lockView: View? = null
     private var toastView: View? = null
     private var guardView: View? = null
-    private var talkView: View? = null
+    @Volatile private var talkView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -63,8 +63,28 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         // Same rule for "Dad is talking": over other apps here, on the home screen it is drawn by NodeApp. Also over the
         // locked wall, because the speech is still audible.
         val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
-        if (talking && talkView == null) talkView = add(fullScreen = false) { TalkOverlayContent(rt) }
+        if (talking && talkView == null) {
+            // Only a banner that was added without an exception counts as shown (see talkOnScreen).
+            talkView = try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+        }
         if (!talking && talkView != null) { remove(talkView); talkView = null }
+    }
+
+    /**
+     * Brings the overlay up to date on the main thread and waits (a short while) for it. True only when "Parent is
+     * talking" really is on screen afterwards: the banner window is attached, or the kid home screen is showing and
+     * unlocked, where NodeApp draws it itself.
+     */
+    fun refreshTalkAndWait(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) { update(); return talkOnScreen() }
+        val done = java.util.concurrent.CountDownLatch(1)
+        main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "overlay", e) } finally { done.countDown() } }
+        return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && talkOnScreen() } catch (e: InterruptedException) { false }
+    }
+
+    fun talkOnScreen(): Boolean {
+        val homeDraws = rt.homeVisible && store.lockedBy.value == null
+        return talkView != null || homeDraws
     }
 
     /**
@@ -131,7 +151,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         return view
     }
 
-    private companion object { const val GUARD_WAIT_MS = 1500L }
+    private companion object { const val GUARD_WAIT_MS = 1500L; const val TALK_WAIT_MS = 500L }
 
     private fun remove(v: View?) {
         if (v != null) try { wm.removeView(v) } catch (_: Exception) {}

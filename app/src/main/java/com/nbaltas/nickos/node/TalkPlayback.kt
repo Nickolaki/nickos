@@ -3,6 +3,7 @@ package com.nbaltas.nickos.node
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -74,14 +75,16 @@ class AndroidSpeaker(ctx: Context) : Speaker {
         track = null
         if (t != null) {
             try {
-                if (flush) { t.stop(); waitPlayed(t) } else { t.pause(); t.flush() }
+                if (flush) waitPlayed(t)
+                // Whatever is still buffered is thrown away now, not played out: release to silence stays short.
+                t.pause(); t.flush()
             } catch (_: Exception) {}
             try { t.release() } catch (_: Exception) {}
         }
         giveFocus()
     }
 
-    /** stop() lets the buffered audio play out; release() right after would cut the end of the sentence. */
+    /** The tail plays on for at most [DRAIN_MS] (a normal end), then the caller pauses and flushes. */
     private fun waitPlayed(t: AudioTrack) {
         val until = System.currentTimeMillis() + DRAIN_MS
         while (System.currentTimeMillis() < until) {
@@ -143,9 +146,13 @@ class TalkNotice(private val ctx: Context) {
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent talking", NotificationManager.IMPORTANCE_HIGH))
     }
 
-    fun show(text: String) {
-        try {
-            ensureChannel()
+    /**
+     * True only when the channel is on and Android took the notification without an exception. False means nobody
+     * can see it.
+     */
+    fun show(text: String): Boolean {
+        return try {
+            if (!ready()) return false
             nm.notify(ID, NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(text)
@@ -155,13 +162,23 @@ class TalkNotice(private val ctx: Context) {
                 .setOnlyAlertOnce(true)
                 .setTimeoutAfter(125_000)
                 .build())
-        } catch (e: Exception) { Log.w("NickOS.Talk", "notice", e) }
+            true
+        } catch (e: Exception) { Log.w("NickOS.Talk", "notice", e); false }
     }
 
     fun clear() { try { nm.cancel(ID) } catch (_: Exception) {} }
 
-    private companion object {
-        const val CHANNEL = "talk"
-        const val ID = 2
+    companion object {
+        private const val CHANNEL = "talk"
+        private const val ID = 2
+
+        /** The page where the grown-up switches the talk notifications back on: the channel's own page, else the app's. */
+        fun channelSettingsIntent(ctx: Context): Intent =
+            if (Build.VERSION.SDK_INT >= 26) Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            else Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 }

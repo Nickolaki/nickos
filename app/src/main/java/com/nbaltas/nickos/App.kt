@@ -18,17 +18,20 @@ class App : Application() {
     val node by lazy { NodeRuntime(this, store) }
     val master by lazy { MasterRuntime(this, store) }
 
-    /** Keeps the home screen offer matching the role: at start (update, restart) and on every role or opt-in change. */
+    /**
+     * Puts the entry activities where the policy says at every start, so an updated parent tablet converges on its first
+     * start. A kid tablet is already there and nothing changes. Later role changes are switched by the running activity
+     * in the right order: see [EntryFlow].
+     */
     override fun onCreate() {
         super.onCreate()
         store.migrateKidLock() // before any screen decides whether this Node is an existing one
-        HomeAlias.apply(this, store.role.value, store.masterHomeOptIn.value)
+        // A parent tablet that already is the home screen (chosen before this version) keeps being offered.
+        if (store.role.value == Role.MASTER && !store.masterHomeOptIn.value && isDefaultHome(this) == true) store.setMasterHomeOptIn(true)
+        EntrySwitch.apply(this, store.role.value, store.masterHomeOptIn.value)
         // An update does not run the provisioning callbacks: a Device Owner kid tablet puts its HOME choice back here, parent mode or not.
         if (store.role.value == Role.NODE) NodeDevice.makeHome(this)
         com.nbaltas.nickos.node.RotationRecovery.retry(this, store)
-        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-            combine(store.role, store.masterHomeOptIn) { r, o -> r to o }.collect { (r, o) -> HomeAlias.apply(this@App, r, o) }
-        }
     }
 
     companion object {

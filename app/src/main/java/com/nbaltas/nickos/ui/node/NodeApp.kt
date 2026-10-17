@@ -86,6 +86,10 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         }
     }
     val scope = rememberCoroutineScope()
+    // Every protected action checks the parent window itself, when it runs: a window that ran out since the screen was
+    // drawn does nothing and goes back to the card that asks for the PIN.
+    fun windowOpen(): Boolean = if (rt.parentMode) true else { screen = NodeScreen.ASK; false }
+    fun guarded(f: () -> Unit): () -> Unit = { if (windowOpen()) f() }
     val kioskStatus = remember(screen) { KioskPolicy.status(rt.device.kioskState()) }
 
     BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU && screen != NodeScreen.KIOSK && screen != NodeScreen.ASK) screen = NodeScreen.HOME }
@@ -191,13 +195,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             pinIsDefault = pin == Store.DEFAULT_PIN,
             onFinishKiosk = { screen = if (KioskPolicy.setupMayStay(existing, rt.parentMode)) NodeScreen.KIOSK else NodeScreen.ASK },
             onKidMode = { screen = NodeScreen.HOME; onKidMode() },
-            onAllApps = { screen = NodeScreen.DRAWER },
-            onSettings = { ctx.startActivity(androidSettingsIntent()) },
-            onPairAnother = { screen = NodeScreen.PAIR },
-            onUpdate = { scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) } },
+            onAllApps = guarded { screen = NodeScreen.DRAWER },
+            onSettings = guarded { ctx.startActivity(androidSettingsIntent()) },
+            onPairAnother = guarded { screen = NodeScreen.PAIR },
+            onUpdate = guarded { scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) } },
             videosAllowed = videosAllowed,
-            onAllowVideos = { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) },
-            onReset = {
+            onAllowVideos = guarded { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) },
+            onReset = guarded {
                 scope.launch {
                     // Read before releasing: Device Owner and the home role are gone after.
                     val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
@@ -215,9 +219,10 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     } catch (_: Exception) {}
                 }
             },
-            onAllowCamera = if (cameraOk) null else ({ askCamera.launch(android.Manifest.permission.CAMERA) }),
-            onAllowBrightness = if (brightnessOk) null else ({ ask(rt.device.writeSettingsIntent()) }),
-            onAllowScreenOff = if (screenOffOk) null else ({ ask(rt.device.deviceAdminIntent()) }),
+            onAllowCamera = if (cameraOk) null else guarded { askCamera.launch(android.Manifest.permission.CAMERA) },
+            onAllowBrightness = if (brightnessOk) null else guarded { ask(rt.device.writeSettingsIntent()) },
+            onAllowScreenOff = if (screenOffOk) null else guarded { ask(rt.device.deviceAdminIntent()) },
+            onTalkNotifications = guarded { ask(rt.device.talkChannelSettingsIntent()) },
         )
 
         if (showPermCard) PermissionCard(

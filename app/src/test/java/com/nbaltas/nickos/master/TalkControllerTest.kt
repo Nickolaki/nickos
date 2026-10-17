@@ -350,13 +350,50 @@ class TalkControllerTest {
         val ctl = TalkController(scope, { slow }, { w }, { true })
         ctl.press(listOf(tgt("a", "Hailey")))
         assertTrue(entered.await(3, TimeUnit.SECONDS))
+        Thread(Runnable { Thread.sleep(150); go.countDown() }).start()
         ctl.stop(TalkStop.BACKGROUNDED)
-        Thread.sleep(100)
-        assertEquals("closing waits for the start in progress", 0, closed.get())
-        go.countDown()
+        assertEquals("stop returns only after the start in progress has finished", 0L, go.count)
         until("closed after the start") { closed.get() >= 1 }
         assertEquals("nothing was recorded", 0, reads.get())
         assertTrue(w.frames().isEmpty())
+    }
+
+    @Test fun `a released press never opens the microphone after stop returned`() {
+        val late = AtomicInteger(0)
+        repeat(60) { i ->
+            val returned = AtomicBoolean(false)
+            val mic = object : MicPort {
+                override fun start() { if (returned.get()) late.incrementAndGet() else Thread.sleep(if (i % 2 == 0) 3 else 0) }
+                override fun read(buf: ByteArray, off: Int, len: Int): Int { Thread.sleep(2); return -1 }
+                override fun stop() {}
+            }
+            val w = Wire()
+            val ctl = TalkController(scope, { mic }, { w }, { true })
+            ctl.press(listOf(tgt("a", "Hailey")))
+            if (i % 3 == 0) Thread.sleep((i % 5).toLong())
+            ctl.stop(TalkStop.RELEASED)
+            returned.set(true)
+            Thread.sleep(8)
+        }
+        assertEquals("a microphone was opened after its press was released", 0, late.get())
+    }
+
+    @Test fun `a start that is already admitted is waited for, a later one is refused`() {
+        val inStart = CountDownLatch(1); val go = CountDownLatch(1)
+        val starts = AtomicInteger(0); val finished = AtomicBoolean(false)
+        val mic = object : MicPort {
+            override fun start() { starts.incrementAndGet(); inStart.countDown(); go.await(5, TimeUnit.SECONDS); finished.set(true) }
+            override fun read(buf: ByteArray, off: Int, len: Int): Int = -1
+            override fun stop() {}
+        }
+        val ctl = TalkController(scope, { mic }, { Wire() }, { true })
+        ctl.press(listOf(tgt("a", "Hailey")))
+        assertTrue(inStart.await(3, TimeUnit.SECONDS))
+        Thread(Runnable { Thread.sleep(100); go.countDown() }).start()
+        ctl.stop(TalkStop.RELEASED)
+        assertTrue("stop returned while the start was still running", finished.get())
+        Thread.sleep(100)
+        assertEquals(1, starts.get())
     }
 
     @Test fun `a new press waits for the old microphone to be closed before opening its own`() {

@@ -68,7 +68,7 @@ import com.composables.icons.lucide.Wifi
 import com.composables.icons.lucide.WifiOff
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.BuildConfig
-import com.nbaltas.nickos.HomeAlias
+import com.nbaltas.nickos.EntrySwitch
 import com.nbaltas.nickos.homeRequestIntent
 import com.nbaltas.nickos.homeStateLine
 import com.nbaltas.nickos.isDefaultHome
@@ -750,8 +750,9 @@ private fun HomeScreenRow() {
             Muted(homeStateLine(isHome), 15)
         }
         NickSwitch(optIn) { on ->
+            // On: the HOME offer is switched on before the system is asked. Off: the running activity switches the door back.
+            if (on) EntrySwitch.enableMain(ctx)
             app.store.setMasterHomeOptIn(on)
-            HomeAlias.set(ctx, on)
             if (on) homeRequestIntent(ctx)?.let {
                 try { ask.launch(it) } catch (_: android.content.ActivityNotFoundException) {}
             }

@@ -469,6 +469,8 @@ fun ParentMenu(
     onAllowBrightness: (() -> Unit)? = null,
     /** Non-null while the parent tablet cannot turn this screen off yet. */
     onAllowScreenOff: (() -> Unit)? = null,
+    /** Non-null: shows "Talk notifications", which opens this tablet's notification settings for the parent talking banner. */
+    onTalkNotifications: (() -> Unit)? = null,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -500,6 +502,7 @@ fun ParentMenu(
             if (!videosAllowed) MenuButton("Allow videos", onClick = onAllowVideos)
             if (onAllowBrightness != null) MenuButton("Allow brightness control", onClick = onAllowBrightness)
             if (onAllowScreenOff != null) MenuButton("Allow screen off", onClick = onAllowScreenOff)
+            if (onTalkNotifications != null) MenuButton("Talk notifications", onClick = onTalkNotifications)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {
