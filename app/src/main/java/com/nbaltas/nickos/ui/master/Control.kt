@@ -1044,7 +1044,9 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
                         Column(verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) { segmented(); offHint() }
                         lockBtn()
                         ringBtn()
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
+                        // remote() draws nothing when the screen is allowed and touch control is ready, so match that here.
+                        val remoteShows = st?.supportsScreen == true && (st.screen == RemoteMessages.NEEDS_CONSENT || st.maintenance || st.control != RemoteMessages.CONTROL_READY)
+                        if (st?.supportsTouch == true || remoteShows) Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
                         touchRow()
                         remote()
                     } else {
