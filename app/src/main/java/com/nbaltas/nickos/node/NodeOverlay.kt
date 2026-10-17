@@ -19,7 +19,9 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nbaltas.nickos.data.Store
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.unit.dp
@@ -42,6 +44,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     private var pauseView: View? = null
     private var ringView: View? = null
     @Volatile private var talkView: View? = null
+    private var watchView: View? = null
 
     fun refresh() = main.post { update() }
 
@@ -60,10 +63,12 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val toast = warn && !locked && !rt.homeVisible // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
         // Talk always uses an attached window, including on home, so playback can confirm presentation.
         val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
-        // Stacking, bottom to top: lock, pause, bedtime toast, "Found me!", the talking banner. A new window is always
-        // added last, so when a lower one has to appear, every one above it is taken down and put back after it.
-        val wanted = booleanArrayOf(locked, paused, toast, ringing, talking)
-        val views = arrayOf(lockView, pauseView, toastView, ringView, talkView)
+        // "Parent is watching" sits at the top of the screen and above every other window, so nothing ever hides it.
+        val watching = rt.screen.watching.value
+        // Stacking, bottom to top: lock, pause, bedtime toast, "Found me!", the talking banner, "Parent is watching". A new
+        // window is always added last, so when a lower one has to appear, every one above it is taken down and put back after it.
+        val wanted = booleanArrayOf(locked, paused, toast, ringing, talking, watching)
+        val views = arrayOf(lockView, pauseView, toastView, ringView, talkView, watchView)
         val lowestNew = wanted.indices.firstOrNull { wanted[it] && views[it] == null }
         for (i in wanted.indices) {
             if (views[i] != null && (!wanted[i] || (lowestNew != null && i > lowestNew))) { remove(views[i]); views[i] = null }
@@ -74,11 +79,12 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
                 1 -> add(fullScreen = true) { PausedOverlayContent(store) }
                 2 -> add(fullScreen = false) { ToastOverlayContent(rt) }
                 3 -> add(fullScreen = true) { FoundMeScreen { rt.stopRing(RingMachine.Stop.TAP) } }
-                // Only a banner that was added without an exception counts as shown (see talkOnScreen).
-                else -> try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+                // Only a banner that was added without an exception counts as shown (see talkOnScreen / watchOnScreen).
+                4 -> try { add(fullScreen = false) { TalkOverlayContent(rt) } } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "talk banner", e); null }
+                else -> try { add(fullScreen = false, atTop = true) { WatchOverlayContent() } } catch (e: Exception) { android.util.Log.w("NickOS.Screen", "watch pill", e); null }
             }
         }
-        lockView = views[0]; pauseView = views[1]; toastView = views[2]; ringView = views[3]; talkView = views[4]
+        lockView = views[0]; pauseView = views[1]; toastView = views[2]; ringView = views[3]; talkView = views[4]; watchView = views[5]
     }
 
     /**
@@ -90,6 +96,20 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val done = java.util.concurrent.CountDownLatch(1)
         main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Talk", "overlay", e) } finally { done.countDown() } }
         return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && talkOnScreen() } catch (e: InterruptedException) { false }
+    }
+
+    /** Brings the overlay up to date on the main thread (and waits for it from another). True when "Parent is watching" really is on screen. */
+    fun refreshWatchAndWait(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) { update(); return watchOnScreen() }
+        val done = java.util.concurrent.CountDownLatch(1)
+        main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Screen", "overlay", e) } finally { done.countDown() } }
+        return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && watchOnScreen() } catch (e: InterruptedException) { false }
+    }
+
+    /** The pill was added without an exception and its window is attached (or at least has its parent). */
+    fun watchOnScreen(): Boolean {
+        val v = watchView ?: return false
+        return v.isAttachedToWindow || v.parent != null
     }
 
     fun talkOnScreen(): Boolean {
@@ -135,9 +155,10 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         remove(ringView); ringView = null
         remove(toastView); toastView = null
         remove(talkView); talkView = null
+        remove(watchView); watchView = null
     }
 
-    private fun add(fullScreen: Boolean, content: @androidx.compose.runtime.Composable () -> Unit): View {
+    private fun add(fullScreen: Boolean, atTop: Boolean = false, content: @androidx.compose.runtime.Composable () -> Unit): View {
         val owner = OverlayOwner()
         val view = ComposeView(ctx).apply {
             setViewTreeLifecycleOwner(owner)
@@ -157,7 +178,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = if (fullScreen) Gravity.TOP else Gravity.BOTTOM }
+        ).apply { gravity = if (fullScreen || atTop) Gravity.TOP else Gravity.BOTTOM }
         wm.addView(view, lp)
         owner.resume()
         return view
@@ -211,6 +232,17 @@ private fun TalkOverlayContent(rt: NodeRuntime) {
                 .padding(bottom = 28.dp),
         ) { com.nbaltas.nickos.ui.node.TalkBanner(it) }
     }
+}
+
+@androidx.compose.runtime.Composable
+private fun WatchOverlayContent() {
+    androidx.compose.foundation.layout.Box(
+        androidx.compose.ui.Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+            .padding(top = 12.dp),
+        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+    ) { com.nbaltas.nickos.ui.node.WatchPill() }
 }
 
 private class OverlayOwner : LifecycleOwner, SavedStateRegistryOwner {

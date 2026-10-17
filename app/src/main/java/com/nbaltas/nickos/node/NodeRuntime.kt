@@ -19,6 +19,8 @@ import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.remote.RemoteMessages
+import com.nbaltas.nickos.remote.ScreenGate
 import com.nbaltas.nickos.talk.TalkBannerPolicy
 import com.nbaltas.nickos.talk.TalkGate
 import com.nbaltas.nickos.talk.TalkIndicator
@@ -277,6 +279,14 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     val cam = CamStreamer(ctx, this, device)
     fun broadcastCamState() = scope.launch { broadcast(cam.stateJson()) }
 
+    /** The screen, streamed to a parent that asks for it once a grown-up has allowed it on this tablet. */
+    val screen = ScreenStreamer(ctx, this)
+    fun broadcastScreenState() = scope.launch {
+        // Each Master hears only its own key, and only on a sealed link.
+        sessions.forEach { (mid, c) -> c.send(screen.stateFor(mid, c.isSealed)) }
+        broadcast(status())
+    }
+
     @Synchronized
     fun start() {
         if (!NodeSupport.ok()) { Log.w("NickOS.Node", "this Android is too old to be a Node"); return }
@@ -386,9 +396,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             _connected.value = sessions.map { it.first }.toSet()
             c.send(status())
             c.send(cam.stateJson()) // a Master that reconnects learns the camera is already on
+            c.send(screen.stateFor(id, c.isSealed))
             while (true) {
                 val msg = c.read() ?: break
-                if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                // Screen start, stop and touch only on a sealed link, like talk: a legacy clear text session (v1) gets no key and no control.
+                if (msg.optString("t") == "cmd" && RemoteMessages.isScreenCmd(msg.optString("c")) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
+                else if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
                 // And only on a sealed link: a legacy clear text session (v1) is refused talk.
                 else if (TalkMessages.isTalk(msg)) {
@@ -402,7 +415,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             c.close()
             sessions.removeAll { it.second === c }
             // Not when the same Master has already reconnected: its new link may be mid talk.
-            masterId?.let { m -> if (sessions.none { it.first == m }) talk.onMasterGone(m) }
+            masterId?.let { m -> if (sessions.none { it.first == m }) { talk.onMasterGone(m); screen.masterGone(m) } }
             _connected.value = sessions.map { it.first }.toSet()
             if (sessions.isEmpty()) {
                 cam.stop(NodeCam.LINK) // no parent tablet left to look
@@ -506,6 +519,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // The camera answers with its own camState, never with a status broadcast.
             "camStart" -> { CamMessages.decodeStart(m)?.let { cam.start(CamProfile.of(it.profile), it.maxMs, Store.randomHex(16)) }; return }
             "camStop" -> { cam.stop(NodeCam.STOPPED); return }
+            // The screen answers with its own screenState too.
+            "screenStart" -> { screen.start(masterId); return }
+            "screenStop" -> { screen.stop(masterId); return }
+            // Strict decode: a bad touch is dropped here, a good one is checked again by the streamer (live, this Master, 20 a second).
+            "touch" -> { RemoteMessages.decodeTouch(m)?.let { screen.touch(masterId, it) }; return }
             // The parent tapped a greyed control: show the permission card (the screen decides if it can right now).
             NetMessages.ASK_PERMISSION -> { permAsk.masterAsks(); return }
             NetMessages.PAUSE_ALL -> NetMessages.decodePauseAll(m)?.let { applyPause(it, masterId, master?.name ?: "Parent's Tablet") }
@@ -565,7 +583,10 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) { releaseLandscape(); clearPause(); powerRunner.release() } }
+            "unlink" -> {
+                store.removeMaster(masterId); talk.onMasterGone(masterId); screen.masterGone(masterId)
+                if (store.masters.value.isEmpty()) { releaseLandscape(); clearPause(); powerRunner.release(); screen.release() }
+            }
             NetMessages.POWER -> NetMessages.decodePower(m)?.let { if (store.setPower(it.wake, it.offMin)) powerRunner.refresh() else Log.w(TAG, "could not save the power choice") }
             NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
@@ -604,12 +625,13 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("owner", device.isDeviceOwner).put("usage", device.hasUsageAccess()).put("overlay", device.canOverlay())
             .put("brightnessOk", device.brightnessOk).put("screenOffOk", device.screenOffOk)
             .put("talk", talkStatus())
+            .put("screen", screen.statusWire()).put("control", screen.controlWire())
             .put("ringing", _ringing.value).put("paused", store.pausedMsg.value != null)
             .put("pausedOwner", store.pausedOwner())
             .put("jf", device.jellyfinPackage())
             .put("names", JSONArray(device.deviceNames()))
             .put("version", BuildConfig.VERSION_NAME)
-            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP))
+            .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + RemoteMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP + NetMessages.RING_CAP + NetMessages.PAUSE_CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
             .put("power", NetMessages.encodePower(powerRunner.status()))
@@ -692,6 +714,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         together.release()
         talk.stop()
         cam.destroy()
+        screen.release()
         overlay.hideAll()
         overlay.landscapeGuard(false)
         powerRunner.stop()

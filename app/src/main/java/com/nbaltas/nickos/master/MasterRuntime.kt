@@ -27,6 +27,7 @@ import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.node.LocalVideos
+import com.nbaltas.nickos.remote.RemoteMessages
 import com.nbaltas.nickos.node.PauseAll
 import com.nbaltas.nickos.talk.TalkMessages
 import com.nbaltas.nickos.talk.TalkStop
@@ -81,15 +82,22 @@ data class NodeStatus(
     val power: NetMessages.PowerStatus? = null,
     /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
     val talk: String = TalkMessages.STATUS_OK,
+    /** The Node's screen sharing: off, needs_consent, ready or live. Old Nodes omit it: off. */
+    val screen: String = RemoteMessages.OFF,
+    /** "ready" when the Node lets a parent touch its screen. Old Nodes omit it: off. */
+    val control: String = RemoteMessages.CONTROL_OFF,
     /** The alarm is sounding on the Node. Old Nodes omit it: false. */
     val ringing: Boolean = false,
     /** The pause wall is up on the Node. Old Nodes omit it: false. */
     val paused: Boolean = false,
 ) {
+    /** Seeing the screen needs the Node's "screen1" capability. */
+    val supportsScreen: Boolean get() = RemoteMessages.CAP in caps
     /** "ring1": the Node can sound its alarm when asked. The Master hides the Ring button without it. */
     val supportsRing: Boolean get() = NetMessages.RING_CAP in caps
     /** "pause1": the Node shows the pause wall. */
     val supportsPause: Boolean get() = NetMessages.PAUSE_CAP in caps
+
     /** The Node refuses talk audio until a grown-up allows notifications on it. */
     val talkNeedsPermission: Boolean get() = talk == TalkMessages.STATUS_NEEDS_PERMISSION
 
@@ -119,6 +127,8 @@ data class NodeStatus(
                 landscape = NetMessages.decodeLandscape(o),
                 power = NetMessages.decodePowerStatus(o),
                 talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
+                screen = o.optString("screen", RemoteMessages.OFF).ifBlank { RemoteMessages.OFF },
+                control = o.optString("control", RemoteMessages.CONTROL_OFF).ifBlank { RemoteMessages.CONTROL_OFF },
                 ringing = o.optBoolean("ringing"), paused = o.optBoolean("paused"),
             )
         }
@@ -244,6 +254,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     ).also { d -> scope.launch(Dispatchers.IO) { d.cleanLeftovers() } }
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
+    /** Seeing and controlling a kid tablet's screen. */
+    val screen = ScreenController(send = { id, o -> send(id, o) }, masterId = { store.deviceId })
 
     /**
      * Push to talk. Audio frames never go through [send] (one ordered queue for every command to every tablet):
@@ -508,6 +520,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 sync.onDisconnected(n.id)
                 transfer.onDisconnected(n.id)
                 cam.onDisconnected(n.id)
+                screen.onDisconnected(n.id)
             }
             delivery(c, n.id).close()
             c.close()
@@ -570,6 +583,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "pong", "videos", "syncState" -> sync.onMessage(n.id, m)
                 "serving", "jobs", "deleted" -> transfer.onMessage(n.id, m)
                 "camState" -> cam.onMessage(n.id, m, c.socket.inetAddress?.hostAddress)
+                "screenState" -> screen.onMessage(n.id, m, c.socket.inetAddress?.hostAddress)
                 "reset" -> { forget(n.id); say("${n.name} was reset, so it's unlinked"); break }
             }
         }

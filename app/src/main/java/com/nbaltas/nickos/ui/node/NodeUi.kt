@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.Link
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
@@ -485,6 +486,19 @@ fun TalkBanner(text: String) {
     }
 }
 
+/** "Parent is watching": a small pill at the top while a parent sees this screen. */
+@Composable
+fun WatchPill() {
+    Row(
+        Modifier.shadow(12.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))
+            .background(NodePalette.toastBg).padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Lucide.Eye, null, tint = C.onAccent, modifier = Modifier.size(20.dp))
+        Text("Parent is watching", style = body(18.sp, 700), color = C.onAccent, maxLines = 1)
+    }
+}
+
 // ---------------- Parent menu (after the PIN) ----------------
 
 /** Not in the design handoff; built from the same PIN-card language. */
@@ -511,6 +525,12 @@ fun ParentMenu(
     onAllowScreenOff: (() -> Unit)? = null,
     /** Non-null: shows "Talk notifications", which opens this tablet's notification settings for the parent talking banner. */
     onTalkNotifications: (() -> Unit)? = null,
+    /** Non-null: shows the "Let parents see this screen" row. [screenShared] flips it to the turn off wording. */
+    onScreenShare: (() -> Unit)? = null,
+    screenShared: Boolean = false,
+    /** Non-null: shows "Let parents control this tablet", which opens Android's accessibility settings. [remoteControlOn] once it is switched on. */
+    onRemoteControl: (() -> Unit)? = null,
+    remoteControlOn: Boolean = false,
 ) {
     var confirmReset by remember { mutableStateOf(false) }
     val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
@@ -543,6 +563,8 @@ fun ParentMenu(
             if (onAllowBrightness != null) MenuButton("Allow brightness control", onClick = onAllowBrightness)
             if (onAllowScreenOff != null) MenuButton("Allow screen off", onClick = onAllowScreenOff)
             if (onTalkNotifications != null) MenuButton("Talk notifications", onClick = onTalkNotifications)
+            if (onScreenShare != null) MenuButton(if (screenShared) "Stop letting parents see this screen" else "Let parents see this screen", onClick = onScreenShare)
+            if (onRemoteControl != null) MenuButton(if (remoteControlOn) "Parents can control this tablet" else "Let parents control this tablet", onClick = onRemoteControl)
             MenuButton("Pair another parent tablet", onClick = onPairAnother)
             MenuButton(
                 when (val u = update) {

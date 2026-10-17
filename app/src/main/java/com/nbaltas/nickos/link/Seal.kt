@@ -144,3 +144,49 @@ class Seal(key: ByteArray, sendLabel: String, recvLabel: String) {
         return n
     }
 }
+
+/**
+ * The binary twin of [Seal]: the same key derivation and the same nonce scheme, but no base64. A frame is
+ * nonce12 || ciphertext || 16-byte tag, and the receiver demands the exact next counter, so a replayed, reordered,
+ * dropped or tampered frame opens to null. Never reuse one FrameSeal across sockets.
+ */
+class FrameSeal(key: ByteArray, sendLabel: String, recvLabel: String) {
+    private val sendKey = SecretKeySpec(hmac(key, sendLabel.toByteArray()).copyOf(16), "AES")
+    private val recvKey = SecretKeySpec(hmac(key, recvLabel.toByteArray()).copyOf(16), "AES")
+    private var sent = 0L
+    private var expected = 1L
+
+    @Synchronized
+    fun seal(plain: ByteArray): ByteArray {
+        sent++
+        val nonce = nonce(sent)
+        val c = Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE, sendKey, GCMParameterSpec(128, nonce))
+        return nonce + c.doFinal(plain)
+    }
+
+    /** Null on ANY failure: short input, wrong counter, tamper. */
+    @Synchronized
+    fun open(raw: ByteArray): ByteArray? = try {
+        if (raw.size < 12 + 16) null
+        else {
+            val nonce = raw.copyOfRange(0, 12)
+            if (nonce.copyOfRange(0, 4).any { it != 0.toByte() } || counter(nonce) != expected) null
+            else {
+                val c = Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(Cipher.DECRYPT_MODE, recvKey, GCMParameterSpec(128, nonce))
+                val plain = c.doFinal(raw, 12, raw.size - 12)
+                expected++
+                plain
+            }
+        }
+    } catch (e: Exception) { null }
+
+    private fun nonce(n: Long): ByteArray = ByteArray(12).also { for (i in 0 until 8) it[11 - i] = (n ushr (8 * i)).toByte() }
+
+    private fun counter(nonce: ByteArray): Long {
+        var n = 0L
+        for (i in 4 until 12) n = n shl 8 or (nonce[i].toLong() and 0xff)
+        return n
+    }
+}

@@ -140,6 +140,10 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     var cameraOk by remember(screen) { mutableStateOf(rt.device.hasCameraPermission()) }
     val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { cameraOk = it || rt.device.hasCameraPermission() }
 
+    // Parents seeing this screen: the grown-up allows capture once; the grant is kept until reboot, unlink or reset.
+    val screenShared by rt.screen.holding.collectAsState()
+    val askScreen = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { rt.screen.grant(it.resultCode, it.data) }
+
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (screen) {
             NodeScreen.KIOSK -> KioskSetup(
@@ -227,6 +231,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             onAllowBrightness = if (brightnessOk) null else guarded { ask(rt.device.writeSettingsIntent()) },
             onAllowScreenOff = if (screenOffOk) null else guarded { ask(rt.device.deviceAdminIntent()) },
             onTalkNotifications = guarded { ask(rt.device.talkChannelSettingsIntent()) },
+            remoteControlOn = remember(screen, permTick) { com.nbaltas.nickos.node.RemoteInputService.running },
+            onRemoteControl = guarded { ask(rt.device.remoteInputIntent()) },
+            screenShared = screenShared,
+            onScreenShare = guarded {
+                if (screenShared) rt.screen.release()
+                else try { askScreen.launch(com.nbaltas.nickos.node.ScreenStreamer.consentIntent(ctx)) } catch (e: Exception) { permTick++ }
+            },
         )
 
         if (showPermCard) PermissionCard(
