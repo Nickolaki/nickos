@@ -727,6 +727,13 @@ private fun HomeScreenRow() {
     val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) {
         isHome = isDefaultHome(ctx)
     }
+    // Turning it off opens no page, so look again right after any switch change. Android takes a moment to settle.
+    androidx.compose.runtime.LaunchedEffect(optIn) {
+        for (wait in listOf(0L, 400L, 1200L)) {
+            kotlinx.coroutines.delay(wait)
+            isHome = isDefaultHome(ctx)
+        }
+    }
     // Look again when the parent comes back from the system page.
     val lifecycle = (ctx as? androidx.lifecycle.LifecycleOwner)?.lifecycle
     androidx.compose.runtime.DisposableEffect(lifecycle) {

@@ -1,5 +1,6 @@
 package com.nbaltas.nickos.link
 
+import kotlinx.coroutines.cancel
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -168,13 +169,13 @@ class ConnTest {
         val peer = ss.accept()
         val conn = Conn(client)
         try {
-            assertTrue("free link: written", conn.sendLossy(JSONObject().put("t", "talk")))
+            assertEquals("free link: written", Conn.Lossy.WRITTEN, conn.sendLossy(JSONObject().put("t", "talk")))
             val big = JSONObject().put("pad", "x".repeat(24 * 1024 * 1024))
             val blocked = Thread { conn.send(big) }.also { it.isDaemon = true; it.start() }
             Thread.sleep(300)
             assertTrue(blocked.isAlive)
             val t0 = System.nanoTime()
-            assertFalse("busy link: dropped", conn.sendLossy(JSONObject().put("t", "talk")))
+            assertEquals("busy link: dropped", Conn.Lossy.BUSY, conn.sendLossy(JSONObject().put("t", "talk")))
             assertTrue("gave up in ${(System.nanoTime() - t0) / 1e6} ms", (System.nanoTime() - t0) / 1e6 < 50)
             assertTrue("the link was not closed by the drop", conn.isOpen)
         } finally {
@@ -188,9 +189,111 @@ class ConnTest {
             val key = ByteArray(32) { it.toByte() }
             l.master.seal(Seal(key, "m2n", "n2m")); l.node.seal(Seal(key, "n2m", "m2n"))
             assertTrue(l.master.send(JSONObject().put("n", 1)))
-            assertTrue(l.master.sendLossy(JSONObject().put("n", 2)))
+            assertEquals(Conn.Lossy.WRITTEN, l.master.sendLossy(JSONObject().put("n", 2)))
             assertTrue(l.master.send(JSONObject().put("n", 3)))
             assertEquals(listOf(1, 2, 3), (1..3).map { l.node.read()!!.getInt("n") })
+        }
+    }
+
+    /** A link whose peer never reads: the first big audio write stays blocked until the deadline closes the link. */
+    private class Stuck {
+        val ss = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val conn = Conn(Socket(InetAddress.getByName("127.0.0.1"), ss.localPort))
+        val peer: Socket = ss.accept()
+        // Bigger than the loopback buffers on both ends together, so the write cannot finish.
+        val big = JSONObject().put("pad", "x".repeat(24 * 1024 * 1024))
+        fun close() { conn.close(); peer.close(); ss.close() }
+    }
+
+    @Test
+    fun `a stalled audio write is cut at its deadline, closes the link and says stalled`() {
+        val s = Stuck()
+        try {
+            val t0 = System.nanoTime()
+            val r = s.conn.sendLossy(s.big, deadlineMs = 150)
+            val ms = (System.nanoTime() - t0) / 1e6
+            assertEquals(Conn.Lossy.STALLED, r)
+            assertTrue("took $ms ms", ms < 150 + 250)
+            assertFalse(s.conn.isOpen)
+        } finally { s.close() }
+    }
+
+    @Test
+    fun `a finished audio write cancels its deadline and leaves the link open`() {
+        Link().use { l ->
+            assertEquals(Conn.Lossy.WRITTEN, l.master.sendLossy(JSONObject().put("t", "talk"), deadlineMs = 100))
+            Thread.sleep(250)
+            assertTrue(l.master.isOpen)
+        }
+    }
+
+    @Test
+    fun `while one tablet's audio write is stalled a command to the stalled tablet and to a healthy one both run within the budget`() {
+        val stuck = Stuck()
+        val healthy = Link()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        val lanes = SendLanes(scope)
+        try {
+            // The stalled audio write is in flight, holding that tablet's write lock.
+            val audio = Thread { stuck.conn.sendLossy(stuck.big, deadlineMs = 2000) }.also { it.isDaemon = true; it.start() }
+            Thread.sleep(300)
+            assertTrue("the audio write is stuck", audio.isAlive)
+            val toStuck = CountDownLatch(1); val toHealthy = CountDownLatch(1)
+            val t0 = System.nanoTime()
+            lanes.launch("a") { stuck.conn.send(JSONObject().put("c", "lock")); toStuck.countDown() }
+            lanes.launch("b") { healthy.master.send(JSONObject().put("c", "lock")); toHealthy.countDown() }
+            // The healthy tablet's command does not wait for the stalled one at all.
+            assertTrue("healthy tablet's command ran", toHealthy.await(250, TimeUnit.MILLISECONDS))
+            val healthyMs = (System.nanoTime() - t0) / 1e6
+            assertEquals("lock", healthy.node.read()!!.getString("c"))
+            assertTrue("healthy took $healthyMs ms", healthyMs < 250)
+            // The stalled tablet's own command is not allowed to hang the caller: it fails once its link is cut.
+            assertFalse("stalled tablet's command is still waiting on its stuck audio write", toStuck.await(100, TimeUnit.MILLISECONDS))
+        } finally {
+            stuck.close(); healthy.close(); scope.cancel()
+        }
+    }
+
+    @Test
+    fun `with the real deadline the stalled tablet's command finishes within the budget too`() {
+        val stuck = Stuck()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        val lanes = SendLanes(scope)
+        try {
+            val audio = Thread { stuck.conn.sendLossy(stuck.big) }.also { it.isDaemon = true; it.start() }
+            Thread.sleep(50)
+            val done = CountDownLatch(1)
+            val t0 = System.nanoTime()
+            lanes.launch("a") { stuck.conn.send(JSONObject().put("c", "lock")); done.countDown() }
+            assertTrue("command to the stalled tablet finished", done.await(600, TimeUnit.MILLISECONDS))
+            val ms = (System.nanoTime() - t0) / 1e6
+            assertTrue("budget is the audio deadline plus slack: $ms ms", ms < Conn.AUDIO_WRITE_MS + 300)
+            audio.join(1000)
+            assertFalse(stuck.conn.isOpen)
+        } finally {
+            stuck.close(); scope.cancel()
+        }
+    }
+
+    @Test
+    fun `commands to one tablet keep their order and different tablets use different lanes`() {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        val lanes = SendLanes(scope)
+        try {
+            val seen = java.util.concurrent.CopyOnWriteArrayList<Int>()
+            val done = CountDownLatch(50)
+            for (i in 1..50) lanes.launch("a") { seen += i; done.countDown() }
+            assertTrue(done.await(3, TimeUnit.SECONDS))
+            assertEquals((1..50).toList(), seen.toList())
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `a legacy clear text link is not sealed and a sealed one is`() {
+        Link().use { l ->
+            assertFalse(l.master.isSealed)
+            l.master.seal(Seal(ByteArray(32) { it.toByte() }, "m2n", "n2m"))
+            assertTrue(l.master.isSealed)
         }
     }
 

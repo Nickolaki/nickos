@@ -113,13 +113,15 @@ class NetMessagesTest {
 
     @Test
     fun `landscape status round trips and an old node reports none`() {
-        for (st in listOf("on", "off", "no_permission")) {
+        for (st in listOf("on", "off", "no_permission", "pending")) {
             val s = NetMessages.LandscapeStatus(st != "off", st)
             val status = JSONObject().put("landscape", NetMessages.encodeLandscape(s))
             assertEquals(s, NetMessages.decodeLandscape(wire(status)))
         }
         assertTrue(NetMessages.LandscapeStatus(true, "no_permission").needsPermission)
         assertFalse(NetMessages.LandscapeStatus(true, "on").needsPermission)
+        assertTrue(NetMessages.LandscapeStatus(true, "pending").pending)
+        assertFalse(NetMessages.LandscapeStatus(true, "on").pending)
         assertNull("old node", NetMessages.decodeLandscape(JSONObject("""{"t":"status"}""")))
         assertNull("unknown state", NetMessages.decodeLandscape(JSONObject("""{"landscape":{"lock":true,"state":"sideways"}}""")))
         assertNull("not an object", NetMessages.decodeLandscape(JSONObject("""{"landscape":true}""")))

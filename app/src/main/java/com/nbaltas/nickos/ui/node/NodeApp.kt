@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.nbaltas.nickos.App
 import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.node.KioskPolicy
+import com.nbaltas.nickos.node.StartScreen
 import com.nbaltas.nickos.node.LocalVideos
 import com.nbaltas.nickos.node.NodeService
 import com.nbaltas.nickos.node.PermStep
@@ -37,7 +38,7 @@ import com.nbaltas.nickos.ui.theme.SetupHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private enum class NodeScreen { HOME, PIN, MENU, DRAWER, PAIR, KIOSK }
+private enum class NodeScreen { HOME, PIN, MENU, DRAWER, PAIR, KIOSK, ASK }
 
 /** Everything the Node activity shows. Kiosk/lock-task itself is handled by MainActivity. */
 @Composable
@@ -62,19 +63,32 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     // Leaving lock task makes Android start Home again in a new task, so this screen is rebuilt
     // right after the PIN: reopen the parent menu while parent mode is on.
     // A tablet that is not Device Owner and not yet the home screen opens the Kid lock setup first.
+    // An existing Node needs the parent PIN (a live parent window) for the menu and the setup, also after a recreation.
+    val kidLockDone by store.kidLockDone.collectAsState()
+    val existing = KioskPolicy.existingNode(masters.size, kidLockDone)
     var screen by remember {
         mutableStateOf(
-            when {
-                rt.parentMode -> NodeScreen.MENU
-                KioskPolicy.setupNeeded(rt.device.kioskState()) -> NodeScreen.KIOSK
-                else -> NodeScreen.HOME
+            when (KioskPolicy.startScreen(existing, KioskPolicy.setupNeeded(rt.device.kioskState()), rt.parentMode)) {
+                StartScreen.MENU -> NodeScreen.MENU
+                StartScreen.KIOSK -> NodeScreen.KIOSK
+                StartScreen.ASK -> NodeScreen.ASK
+                StartScreen.HOME -> NodeScreen.HOME
             },
         )
+    }
+    // Where Cancel on the PIN pad goes back to, and where a right PIN goes.
+    var pinFromAsk by remember { mutableStateOf(false) }
+    // The parent window ran out while the setup was open on an existing Node: back to the card, watchdog on.
+    LaunchedEffect(screen, existing) {
+        while (screen == NodeScreen.KIOSK) {
+            if (!KioskPolicy.setupMayStay(existing, rt.parentMode)) screen = NodeScreen.ASK
+            kotlinx.coroutines.delay(1000)
+        }
     }
     val scope = rememberCoroutineScope()
     val kioskStatus = remember(screen) { KioskPolicy.status(rt.device.kioskState()) }
 
-    BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU && screen != NodeScreen.KIOSK) screen = NodeScreen.HOME }
+    BackHandler { if (screen != NodeScreen.HOME && screen != NodeScreen.MENU && screen != NodeScreen.KIOSK && screen != NodeScreen.ASK) screen = NodeScreen.HOME }
 
     // Re-checked when the allowlist changes: Jellyfin may be installed after NickOS started.
     val jfPkg = remember(allowed) { rt.device.jellyfinPackage() }
@@ -119,7 +133,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when (screen) {
-            NodeScreen.KIOSK -> KioskSetup(onStart = { screen = NodeScreen.HOME; onKidMode() })
+            NodeScreen.KIOSK -> KioskSetup(onStart = { store.setKidLockDone(true); screen = NodeScreen.HOME; onKidMode() })
+            NodeScreen.ASK -> AskGrownUpScreen(onPin = { pinFromAsk = true; screen = NodeScreen.PIN })
             NodeScreen.DRAWER -> AppDrawer(onBack = { screen = NodeScreen.MENU }, onOpen = { rt.device.launch(it) })
             NodeScreen.PAIR -> {
                 val code by rt.pairingCode.collectAsState()
@@ -152,7 +167,15 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             )
         }
 
-        if (screen == NodeScreen.PIN) PinPad(pin, onOk = { screen = NodeScreen.MENU; onParentMode() }, onCancel = { screen = NodeScreen.HOME })
+        if (screen == NodeScreen.PIN) PinPad(
+            pin,
+            onOk = {
+                val fromAsk = pinFromAsk; pinFromAsk = false
+                onParentMode()
+                screen = if (fromAsk && KioskPolicy.setupNeeded(rt.device.kioskState())) NodeScreen.KIOSK else NodeScreen.MENU
+            },
+            onCancel = { screen = if (pinFromAsk) NodeScreen.ASK else NodeScreen.HOME; pinFromAsk = false },
+        )
         if (screen == NodeScreen.MENU) ParentMenu(
             kiosk = kioskStatus,
             pinIsDefault = pin == Store.DEFAULT_PIN,
@@ -168,12 +191,14 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                 scope.launch {
                     // Read before releasing: Device Owner and the home role are gone after.
                     val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
+                    com.nbaltas.nickos.node.Provisioning.forget(ctx) // no longer a QR kid tablet in the making
                     rt.sayGoodbye()
                     rt.releaseLandscape() // give the tablet's own rotation settings back before the stored copy is wiped
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
                     store.resetAll()
+                    com.nbaltas.nickos.node.RotationRecovery.retry(ctx, store) // a restore that could not finish is kept and tried again
                     // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
                     if (handBackHome) try {
                         ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_HOME_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -193,7 +218,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         // The overlay only covers other apps (Android forces pass-through overlays to 80% opacity),
         // so the toast always draws here on the home screen. The wall too without the overlay permission.
         warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
-        talkBanner?.let { if (lockedBy == null) TalkBannerAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
+        // After the locked wall, so the banner is drawn over it: the speech is audible there too.
+        talkBanner?.let { TalkBannerAtBottom(it) }
     }
 }

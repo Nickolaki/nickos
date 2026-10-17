@@ -113,6 +113,24 @@ fun KioskSetupScreen(
     }
 }
 
+/**
+ * The kid lock was undone (an update, say) on a tablet that has been used. The kid stays on the kid home with the
+ * watchdog on; only the parent PIN opens the setup. This card is the whole screen and the PIN pad is its only action.
+ */
+@Composable
+fun AskGrownUpScreen(onPin: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().background(C.bg).padding(horizontal = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Title("Ask a grown-up to finish the kid lock", 36, lineHeight = 1.05f)
+            Muted("This tablet needs a quick check from a grown-up before it is ready again.", 17, maxLines = 2)
+            NickButton("Enter the PIN", onPin, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY)
+        }
+    }
+}
+
 @Composable
 private fun Spacer8() = Box(Modifier.height(4.dp))
 

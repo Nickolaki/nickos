@@ -4,6 +4,11 @@ import com.nbaltas.nickos.link.B64
 import org.json.JSONObject
 import java.security.SecureRandom
 
+/** Talk is only taken from a sealed, authenticated link. A legacy v1 session (clear text token) can still send commands, but not audio. */
+object TalkGate {
+    fun allows(sealed: Boolean) = sealed
+}
+
 /**
  * Push to talk, Master to Node (capability "talk1" in the Node's status "caps"). All three ride the sealed link:
  *  {"t":"talkStart","sid"}                    a session begins
@@ -36,6 +41,14 @@ object TalkMessages {
     fun frame(sid: String, seq: Long, pcm: ByteArray): JSONObject =
         JSONObject().put("t", "talk").put("sid", sid).put("seq", seq).put("pcm", B64.enc(pcm))
 
+    /** A whole number, or null: 1.5 is refused rather than cut to 1, and so is anything that is not a number. */
+    private fun wholeNumber(v: Any?): Long? = when (v) {
+        is Int -> v.toLong()
+        is Long -> v
+        is Number -> v.toDouble().takeIf { !it.isNaN() && it == Math.rint(it) && Math.abs(it) < 9.0e15 }?.toLong()
+        else -> null
+    }
+
     /** True for the three talk message types, valid or not. */
     fun isTalk(m: JSONObject?): Boolean = m?.optString("t").let { it == "talkStart" || it == "talk" || it == "talkEnd" }
 
@@ -51,7 +64,7 @@ object TalkMessages {
             "talkStart" -> Start(sid)
             "talkEnd" -> End(sid)
             "talk" -> {
-                val seq = (m.opt("seq") as? Number)?.toLong()?.takeIf { it >= 1 } ?: return null
+                val seq = wholeNumber(m.opt("seq"))?.takeIf { it >= 1 } ?: return null
                 val text = m.optString("pcm")
                 // Check the size before decoding, so a huge string is never turned into bytes.
                 if (text.isEmpty() || text.length > MAX_FRAME_BYTES * 4 / 3 + 4) return null

@@ -327,18 +327,29 @@ class Store(context: Context) {
     val bedtimeAt: StateFlow<Long> = _bedtime
     fun setBedtimeAt(v: Long) { p.edit().putLong("bedtimeAt", v).apply(); _bedtime.value = v }
 
+    private val _kidLockDone = MutableStateFlow(p.getBoolean("kidLockDone", false))
+    /** Start kid mode worked once on this tablet. From then on the kid lock repair screen needs the parent PIN. */
+    val kidLockDone: StateFlow<Boolean> = _kidLockDone
+    fun setKidLockDone(v: Boolean) { p.edit().putBoolean("kidLockDone", v).commit(); _kidLockDone.value = v }
+
     private val _landscape = MutableStateFlow(p.getBoolean("landscapeLock", false))
     /** The parent locked this kid tablet to landscape. Kept across reboots. */
     val landscapeLock: StateFlow<Boolean> = _landscape
-    fun setLandscapeLock(v: Boolean) { p.edit().putBoolean("landscapeLock", v).commit(); _landscape.value = v }
+    /** True when the choice reached the disk; only then does the app act on it. */
+    fun setLandscapeLock(v: Boolean): Boolean {
+        val ok = p.edit().putBoolean("landscapeLock", v).commit()
+        if (ok) _landscape.value = v
+        return ok
+    }
 
     /** The system rotation settings as they were before the landscape lock changed them, or null when it has not. */
     fun savedRotation(): com.nbaltas.nickos.node.Rotation? =
         if (p.contains("rotSavedAccel")) com.nbaltas.nickos.node.Rotation(p.getInt("rotSavedAccel", 1), p.getInt("rotSavedUser", 0)) else null
-    fun setSavedRotation(r: com.nbaltas.nickos.node.Rotation?) {
+    /** True only when the change reached the disk: the landscape lock changes nothing on the tablet without that. */
+    fun setSavedRotation(r: com.nbaltas.nickos.node.Rotation?): Boolean {
         val e = p.edit()
         if (r == null) e.remove("rotSavedAccel").remove("rotSavedUser") else e.putInt("rotSavedAccel", r.accelerometer).putInt("rotSavedUser", r.user)
-        e.commit()
+        return e.commit()
     }
 
     private val _resume = MutableStateFlow(readList("resume") { ResumeCard.from(it) })
@@ -348,8 +359,13 @@ class Store(context: Context) {
     @Synchronized
     fun resetAll() {
         val carnet = p.getString(KEY_CARNET, null)
-        p.edit().clear().putString("deviceId", deviceId).apply { if (carnet != null) putString(KEY_CARNET, carnet) }.apply()
-        _masterHomeOptIn.value = false; _landscape.value = false
+        // A rotation restore that has not finished is the tablet's own setting, not NickOS data: it survives a reset and is retried.
+        val rotation = savedRotation()
+        p.edit().clear().putString("deviceId", deviceId).apply {
+            if (carnet != null) putString(KEY_CARNET, carnet)
+            if (rotation != null) putInt("rotSavedAccel", rotation.accelerometer).putInt("rotSavedUser", rotation.user)
+        }.apply()
+        _masterHomeOptIn.value = false; _landscape.value = false; _kidLockDone.value = false
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null

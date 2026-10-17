@@ -630,6 +630,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit) {
                                 NickSwitch(l.lock) { m.setLandscape(v.node.id, it) }
                             }
                             if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700), color = C.danger)
+                            if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700), color = C.danger)
                         }
                     } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }

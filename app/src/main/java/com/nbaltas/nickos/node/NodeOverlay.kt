@@ -50,14 +50,19 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             if (locked && !rt.homeVisible) rt.device.goHome()
             return
         }
-        if (locked && lockView == null) lockView = add(fullScreen = true) { LockedOverlayContent(store) }
+        if (locked && lockView == null) {
+            lockView = add(fullScreen = true) { LockedOverlayContent(store) }
+            // The talking banner is added after the wall so it stays on top of it.
+            if (talkView != null) { remove(talkView); talkView = null }
+        }
         if (!locked && lockView != null) { remove(lockView); lockView = null }
         // Over other apps only: the home screen draws its own opaque toast (see NodeApp).
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
         if (!toast && toastView != null) { remove(toastView); toastView = null }
-        // Same rule for "Dad is talking": over other apps here, on the home screen it is drawn by NodeApp.
-        val talking = rt.talkBanner.value != null && !locked && !rt.homeVisible
+        // Same rule for "Dad is talking": over other apps here, on the home screen it is drawn by NodeApp. Also over the
+        // locked wall, because the speech is still audible.
+        val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
         if (talking && talkView == null) talkView = add(fullScreen = false) { TalkOverlayContent(rt) }
         if (!talking && talkView != null) { remove(talkView); talkView = null }
     }
@@ -65,8 +70,18 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     /**
      * The landscape lock for other apps: a 1 pixel window nobody can see or touch that asks Android for sensor
      * landscape (both directions). The foreground app inherits the request. Safe to call again with the same value.
+     * The window is added on the main thread and this waits (a short while) for the answer: true only when the window
+     * is really there (on) or gone (off).
      */
-    fun landscapeGuard(on: Boolean) = main.post {
+    fun landscapeGuard(on: Boolean): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) return guard(on)
+        val done = java.util.concurrent.CountDownLatch(1)
+        var ok = false
+        main.post { try { ok = guard(on) } finally { done.countDown() } }
+        return try { done.await(GUARD_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && ok } catch (e: InterruptedException) { false }
+    }
+
+    private fun guard(on: Boolean): Boolean {
         if (on && guardView == null) {
             val v = View(ctx)
             val lp = WindowManager.LayoutParams(
@@ -81,6 +96,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
             try { wm.addView(v, lp); guardView = v } catch (e: Exception) { android.util.Log.w("NickOS.Rotation", "landscape guard", e) }
         }
         if (!on && guardView != null) { remove(guardView); guardView = null }
+        return (guardView != null) == on
     }
 
     fun hideAll() = main.post {
@@ -114,6 +130,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         owner.resume()
         return view
     }
+
+    private companion object { const val GUARD_WAIT_MS = 1500L }
 
     private fun remove(v: View?) {
         if (v != null) try { wm.removeView(v) } catch (_: Exception) {}

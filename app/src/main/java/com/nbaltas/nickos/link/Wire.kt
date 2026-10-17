@@ -74,6 +74,9 @@ class Conn(val socket: Socket) {
     /** From now on every line sent is sealed and every line read must open. */
     fun seal(s: Seal) { sealer = s }
 
+    /** True once a v2 handshake sealed this link. A legacy v1 session never is. */
+    val isSealed get() = sealer != null
+
     /**
      * Reads one line as JSON. Null at end of stream, when the line is longer than [maxBytes], when [deadlineMs]
      * (0 = none) has passed, or when a sealed line fails to open; the socket is closed in the last three cases.
@@ -122,14 +125,26 @@ class Conn(val socket: Socket) {
         try { return write(o) } finally { writeLock.unlock() }
     }
 
+    /** How an audio frame went: on the wire, dropped because the link was busy, or the link is stuck or gone. */
+    enum class Lossy { WRITTEN, BUSY, STALLED, FAILED }
+
     /**
-     * For audio frames: writes only if no other line is being written right now, otherwise gives up at once and
-     * returns false (the frame is dropped). A command therefore never waits behind a queue of audio, only ever
-     * behind the one frame already on the wire.
+     * For audio frames: writes only if no other line is being written right now, otherwise gives up at once
+     * ([Lossy.BUSY], the frame is dropped). A command therefore never waits behind a queue of audio, only ever
+     * behind the one frame already on the wire, and that write has a deadline: a peer that stopped reading would
+     * otherwise block it (and the write lock, and every command to this tablet) for as long as its buffers stay full.
+     * Past [deadlineMs] the link is closed (a socket cannot be un-blocked any other way), which frees the lock and
+     * returns [Lossy.STALLED]; the caller ends that tablet's talk session and the link comes back by reconnecting.
      */
-    fun sendLossy(o: JSONObject): Boolean {
-        if (!writeLock.tryLock()) return false
-        try { return write(o) } finally { writeLock.unlock() }
+    fun sendLossy(o: JSONObject, deadlineMs: Long = AUDIO_WRITE_MS): Lossy {
+        if (!writeLock.tryLock()) return Lossy.BUSY
+        val stalled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val watchdog = watchdogs.schedule({ stalled.set(true); close() }, deadlineMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        try {
+            val ok = write(o)
+            watchdog.cancel(false)
+            return if (ok) Lossy.WRITTEN else if (stalled.get()) Lossy.STALLED else Lossy.FAILED
+        } finally { writeLock.unlock() }
     }
 
     private fun write(o: JSONObject): Boolean = try {
@@ -143,6 +158,13 @@ class Conn(val socket: Socket) {
     val isOpen get() = !socket.isClosed
 
     companion object {
+        /** The longest one audio frame may take to write. A command to any tablet waits at most this long behind it. */
+        const val AUDIO_WRITE_MS = 250L
+
+        private val watchdogs = java.util.concurrent.ScheduledThreadPoolExecutor(1) { r ->
+            Thread(r, "NickOS.WriteWatch").also { it.isDaemon = true }
+        }.also { it.removeOnCancelPolicy = true }
+
         /** The longest line accepted before the peer has authenticated. */
         const val FIRST_LINE_MAX = 4 * 1024
         /** After auth: the Node's "apps" reply carries every app icon and the Master's "resume" cards carry posters. */

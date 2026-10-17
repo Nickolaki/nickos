@@ -1,0 +1,145 @@
+package com.nbaltas.nickos.talk
+
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+
+/** One speaker for one talk session: an AudioTrack and audio focus on a real tablet. A port so it can be tested. */
+interface Speaker {
+    /** Allocates and starts. Throws when it cannot, and then holds nothing: a half built speaker cleans up after itself. */
+    fun open()
+    /** Plays [len] bytes from [off]. Returns the bytes taken, or below zero for an error. May take fewer than asked. */
+    fun write(pcm: ByteArray, off: Int, len: Int): Int
+    /** [flush]: play out what is buffered, then release the track and give up focus. Otherwise cut it off. Safe to call twice. */
+    fun close(flush: Boolean)
+}
+
+/** What tells the people near the tablet that a parent is talking: the banner, and a notification when it cannot be drawn over an app. */
+interface TalkIndicator {
+    fun show(text: String)
+    fun clear()
+}
+
+/** Where "Parent is talking" must be seen. Pure, so the locked and missing permission cases are tested. */
+object TalkBannerPolicy {
+    /**
+     * The banner drawn over other apps: whenever someone is talking and the kid is outside NickOS's own home screen,
+     * and also over the locked wall (the speech is audible there too). On the home screen NodeApp draws it itself.
+     */
+    fun overlayShows(talking: Boolean, locked: Boolean, homeVisible: Boolean) = talking && (locked || !homeVisible)
+
+    /** Without the display over other apps permission the overlay cannot appear: a loud notification does the job. */
+    fun needsNotification(canOverlay: Boolean) = !canOverlay
+}
+
+/**
+ * Plays a talk session's audio and keeps the "Parent is talking" indicator for exactly as long as it is audible.
+ *  - Setup is all or nothing: if the speaker cannot start, it is closed, nothing is shown, and [begin] says false so
+ *    the receiver drops the session.
+ *  - The indicator belongs to the session that showed it. It clears when THAT session has finished playing (also what
+ *    was still queued after a normal end), and a session that was replaced cannot clear a newer one's indicator.
+ *  - A write that fails (error, or no progress) ends the session and tells [onFailed].
+ * Each session has its own writer thread, so the link's reading thread only ever hands over a frame.
+ */
+class TalkPlayer(
+    private val newSpeaker: () -> Speaker,
+    private val indicator: TalkIndicator,
+    private val nameOf: (String) -> String,
+    private val onFailed: (String) -> Unit,
+    private val log: (String) -> Unit = {},
+    private val startThread: (String, () -> Unit) -> Unit = { n, r -> Thread(r, n).also { it.isDaemon = true }.start() },
+) : TalkSink {
+    private var current: Playing? = null
+    /** Whose indicator is up. Only this session may clear it. */
+    private var shown: Playing? = null
+
+    @Synchronized
+    override fun begin(sid: String, masterId: String): Boolean {
+        current?.close(flush = false)
+        current = null
+        val p = Playing(sid, newSpeaker())
+        if (!p.open()) return false
+        current = p
+        shown = p
+        indicator.show(nameOf(masterId))
+        return true
+    }
+
+    @Synchronized
+    override fun play(pcm: ByteArray) { current?.offer(pcm) }
+
+    /** The indicator stays until the writer has played out what is left. */
+    @Synchronized
+    override fun end(flush: Boolean) {
+        current?.close(flush)
+        current = null
+    }
+
+    @Synchronized
+    private fun finished(p: Playing) {
+        if (current === p) current = null
+        if (shown === p) { shown = null; indicator.clear() }
+    }
+
+    private enum class Mode { OPEN, FLUSHING, CUT }
+
+    private inner class Playing(val sid: String, private val speaker: Speaker) {
+        private val queue = LinkedBlockingQueue<ByteArray>(MAX_WAITING)
+        @Volatile private var mode = Mode.OPEN
+
+        /** Speaker and writer thread, or neither. */
+        fun open(): Boolean {
+            try {
+                speaker.open()
+                startThread("NickOS.Talk") { run() }
+            } catch (e: Throwable) {
+                log("talk playback could not start: ${e.message}")
+                try { speaker.close(false) } catch (_: Throwable) {}
+                return false
+            }
+            return true
+        }
+
+        /** Never blocks: when the speaker is behind, the oldest waiting frame goes. */
+        fun offer(pcm: ByteArray) { if (mode == Mode.OPEN) while (!queue.offer(pcm)) queue.poll() }
+
+        fun close(flush: Boolean) { if (mode == Mode.OPEN) mode = if (flush) Mode.FLUSHING else Mode.CUT }
+
+        private fun writeAll(f: ByteArray): Boolean {
+            var off = 0
+            var stuck = 0
+            while (off < f.size) {
+                if (mode == Mode.CUT) return true
+                val n = speaker.write(f, off, f.size - off)
+                if (n < 0) return false
+                if (n == 0) { if (++stuck >= MAX_STUCK) return false } else { stuck = 0; off += n }
+            }
+            return true
+        }
+
+        private fun run() {
+            var failed = false
+            try {
+                while (true) {
+                    val f = (if (mode == Mode.OPEN) queue.poll(POLL_MS, TimeUnit.MILLISECONDS) else queue.poll()) ?: if (mode == Mode.OPEN) continue else break
+                    if (mode == Mode.CUT) break
+                    if (!writeAll(f)) { failed = true; break }
+                }
+            } catch (e: Throwable) {
+                log("talk write failed: ${e.message}")
+                failed = true
+            } finally {
+                try { speaker.close(flush = !failed && mode == Mode.FLUSHING) } catch (_: Throwable) {}
+                if (failed) onFailed(sid)
+                finished(this)
+            }
+        }
+    }
+
+    companion object {
+        /** About a second of audio: more than that is the speaker falling behind, and old audio is no use. */
+        const val MAX_WAITING = 25
+        private const val POLL_MS = 50L
+        /** A speaker that takes nothing this many times in a row is broken. */
+        private const val MAX_STUCK = 5
+    }
+}

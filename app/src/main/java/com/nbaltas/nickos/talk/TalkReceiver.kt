@@ -4,7 +4,8 @@ import org.json.JSONObject
 
 /** What a [TalkReceiver] drives: the speaker and the banner. Calls come one at a time. */
 interface TalkSink {
-    fun begin(sid: String, masterId: String)
+    /** False when the speaker could not start: the receiver then drops the session instead of pretending. */
+    fun begin(sid: String, masterId: String): Boolean
     fun play(pcm: ByteArray)
     /** [flush]: let what was already played out finish (a normal end) instead of cutting it off. */
     fun end(flush: Boolean)
@@ -51,7 +52,12 @@ class TalkReceiver(
                 if (msg.sid in ended) return Result.REJECTED
                 if (sid != null) finish(flush = false)
                 sid = msg.sid; owner = masterId; startedAt = now; lastAt = now; lastSeq = 0; playing = false; held.clear()
-                sink.begin(msg.sid, masterId)
+                if (!sink.begin(msg.sid, masterId)) {
+                    // The speaker would not start: nothing is playing and nothing is shown, so there is no session.
+                    sid = null; owner = null
+                    remember(msg.sid)
+                    return Result.REJECTED
+                }
                 Result.ACCEPTED
             }
             is TalkMessages.Frame -> {
@@ -86,6 +92,10 @@ class TalkReceiver(
         }
     }
 
+    /** The speaker broke in the middle of session [failed]: it is over, and nothing more is played for it. */
+    @Synchronized
+    fun sinkFailed(failed: String) { if (sid == failed) finish(flush = false) }
+
     /** The Master's link closed or it was unlinked. */
     @Synchronized
     fun onMasterGone(masterId: String) {
@@ -108,9 +118,13 @@ class TalkReceiver(
         held.clear()
         playing = false
         sid = null; owner = null
+        remember(done)
+        sink.end(flush)
+    }
+
+    private fun remember(done: String) {
         ended += done
         while (ended.size > REMEMBER) ended.removeFirst()
-        sink.end(flush)
     }
 
     companion object {

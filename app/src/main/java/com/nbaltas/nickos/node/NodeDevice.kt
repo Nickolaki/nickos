@@ -285,8 +285,7 @@ class NodeDevice(private val ctx: Context) {
         try {
             dpm.setLockTaskPackages(admin, (listOf(ctx.packageName) + packages).distinct().toTypedArray())
             if (Build.VERSION.SDK_INT >= 28) dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
-            HomeAlias.set(ctx, true)
-            dpm.addPersistentPreferredActivity(admin, homeFilter(), HomeAlias.component(ctx))
+            makeHome(ctx)
             dpm.setKeyguardDisabled(admin, true)
             if (Build.VERSION.SDK_INT >= 33) dpm.setPermissionGrantState(
                 admin, ctx.packageName, android.Manifest.permission.POST_NOTIFICATIONS, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
@@ -346,8 +345,12 @@ class NodeDevice(private val ctx: Context) {
 
         /**
          * Device Owner only: make NickOS the persistent home screen. Never throws, because a crash during the
-         * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set.
+         * provisioning wizard fails the whole setup with "Can't set up device". Returns whether it was set and checked.
+         * The one way every Device Owner path sets HOME: App start, lockdown and the provisioning callbacks.
+         * The HOME preference is the only persistent preferred activity this package sets, so the package wide clear
+         * inside [HomeSteps] only drops the old MainActivity one.
          */
+        @Synchronized
         fun makeHome(ctx: Context): Boolean = try {
             val dpm = ctx.getSystemService(DevicePolicyManager::class.java)
             if (dpm.isDeviceOwnerApp(ctx.packageName)) HomeSteps.run(RealHomePort(ctx, dpm)) { Log.i(TAG, it) } else false

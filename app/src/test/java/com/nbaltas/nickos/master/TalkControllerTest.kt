@@ -317,6 +317,137 @@ class TalkControllerTest {
         assertTrue("sent ${w.frames().size}", w.frames().size <= 2)
     }
 
+    // ---- ownership: starting, stopping and presses that overlap ----
+    /** Runs what it is given only when the test says so, so an interleaving can be set up exactly. */
+    private class Manual : kotlinx.coroutines.CoroutineDispatcher() {
+        val tasks = CopyOnWriteArrayList<Runnable>()
+        override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) { tasks += block }
+        fun runAll() { while (tasks.isNotEmpty()) tasks.removeAt(0).run() }
+        fun runNewest() { if (tasks.isNotEmpty()) tasks.removeAt(tasks.size - 1).run() }
+        fun runOldest() { if (tasks.isNotEmpty()) tasks.removeAt(0).run() }
+    }
+
+    @Test fun `letting go before the microphone has started means it never starts`() {
+        val io = Manual()
+        val mic = Mic(); val w = Wire()
+        val ctl = TalkController(scope, { mic }, { w }, { true }, io = io)
+        ctl.press(listOf(tgt("a", "Hailey")))
+        ctl.stop(TalkStop.RELEASED)          // the start is still waiting to run
+        io.runAll()                          // now the start and the close run, in that order
+        assertFalse("the microphone was opened after the press ended", mic.started.get())
+        assertTrue(mic.stopped.get() >= 1)
+    }
+
+    @Test fun `going to the background while the microphone is starting waits for the start, then closes it and records nothing`() {
+        val entered = CountDownLatch(1); val go = CountDownLatch(1)
+        val closed = AtomicInteger(0); val reads = AtomicInteger(0)
+        val slow = object : MicPort {
+            override fun start() { entered.countDown(); go.await(5, TimeUnit.SECONDS) }
+            override fun read(buf: ByteArray, off: Int, len: Int): Int { reads.incrementAndGet(); return -1 }
+            override fun stop() { closed.incrementAndGet() }
+        }
+        val w = Wire()
+        val ctl = TalkController(scope, { slow }, { w }, { true })
+        ctl.press(listOf(tgt("a", "Hailey")))
+        assertTrue(entered.await(3, TimeUnit.SECONDS))
+        ctl.stop(TalkStop.BACKGROUNDED)
+        Thread.sleep(100)
+        assertEquals("closing waits for the start in progress", 0, closed.get())
+        go.countDown()
+        until("closed after the start") { closed.get() >= 1 }
+        assertEquals("nothing was recorded", 0, reads.get())
+        assertTrue(w.frames().isEmpty())
+    }
+
+    @Test fun `a new press waits for the old microphone to be closed before opening its own`() {
+        val closeGate = CountDownLatch(1)
+        val first = object : MicPort {
+            val started = AtomicBoolean(false); val stopped = AtomicInteger(0)
+            override fun start() { started.set(true) }
+            override fun read(buf: ByteArray, off: Int, len: Int): Int { Thread.sleep(5); return if (stopped.get() == 0) len else -1 }
+            override fun stop() { stopped.incrementAndGet(); closeGate.await(5, TimeUnit.SECONDS) }
+        }
+        val second = Mic()
+        val mics = java.util.ArrayDeque<MicPort>(listOf(first, second))
+        val w = Wire()
+        val ctl = TalkController(scope, { mics.removeFirst() }, { w }, { true })
+        ctl.press(listOf(tgt("a", "Hailey")))
+        until("first open") { first.started.get() }
+        ctl.stop(TalkStop.RELEASED)
+        until("old close begun") { first.stopped.get() >= 1 }
+        assertEquals(TalkController.Press.STARTED, ctl.press(listOf(tgt("a", "Hailey"))))
+        Thread.sleep(300)
+        assertFalse("the new press opened its microphone while the old one was still closing", second.started.get())
+        closeGate.countDown()
+        until("second open") { second.started.get() }
+        ctl.stop(TalkStop.RELEASED)
+    }
+
+    @Test fun `a late failure of an old press cannot stop a newer one`() {
+        val boom = CountDownLatch(1)
+        val old = object : MicPort {
+            override fun start() {}
+            override fun read(buf: ByteArray, off: Int, len: Int): Int { boom.await(5, TimeUnit.SECONDS); throw IllegalStateException("late error") }
+            override fun stop() { boom.countDown() }
+        }
+        val fresh = Mic()
+        val mics = java.util.ArrayDeque<MicPort>(listOf(old, fresh))
+        val w = Wire()
+        val stops = CopyOnWriteArrayList<TalkStop>()
+        val ctl = TalkController(scope, { mics.removeFirst() }, { w }, { true }, onStopped = { stops += it })
+        ctl.press(listOf(tgt("a", "Hailey")))
+        val oldSid = ctl.state.value.sid!!
+        ctl.stop(TalkStop.RELEASED, oldSid)
+        assertEquals(TalkController.Press.STARTED, ctl.press(listOf(tgt("a", "Hailey"))))
+        val newSid = ctl.state.value.sid!!
+        until("fresh open") { fresh.started.get() }
+        Thread.sleep(150) // the old press's error has surfaced by now
+        assertTrue("newer press still live", ctl.state.value.talking)
+        assertEquals(newSid, ctl.state.value.sid)
+        assertEquals(listOf(TalkStop.RELEASED), stops.toList())
+        ctl.stop(TalkStop.RELEASED, newSid)
+    }
+
+    @Test fun `an old press's delayed talkStart never reaches the wire after a newer press began`() {
+        val lanes = Manual()
+        val w = Wire()
+        val mics = { Mic() }
+        val ctl = TalkController(scope, mics, { w }, { true }, lanes = lanes)
+        ctl.press(listOf(tgt("a", "Hailey")))       // press A: its sender has not run yet
+        val a = ctl.state.value.sid!!
+        ctl.stop(TalkStop.RELEASED, a)
+        ctl.press(listOf(tgt("a", "Hailey")))       // press B
+        val b = ctl.state.value.sid!!
+        lanes.runNewest()                            // B's sender runs first and sends its start
+        lanes.runOldest()                            // then the delayed A runs: its start must not be sent
+        until("b frames", 4000) { lanes.runAll(); w.frames().isNotEmpty() }
+        assertEquals(listOf("talkStart"), w.types().take(1))
+        assertEquals(1, w.types().count { it == "talkStart" })
+        assertTrue("only the newer press is on the wire", w.got.all { it.optString("sid") == b })
+        assertTrue(ctl.state.value.talking)
+        assertEquals(b, ctl.state.value.sid)
+        ctl.stop(TalkStop.RELEASED, b)
+        until("b end") { lanes.runAll(); w.types().lastOrNull() == "talkEnd" }
+        assertTrue(w.got.none { it.optString("sid") == a })
+    }
+
+    @Test fun `an old press's end is not sent after a newer press took the tablet`() {
+        val lanes = Manual()
+        val w = Wire()
+        val ctl = TalkController(scope, { Mic() }, { w }, { true }, lanes = lanes)
+        ctl.press(listOf(tgt("a", "Hailey")))
+        val a = ctl.state.value.sid!!
+        lanes.runAll()                               // A's start is sent
+        ctl.stop(TalkStop.RELEASED, a)
+        ctl.press(listOf(tgt("a", "Hailey")))        // B takes the tablet before A's end went out
+        val b = ctl.state.value.sid!!
+        lanes.runAll()
+        until("b start", 4000) { lanes.runAll(); w.got.any { it.optString("sid") == b && it.optString("t") == "talkStart" } }
+        assertTrue("A's end must not follow B's start", w.got.none { it.optString("sid") == a && it.optString("t") == "talkEnd" } ||
+            w.got.indexOfFirst { it.optString("sid") == a && it.optString("t") == "talkEnd" } < w.got.indexOfFirst { it.optString("sid") == b })
+        ctl.stop(TalkStop.RELEASED, b)
+    }
+
     @Test fun `stop does not wait for the microphone thread`() {
         val r = rig("a"); talking(r)
         val t0 = System.nanoTime()

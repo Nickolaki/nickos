@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,6 +63,10 @@ class TalkMessagesTest {
             JSONObject(ok.toString()).put("seq", 0),
             JSONObject(ok.toString()).put("seq", -3),
             JSONObject(ok.toString()).put("seq", "7"),
+            JSONObject(ok.toString()).put("seq", 1.5),
+            JSONObject(ok.toString()).put("seq", 2.0000001),
+            JSONObject(ok.toString()).put("seq", 3.7),
+            JSONObject(ok.toString()).put("seq", 1e300),
             JSONObject(ok.toString()).apply { remove("pcm") },
             JSONObject(ok.toString()).put("pcm", ""),
             JSONObject(ok.toString()).put("pcm", "!!! not base64 !!!"),
@@ -69,6 +74,17 @@ class TalkMessagesTest {
             JSONObject(ok.toString()).put("pcm", com.nbaltas.nickos.link.B64.enc(ByteArray(3))),
         )
         for (c in cases) assertNull(c?.toString(), TalkMessages.decode(c))
+    }
+
+    @Test fun `a whole number sent as 2 point 0 is accepted but a fraction is refused, never cut down`() {
+        val ok = wire(TalkMessages.frame(sid, 1, pcm(8)))
+        assertEquals(2L, (TalkMessages.decode(JSONObject(ok.toString()).put("seq", 2.0)) as TalkMessages.Frame).seq)
+        assertNull(TalkMessages.decode(JSONObject(ok.toString()).put("seq", 2.5)))
+    }
+
+    @Test fun `talk is only taken from a sealed link`() {
+        assertTrue(TalkGate.allows(true))
+        assertFalse(TalkGate.allows(false))
     }
 
     @Test fun `a frame over the size cap is refused and one at the cap is kept`() {

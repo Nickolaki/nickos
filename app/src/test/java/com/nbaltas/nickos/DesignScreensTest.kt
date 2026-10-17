@@ -799,7 +799,12 @@ class DesignScreensTest {
     private val landscapeOn = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "on")
     private val landscapeBlocked = com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "no_permission")
 
-    // 1024 only: at 960 the Device tab is one scrolling column and the control sits below the first screen.
+    // At 960 the Device tab is one scrolling column and the control sits below the first screen. The picture helper
+    // cannot scroll, so the 960 picture is taken on a tall 960 wide screen that shows the whole column, control included.
+    @Config(qualifiers = "w960dp-h1100dp-mdpi")
+    @Test fun controlDeviceLandscapeOnColumn960() = deviceTabLandscape("On", landscapeOn)
+    @Config(qualifiers = "w960dp-h1100dp-mdpi")
+    @Test fun controlDeviceLandscapePendingColumn960() = deviceTabLandscape("Pending", com.nbaltas.nickos.link.NetMessages.LandscapeStatus(true, "pending"))
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun controlDeviceLandscapeOn1024() = deviceTabLandscape("On", landscapeOn)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")

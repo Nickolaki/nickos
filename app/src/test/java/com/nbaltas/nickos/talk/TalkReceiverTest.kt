@@ -21,7 +21,8 @@ class TalkReceiverTest {
     private class Sink : TalkSink {
         val log = ArrayList<String>()
         var played = 0
-        override fun begin(sid: String, masterId: String) { log += "begin $sid $masterId" }
+        var beginOk = true
+        override fun begin(sid: String, masterId: String): Boolean { log += "begin $sid $masterId"; return beginOk }
         override fun play(pcm: ByteArray) { played++; log += "play ${pcm.size}" }
         override fun end(flush: Boolean) { log += "end flush=$flush" }
     }
@@ -170,6 +171,27 @@ class TalkReceiverTest {
         start(a); rx.stop()
         assertFalse(rx.active)
         assertNull(rx.activeSid)
+    }
+
+    @Test fun `a speaker that will not start means no session and the same sid cannot sneak back`() {
+        sink.beginOk = false
+        assertEquals(TalkReceiver.Result.REJECTED, start(a))
+        assertFalse(rx.active)
+        assertEquals(TalkReceiver.Result.REJECTED, frame(a, 1))
+        sink.beginOk = true
+        assertEquals(TalkReceiver.Result.REJECTED, start(a))
+        assertEquals(TalkReceiver.Result.ACCEPTED, start(b))
+    }
+
+    @Test fun `a speaker that breaks in the middle ends that session only`() {
+        start(a); frame(a, 1)
+        rx.sinkFailed(b) // some other session: nothing happens
+        assertTrue(rx.active)
+        rx.sinkFailed(a)
+        assertFalse(rx.active)
+        assertEquals("end flush=false", sink.log.last())
+        assertEquals(TalkReceiver.Result.REJECTED, frame(a, 2))
+        rx.sinkFailed(a) // and again is harmless
     }
 
     @Test fun `a gap longer than the cushion fills it again before playing on`() {

@@ -20,6 +20,9 @@ sealed interface KioskStatus {
     data class Incomplete(val missing: List<KioskStep>) : KioskStatus
 }
 
+/** Where the Node screen starts: see [KioskPolicy.startScreen]. ASK is the calm "ask a grown-up" card. */
+enum class StartScreen { HOME, KIOSK, ASK, MENU }
+
 /** Pure rules for launcher mode (the fallback for a tablet that was not factory reset). */
 object KioskPolicy {
     fun status(s: KioskState): KioskStatus {
@@ -37,6 +40,26 @@ object KioskPolicy {
 
     /** True when the kid lock screen should open instead of the kid home: not owner and not yet the home screen. */
     fun setupNeeded(s: KioskState) = status(s) is KioskStatus.Incomplete
+
+    /** A Node that has been used: it has a parent linked, or it finished the kid lock once. Never a brand new tablet. */
+    fun existingNode(masters: Int, kidLockDone: Boolean) = masters > 0 || kidLockDone
+
+    /**
+     * What the kid home opens on. An existing Node may only reach the parent menu or the kid lock setup with a parent
+     * PIN window ([pinWindow]); without one and with the lock undone, it stays on the kid home with the watchdog on and
+     * shows the "ask a grown-up" card. A brand new, never locked tablet keeps going straight into the setup.
+     */
+    fun startScreen(existing: Boolean, setupNeeded: Boolean, pinWindow: Boolean): StartScreen = when {
+        existing && pinWindow -> StartScreen.MENU
+        existing && setupNeeded -> StartScreen.ASK
+        existing -> StartScreen.HOME
+        setupNeeded -> StartScreen.KIOSK
+        pinWindow -> StartScreen.MENU
+        else -> StartScreen.HOME
+    }
+
+    /** Whether the kid lock setup may stay open: always on a new tablet, only inside a PIN window on an existing one. */
+    fun setupMayStay(existing: Boolean, pinWindow: Boolean) = !existing || pinWindow
 
     /**
      * Packages that must never be bounced: NickOS itself, the system, and the system dialogs a grant or an

@@ -19,7 +19,11 @@ import com.nbaltas.nickos.link.PairGate
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
+import com.nbaltas.nickos.talk.TalkBannerPolicy
+import com.nbaltas.nickos.talk.TalkGate
+import com.nbaltas.nickos.talk.TalkIndicator
 import com.nbaltas.nickos.talk.TalkMessages
+import com.nbaltas.nickos.talk.TalkPlayer
 import com.nbaltas.nickos.talk.TalkReceiver
 import com.nbaltas.nickos.talk.TalkText
 import kotlinx.coroutines.CoroutineScope
@@ -211,8 +215,24 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     val talkBanner: StateFlow<String?> = _talkBanner
 
     /** Push to talk: the state machine decides, [TalkPlayback] plays. Frames only count from a Master still linked here. */
-    private val talk = TalkReceiver(
-        TalkPlayback(ctx, { _talkBanner.value = it; overlay.refresh() }, { id -> TalkText.banner(store.masters.value.firstOrNull { it.id == id }?.name) }),
+    private val talkNotice = TalkNotice(ctx)
+    private val talkIndicator = object : TalkIndicator {
+        override fun show(text: String) {
+            _talkBanner.value = text; overlay.refresh()
+            // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
+            if (TalkBannerPolicy.needsNotification(device.canOverlay())) talkNotice.show(text)
+        }
+        override fun clear() { _talkBanner.value = null; overlay.refresh(); talkNotice.clear() }
+    }
+
+    /** The receiver is given the player at once, the player is told a failure through [talk]: see [talkPlayer]. */
+    private val talkPlayer = TalkPlayer(
+        newSpeaker = { AndroidSpeaker(ctx) }, indicator = talkIndicator,
+        nameOf = { id -> TalkText.banner(store.masters.value.firstOrNull { it.id == id }?.name) },
+        onFailed = { sid -> talk.sinkFailed(sid) }, log = { Log.w(TAG, it) },
+    )
+    private val talk: TalkReceiver = TalkReceiver(
+        talkPlayer,
         linked = { id -> store.masters.value.any { it.id == id } },
         clock = System::currentTimeMillis,
     )
@@ -345,7 +365,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                 val msg = c.read() ?: break
                 if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
-                else if (TalkMessages.isTalk(msg)) try { talk.onMessage(id, msg) } catch (e: Exception) { Log.w(TAG, "talk failed", e) }
+                // And only on a sealed link: a legacy clear text session (v1) is refused talk.
+                else if (TalkMessages.isTalk(msg)) {
+                    if (!TalkGate.allows(c.isSealed)) Log.w(TAG, "talk refused on an unsealed link")
+                    else try { talk.onMessage(id, msg) } catch (e: Exception) { Log.w(TAG, "talk failed", e) }
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "connection ended: ${e.message}")
@@ -453,7 +477,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
             "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
-            NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { store.setLandscapeLock(it); applyLandscape() }
+            NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
         }

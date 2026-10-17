@@ -85,20 +85,25 @@ object NetMessages {
         return m.getBoolean("landscape")
     }
 
-    /** What the parent asked for ([lock]) and what the Node manages to do ([state]: on, off or no_permission). */
+    /**
+     * What the parent asked for ([lock]) and what the Node manages to do ([state]: on, off, no_permission, or pending
+     * when applying it or putting the old rotation back has not worked yet and is being tried again).
+     */
     data class LandscapeStatus(val lock: Boolean, val state: String) {
         val needsPermission get() = state == STATE_NO_PERMISSION
+        val pending get() = state == STATE_PENDING
     }
     const val STATE_ON = "on"
     const val STATE_OFF = "off"
     const val STATE_NO_PERMISSION = "no_permission"
+    const val STATE_PENDING = "pending"
 
     fun encodeLandscape(s: LandscapeStatus): JSONObject = JSONObject().put("lock", s.lock).put("state", s.state)
 
     /** Null when the Node predates the feature and sent none: the Master hides the switch. */
     fun decodeLandscape(status: JSONObject): LandscapeStatus? {
         val o = status.optJSONObject("landscape") ?: return null
-        val state = o.optString("state").takeIf { it == STATE_ON || it == STATE_OFF || it == STATE_NO_PERMISSION } ?: return null
+        val state = o.optString("state").takeIf { it == STATE_ON || it == STATE_OFF || it == STATE_NO_PERMISSION || it == STATE_PENDING } ?: return null
         return LandscapeStatus(o.optBoolean("lock"), state)
     }
 

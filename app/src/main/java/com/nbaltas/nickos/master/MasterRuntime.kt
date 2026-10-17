@@ -21,6 +21,7 @@ import com.nbaltas.nickos.link.LinkFlags
 import com.nbaltas.nickos.link.LanAddress
 import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
+import com.nbaltas.nickos.link.SendLanes
 import com.nbaltas.nickos.link.MediaServer
 import com.nbaltas.nickos.link.WifiHold
 import com.nbaltas.nickos.link.Resolver
@@ -211,11 +212,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private fun talkWire(id: String): TalkWire? = links[id]?.let { c ->
         object : TalkWire {
             override fun control(o: JSONObject) = c.send(o)
-            override fun frame(o: JSONObject): Sent = when {
-                c.sendLossy(o) -> Sent.OK
-                // Busy: another line is on the wire. Gone: the socket closed or a newer link replaced this one.
-                c.isOpen && links[id] === c -> Sent.BUSY
-                else -> Sent.GONE
+            override fun frame(o: JSONObject): Sent = when (c.sendLossy(o)) {
+                Conn.Lossy.WRITTEN -> Sent.OK
+                // Busy: another line is on the wire. Stuck or failed: the write passed its deadline or broke, the link
+                // is closed, and this tablet's talk ends. Gone: also when a newer link replaced this one.
+                Conn.Lossy.BUSY -> if (c.isOpen && links[id] === c) Sent.BUSY else Sent.GONE
+                Conn.Lossy.STALLED, Conn.Lossy.FAILED -> Sent.GONE
             }
         }
     }
@@ -521,11 +523,11 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         _apps.update { it + (id to list) }
     }
 
-    // One sender thread keeps commands in order (volume 40 then 60 must arrive as 40, 60).
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val sendDispatcher = Dispatchers.IO.limitedParallelism(1)
+    // One sender lane per tablet keeps its commands in order (volume 40 then 60 must arrive as 40, 60). The lanes are
+    // separate so a tablet with a stuck link (audio included) never holds up a command to another tablet.
+    private val sendLanes = SendLanes(scope)
 
-    fun send(id: String, o: JSONObject): Boolean = links[id]?.let { c -> scope.launch(sendDispatcher) { c.send(o) }; true } ?: false
+    fun send(id: String, o: JSONObject): Boolean = links[id]?.let { c -> sendLanes.launch(id) { c.send(o) }; true } ?: false
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 

@@ -3,8 +3,6 @@ package com.nbaltas.nickos
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import com.nbaltas.nickos.data.Role
 import com.nbaltas.nickos.data.Store
@@ -14,6 +12,8 @@ import com.nbaltas.nickos.node.HomeSteps
 import com.nbaltas.nickos.node.KioskPolicy
 import com.nbaltas.nickos.node.KioskState
 import com.nbaltas.nickos.node.NodeDevice
+import com.nbaltas.nickos.node.Provisioning
+import com.nbaltas.nickos.node.StartScreen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -68,39 +68,88 @@ class HomeManifestTest {
 
 /** The order [NodeDevice.makeHome] works in. */
 class HomeStepsTest {
-    private class Fake(val failAt: String? = null) : HomePort {
+    private class Fake(val failAt: String? = null, val finalOk: Boolean = true) : HomePort {
         val calls = mutableListOf<String>()
         private fun go(n: String): Boolean { calls += n; return n != failAt }
         override fun enableAlias() = go("enable")
         override fun aliasResolvesHome() = go("resolves")
-        override fun addPreferredAlias() = go("add")
         override fun clearPackagePreferred() = go("clear")
+        override fun addPreferredAlias() = go("add")
+        override fun homeOpensAlias() = go("final") && finalOk
     }
 
-    @Test fun `enable, verify, add, clear, add again`() {
+    @Test fun `enable, verify, clear, add, verify again`() {
         val f = Fake()
         assertTrue(HomeSteps.run(f) {})
-        assertEquals(listOf("enable", "resolves", "add", "clear", "add"), f.calls)
+        assertEquals(listOf("enable", "resolves", "clear", "add", "final"), f.calls)
     }
 
-    @Test fun `nothing is cleared until the new preference is in`() {
-        for (bad in listOf("enable", "resolves", "add")) {
+    @Test fun `a failure at any step stops there and says so`() {
+        val order = listOf("enable", "resolves", "clear", "add", "final")
+        for ((i, bad) in order.withIndex()) {
             val f = Fake(bad)
             assertFalse(bad, HomeSteps.run(f) {})
-            assertFalse(bad, "clear" in f.calls)
+            assertEquals(bad, order.take(i + 1), f.calls)
         }
     }
 
-    @Test fun `a failed clear keeps the new preference and still reports home`() {
-        val f = Fake("clear")
-        assertTrue(HomeSteps.run(f) {})
-        assertEquals(listOf("enable", "resolves", "add", "clear"), f.calls)
+    @Test fun `failing only the add is reported and the next run starts from the top and finishes`() {
+        assertFalse(HomeSteps.run(Fake("add")) {})
+        val again = Fake()
+        assertTrue(HomeSteps.run(again) {})
+        assertEquals(listOf("enable", "resolves", "clear", "add", "final"), again.calls)
+    }
+
+    @Test fun `the final answer is checked, not just the call`() {
+        assertFalse(HomeSteps.run(Fake(finalOk = false)) {})
     }
 
     @Test fun `every step is logged`() {
         val log = mutableListOf<String>()
         HomeSteps.run(Fake()) { log += it }
         assertEquals(5, log.size)
+    }
+}
+
+/** The PIN gate for the kid lock repair screen. */
+class KioskGateTest {
+    @Test fun `an existing node means a linked parent or a finished kid lock`() {
+        assertFalse(KioskPolicy.existingNode(0, false))
+        assertTrue(KioskPolicy.existingNode(1, false))
+        assertTrue(KioskPolicy.existingNode(0, true))
+        assertTrue(KioskPolicy.existingNode(2, true))
+    }
+
+    @Test fun `policy table`() {
+        // existing, setupNeeded, pinWindow
+        val t = mapOf(
+            Triple(true, true, true) to StartScreen.MENU,
+            Triple(true, true, false) to StartScreen.ASK,
+            Triple(true, false, true) to StartScreen.MENU,
+            Triple(true, false, false) to StartScreen.HOME,
+            Triple(false, true, true) to StartScreen.KIOSK,
+            Triple(false, true, false) to StartScreen.KIOSK,
+            Triple(false, false, true) to StartScreen.MENU,
+            Triple(false, false, false) to StartScreen.HOME,
+        )
+        for ((k, want) in t) assertEquals("$k", want, KioskPolicy.startScreen(k.first, k.second, k.third))
+    }
+
+    @Test fun `recreating the activity without a PIN window never shows the menu or the setup for an existing node`() {
+        for (setup in listOf(false, true)) {
+            val s = KioskPolicy.startScreen(existing = true, setupNeeded = setup, pinWindow = false)
+            assertTrue("$s", s == StartScreen.HOME || s == StartScreen.ASK)
+        }
+    }
+
+    @Test fun `the setup may stay open only on a new tablet or inside a PIN window`() {
+        assertTrue(KioskPolicy.setupMayStay(existing = false, pinWindow = false))
+        assertTrue(KioskPolicy.setupMayStay(existing = true, pinWindow = true))
+        assertFalse(KioskPolicy.setupMayStay(existing = true, pinWindow = false))
+    }
+
+    @Test fun `while waiting for the PIN the watchdog is not held back`() {
+        assertTrue(KioskPolicy.returnHome(deviceOwner = false, parentMode = false, homeVisible = false, fg = "com.other.launcher", allowed = emptyList(), self = "x"))
     }
 }
 
@@ -127,6 +176,17 @@ class HomeAliasDeviceTest {
         assertTrue(HomeAlias.isEnabled(ctx))
     }
 
+    @Test fun `a reset forgets the provisioned marker so the tablet is no longer offered`() {
+        Provisioning.remember(ctx, android.os.PersistableBundle().apply { putString(Provisioning.EXTRA_ROLE, "node") })
+        assertTrue(Provisioning.provisionedAsNode(ctx))
+        assertTrue(HomeAlias.apply(ctx, Role.NONE, false))
+        assertTrue(HomeAlias.isEnabled(ctx))
+        Provisioning.forget(ctx)
+        assertFalse(Provisioning.provisionedAsNode(ctx))
+        assertTrue(HomeAlias.apply(ctx, Role.NONE, false))
+        assertFalse(HomeAlias.isEnabled(ctx))
+    }
+
     @Test fun `make home on an owner uses the alias`() {
         shadowOf(ctx.getSystemService(DevicePolicyManager::class.java)).setDeviceOwner(ComponentName(ctx, AdminReceiver::class.java))
         assertTrue(NodeDevice.makeHome(ctx))
@@ -137,6 +197,10 @@ class HomeAliasDeviceTest {
         assertFalse(acts.contains(ComponentName(ctx, MainActivity::class.java)))
     }
 
+    @Test fun `make home on a tablet that is not an owner does nothing`() {
+        assertFalse(NodeDevice.makeHome(ctx))
+    }
+
     @Test fun `the opt in is kept and cleared by a reset`() {
         val s = Store(ctx)
         assertFalse(s.masterHomeOptIn.value)
@@ -145,6 +209,16 @@ class HomeAliasDeviceTest {
         s.resetAll()
         assertFalse(s.masterHomeOptIn.value)
         assertFalse(Store(ctx).masterHomeOptIn.value)
+    }
+
+    @Test fun `the finished kid lock is kept across restarts and cleared by a reset`() {
+        val s = Store(ctx)
+        assertFalse(s.kidLockDone.value)
+        s.setKidLockDone(true)
+        assertTrue(Store(ctx).kidLockDone.value)
+        s.resetAll()
+        assertFalse(s.kidLockDone.value)
+        assertFalse(Store(ctx).kidLockDone.value)
     }
 
     @Test fun `the state line tells the truth`() {

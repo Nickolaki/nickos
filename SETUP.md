@@ -77,10 +77,13 @@ Owner: a kid who knows Android can still find a way out. After a restart, open N
 The grown-up menu shows **Finish kid lock** while steps are missing.
 
 After updating NickOS, Android forgets which app was this tablet's home screen (NickOS now offers
-itself from a separate entry). A launcher mode kid tablet then shows the **Make this the kids' tablet**
-screen again until the home screen step is done once more. Until then Android may show its own "choose
-a home app" list when Home is pressed. Pick NickOS and tap Always, or open the grown-up menu (hold the
-avatar, parent PIN) and use the setup screen.
+itself from a separate entry). A launcher mode kid tablet that is already linked to a parent (or has
+finished the kid lock before) then shows **Ask a grown-up to finish the kid lock** and stays on the kid
+home with the watchdog on. Tap **Enter the PIN**, enter the parent PIN, and the
+**Make this the kids' tablet** screen opens; do the home screen step once more there. Nothing opens
+without the PIN. Until then Android may show its own "choose a home app" list when Home is pressed:
+pick NickOS and tap Always. A brand new tablet that was never locked and never linked still opens the
+setup screen straight away.
 
 On a PC, the same steps can be skipped for a Device Owner tablet with the adb line below.
 
@@ -125,7 +128,7 @@ Under the chips on the Cameras screen, a **Hold to talk** button speaks to every
 
 - The first press on the parent tablet asks Android for the microphone and does not talk. Allow it, then hold the button again. Only the parent tablet asks; kid tablets never do.
 - Who hears is fixed when you start pressing, so a tablet that turns on halfway does not suddenly listen.
-- On the kid tablet the speaker plays your voice, the movie gets quieter, and a banner says "Dad is talking" (your tablet's name, or "Parent is talking"). Over other apps the banner needs the show over other apps permission; without it the voice still plays. It stops by itself if your tablet goes quiet for a second and a half, and no talk lasts more than two minutes.
+- On the kid tablet the speaker plays your voice, the movie gets quieter, and a banner says "Dad is talking" (your tablet's name, or "Parent is talking"). The banner stays for as long as the voice is audible, also on the locked screen. Over other apps it needs the show over other apps permission; without it a "Parent is talking" notification stands in for it while the voice plays. Talk only works on a sealed link (current NickOS on both tablets). It stops by itself if your tablet goes quiet for a second and a half, and no talk lasts more than two minutes.
 - Talking stops when you let go, leave the Cameras screen, switch to another app, lose the microphone permission, or every tablet goes offline.
 - A tablet on an older NickOS shows a greyed microphone and "Update this tablet". The Node reports `talk1` in its capabilities.
 - If the kid hears nothing, check the tablet's call volume (talk uses the voice stream, not the movie volume) and that Wi-Fi is up.
