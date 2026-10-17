@@ -1,7 +1,9 @@
 package com.nbaltas.nickos.master
 
 import com.nbaltas.nickos.link.Subnet
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -31,13 +33,20 @@ object PairFallback {
         val queue = ConcurrentLinkedQueue(hosts)
         val winner = AtomicReference<T?>(null)
         coroutineScope {
+            val workers = java.util.concurrent.CopyOnWriteArrayList<Job>()
             repeat(minOf(maxInFlight, hosts.size)) {
-                launch {
+                workers += launch {
                     while (isActive && winner.get() == null) {
                         val host = queue.poll() ?: break
                         val id = prober.probe(host, port) ?: continue
+                        // Another worker may have won while this probe ran: no more pair tries then.
+                        if (!isActive || winner.get() != null) break
                         val r = tryPair(id, host to port) ?: continue
-                        if (winner.compareAndSet(null, r)) queue.clear()
+                        if (winner.compareAndSet(null, r)) {
+                            queue.clear()
+                            val me = coroutineContext[Job]
+                            workers.forEach { if (it !== me) it.cancel() }
+                        }
                     }
                 }
             }

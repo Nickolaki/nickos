@@ -318,9 +318,18 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         netWatch = null
         discoveryListener?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
         discoveryListener = null
+        // Cancelling the loops cannot reach the blocking parts: close the links and the media server too.
         scope.coroutineContext[Job]?.children?.forEach { it.cancel() }
+        links.ids().forEach { id -> links.drop(id)?.close() }
+        try { server.stop() } catch (_: Exception) {}
+        // The role collector is cancelled above, so leaving Master gives the power settings back here.
+        powerRunner.stop()
+        powerRunner.release()
         started = false
     }
+
+    /** Waits at most [timeoutMs] for the car network removal that [stop] started. */
+    fun awaitStopped(timeoutMs: Long): Boolean = kotlinx.coroutines.runBlocking { carNet.awaitStopped(timeoutMs) }
 
     @Synchronized
     fun start() {

@@ -1,5 +1,6 @@
 package com.nbaltas.nickos.master
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -27,6 +28,34 @@ class PairFallbackTest {
         }
         assertEquals("paired", r)
         assertEquals(1, tries.get())
+    }
+
+    @Test fun outstandingProbesDoNotPairAfterTheWin() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val tries = AtomicInteger()
+        val r = PairFallback.sweep(listOf("192.168.1.10"), { host, _ ->
+            if (host.endsWith(".20")) "n20" else { gate.await(); "n-" + host }
+        }, 47470, maxInFlight = 30) { id, _ ->
+            tries.incrementAndGet()
+            gate.complete(Unit)
+            if (id == "n20") "paired" else "late"
+        }
+        assertEquals("paired", r)
+        assertEquals(1, tries.get())
+    }
+
+    @Test fun cancelledSweepPairsNothingMore() = runBlocking {
+        val tries = AtomicInteger()
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val job = async(kotlinx.coroutines.Dispatchers.Default) {
+            PairFallback.sweep(listOf("192.168.1.10"), { _, _ -> started.complete(Unit); kotlinx.coroutines.awaitCancellation() }, 47470, maxInFlight = 4) { _, _ ->
+                tries.incrementAndGet(); "x"
+            }
+        }
+        started.await()
+        job.cancel()
+        job.join()
+        assertEquals(0, tries.get())
     }
 
     @Test fun tryPairOnOpenHostsOnly() = runBlocking {
