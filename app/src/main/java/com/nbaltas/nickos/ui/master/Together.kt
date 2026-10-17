@@ -32,11 +32,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,7 +60,11 @@ import com.composables.icons.lucide.Tablet
 import com.composables.icons.lucide.Volume2
 import com.composables.icons.lucide.X
 import com.nbaltas.nickos.App
+import com.nbaltas.nickos.jellyfin.JfItem
+import com.nbaltas.nickos.master.DlState
+import com.nbaltas.nickos.master.JellyfinDownloads
 import com.nbaltas.nickos.node.LocalVideos
+import com.nbaltas.nickos.sync.JfTogether
 import com.nbaltas.nickos.sync.JobState
 import com.nbaltas.nickos.sync.Library
 import com.nbaltas.nickos.sync.LibraryItem
@@ -140,6 +146,9 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
     var segment by remember { mutableStateOf(initialSegment) }
     var openShow by remember { mutableStateOf<Show?>(null) }
     var openItem by remember { mutableStateOf<String?>(null) }
+    var openJf by remember { mutableStateOf<JfItem?>(null) }
+    val jfAccount by app.store.jellyfin.collectAsState()
+    val jf = remember(jfAccount) { master.jellyfin() }
 
     val library = remember(videosMap) { sync.library() }
     val order = remember(nodes) { listOf(Library.SELF) + nodes.map { it.node.id } }
@@ -160,6 +169,11 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             )
             return
         }
+    }
+
+    openJf?.let { pick ->
+        JfPickPanel(pick, nodes, library, master, onBack = { openJf = null })
+        return
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -199,7 +213,7 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         }
         Spacer(Modifier.height(16.dp))
         Segmented(
-            listOf("Movies" to null, "Shows" to null), segment,
+            listOf("Movies" to null, "Shows" to null, "Jellyfin" to null), segment,
             { segment = it; openShow = null },
             Modifier.padding(horizontal = 40.dp),
         )
@@ -214,6 +228,10 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this tablet are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
                 NickButton("Allow videos on this tablet", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, style = BtnStyle.PRIMARY, big = true)
             }
+            segment == 2 && jf == null -> CenterMessage("Connect Jellyfin", "Add your Jellyfin server in Settings to pick a movie or show and watch it together.") {
+                NickButton("Open Settings", { onSettings(1) }, style = BtnStyle.PRIMARY, big = true)
+            }
+            segment == 2 -> JellyfinBrowser(jf!!, jfAccount!!.userId, "together", null, onPick = { openJf = it })
             onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this tablet, show up here.") {
                 NickButton("All tablets", onBack, style = BtnStyle.GHOST, big = true)
             }
@@ -371,6 +389,202 @@ internal fun PickPanel(
         Spacer(Modifier.height(12.dp))
         val j = lacking.size
         if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = true, leading = Lucide.Send, enabled = sendBlocked == null)
+    }
+}
+
+/** One tablet's line in the Getting ready panel. [fraction] is null when there is no bar to show. */
+internal class JfRow(val id: String, val text: String, val fraction: Float?, val ready: Boolean, val failed: Boolean, val error: String? = null)
+
+/** What the Getting ready panel shows. [saveFraction] is the parent's save progress, null when it is not saving. */
+internal class JfPrep(val saveFraction: Float?, val saveError: String?, val rows: List<JfRow>, val stuck: String? = null)
+
+/** Pick a Jellyfin movie or episode, choose the tablets, save it, send it, and start it on all of them in sync. */
+@Composable
+internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<LibraryItem>, master: com.nbaltas.nickos.master.MasterRuntime, onBack: () -> Unit) {
+    val sync = master.sync
+    val transfer = master.transfer
+    val downloads = master.jfDownloads
+    val dlMap by downloads.progress.collectAsState()
+    @Suppress("UNUSED_VARIABLE") val jobsMap by transfer.jobs.collectAsState()
+    val dl = dlMap[item.id]
+    val lib = JellyfinDownloads.inLibrary(item, library, dl?.fid)
+    val owners = lib?.owners.orEmpty()
+    val online = nodes.filter { it.online }.map { it.node.id }.toSet()
+    val nameOf: (String) -> String = { id -> nodes.firstOrNull { it.node.id == id }?.node?.name ?: sync.kid(id) }
+    var selected by remember(item.id) { mutableStateOf(nodes.filter { it.online && it.status?.supportsSync == true }.map { it.node.id }.toSet()) }
+    var preparing by remember(item.id) { mutableStateOf(false) }
+    var started by remember(item.id) { mutableStateOf(false) }
+    var note by remember(item.id) { mutableStateOf<String?>(null) }
+    var stalled by remember(item.id) { mutableStateOf(false) }
+
+    var attempt by remember(item.id) { mutableStateOf(0) }
+
+    // Any progress in saving, sending or ownership resets the 60 s clock. Nothing for that long: say who is still awaited.
+    val progressSig = listOf(dl?.bytes ?: 0L, dl?.fid, owners, selected.map { id -> lib?.let { transfer.jobFor(id, it.fid)?.done } ?: 0L })
+    LaunchedEffect(progressSig) {
+        stalled = JfTogether.showStallPrompt(stalled, progressResumed = true, timedOut = false)
+    }
+    LaunchedEffect(preparing, started, progressSig, attempt) {
+        if (preparing && !started) {
+            delay(JfTogether.STALL_MS)
+            stalled = JfTogether.showStallPrompt(stalled, progressResumed = false, timedOut = true)
+        }
+    }
+
+    // Start the moment every tablet still online owns the file. Only once per tap, and never wait for an offline tablet.
+    LaunchedEffect(preparing, started, selected, owners, online) {
+        if (!preparing || started) return@LaunchedEffect
+        val step = JfTogether.step(selected, online, owners, started)
+        if (step.dropped.isNotEmpty()) {
+            selected = selected - step.dropped
+            note = JfTogether.droppedNote(step.dropped, selected.isNotEmpty(), nameOf)
+            if (selected.isEmpty()) preparing = false
+            return@LaunchedEffect
+        }
+        val go = step.start
+        if (go != null && lib != null) {
+            started = true
+            sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go)
+        }
+    }
+
+    val usable = JfTogether.usable(owners, online)
+    val resolving = dl?.state == DlState.DONE && lib == null
+    val stuck = JfTogether.stuck(
+        selected, owners, online,
+        saving = dl?.active == true || resolving,
+        saveFailed = dl?.state == DlState.FAILED, saveCancelled = dl?.state == DlState.CANCELLED,
+    ) ?: if (stalled) JfTogether.stallText(nodes.filter { it.node.id in selected && it.node.id !in owners }.map { it.node.name }) else null
+    val prep = if (!preparing) null else JfPrep(
+        saveFraction = dl?.takeIf { it.active }?.fraction,
+        saveError = dl?.takeIf { it.state == DlState.FAILED && usable.isEmpty() }?.err,
+        stuck = stuck,
+        rows = nodes.filter { it.node.id in selected }.map { n ->
+            val job = lib?.let { transfer.jobFor(n.node.id, it.fid) }
+            val failed = job != null && JobState.of(job.state) == JobState.FAILED
+            JfRow(
+                n.node.id, JfTogether.rowText(n.node.id in owners, job),
+                fraction = job?.takeIf { !failed }?.let { TogetherText.percent(it.done, it.size) / 100f },
+                ready = n.node.id in owners, failed = failed, error = job?.takeIf { failed }?.let { TogetherText.jobError(it.err, it.size) },
+            )
+        },
+    )
+    JfPickContent(
+        item = item, nodes = nodes, selected = selected, onToggle = { id, on -> selected = if (on) selected + id else selected - id },
+        prep = prep, note = note, onBack = onBack,
+        onPrimary = {
+            note = null
+            downloads.clear(item.id)
+            preparing = true
+            when (JfTogether.plan(selected, owners, online)) {
+                JfTogether.Plan.START_NOW -> {}
+                JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, selected) } ?: downloads.save(item, selected)
+                JfTogether.Plan.SAVE -> downloads.save(item, selected)
+            }
+        },
+        onRetryRow = { id -> attempt++; lib?.let { transfer.retry(it.fid, id) } },
+        onRetrySave = {
+            // Plan again from what is true now: send from an owner that is online, else save to this tablet.
+            note = null
+            attempt++
+            downloads.clear(item.id)
+            when (JfTogether.plan(selected, owners, online)) {
+                JfTogether.Plan.START_NOW -> {}
+                JfTogether.Plan.SEND -> lib?.let { transfer.send(it.fid, selected) } ?: downloads.save(item, selected)
+                JfTogether.Plan.SAVE -> downloads.save(item, selected)
+            }
+        },
+        onCancel = {
+            preparing = false
+            // Also after the save reports DONE: this stops the send that is waiting for the copy to show up.
+            downloads.cancel(item.id)
+            (lib?.fid ?: dl?.fid)?.let { fid -> selected.forEach { transfer.cancel(fid, it) } }
+        },
+    )
+}
+
+@Composable
+internal fun JfPickContent(
+    item: JfItem, nodes: List<NodeView>, selected: Set<String>, onToggle: (String, Boolean) -> Unit,
+    prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
+    onRetryRow: (String) -> Unit = {}, onRetrySave: () -> Unit = {}, onCancel: () -> Unit = {},
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
+        Chip(Modifier.clickable(onClick = onBack)) {
+            Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
+            Text("Jellyfin", style = body(16.sp, 700), color = C.text)
+        }
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            MovieThumb(null, item.displayTitle, Modifier.size(400.dp, 225.dp), showTitle = false)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (item.isEpisode) EyebrowText("${item.epCode} · ${item.name}")
+                Title(item.displayTitle, 44, lineHeight = 1.05f)
+                Muted(if (item.runMin > 0) minutesText(item.runMin) else "Length unknown", 18)
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+        if (prep == null) {
+            nodes.forEach { n ->
+                val capable = n.status?.supportsSync == true
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Avatar(n.node.name, n.node.color, n.node.avatar, 44.dp)
+                    Text(n.node.name, style = body(19.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                    when {
+                        !capable -> Muted("Update needed", 15)
+                        !n.online -> Muted("Offline", 15)
+                        else -> NickSwitch(n.node.id in selected) { on -> onToggle(n.node.id, on) }
+                    }
+                }
+            }
+            note?.let { Muted(it, 16, Modifier.padding(top = 8.dp)) }
+            Spacer(Modifier.height(20.dp))
+            val k = selected.size
+            NickButton(
+                if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
+                style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0,
+            )
+        } else {
+            Title("Getting ready", 30)
+            Spacer(Modifier.height(12.dp))
+            if (prep.saveFraction != null) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(44.dp))
+                    Text("Saving to this tablet", style = body(19.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                    ProgressBar(prep.saveFraction, Modifier.width(200.dp))
+                    Muted("${(prep.saveFraction * 100).toInt()}%", 15)
+                }
+            }
+            (prep.saveError ?: prep.stuck)?.let {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(it, style = body(15.sp, 500, 1.3f), color = if (prep.saveError != null) C.danger else C.text)
+                    NickButton("Try again", onRetrySave, style = BtnStyle.SECONDARY)
+                }
+            }
+            prep.rows.forEach { r ->
+                val n = nodes.firstOrNull { it.node.id == r.id } ?: return@forEach
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Avatar(n.node.name, n.node.color, n.node.avatar, 44.dp)
+                    Text(n.node.name, style = body(19.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                    if (r.failed) {
+                        Text(r.error ?: r.text, style = body(15.sp, 500, 1.3f), color = C.danger)
+                        NickButton("Try again", { onRetryRow(r.id) }, style = BtnStyle.SECONDARY)
+                    } else {
+                        if (r.fraction != null && !r.ready) ProgressBar(r.fraction, Modifier.width(200.dp))
+                        Muted(r.text, 15)
+                    }
+                }
+            }
+            note?.let { Muted(it, 16, Modifier.padding(top = 8.dp)) }
+            Spacer(Modifier.height(20.dp))
+            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, big = true, leading = Lucide.X)
+        }
     }
 }
 

@@ -55,6 +55,9 @@ import com.nbaltas.nickos.sync.SyncSession
 import com.nbaltas.nickos.sync.SyncState
 import com.nbaltas.nickos.ui.master.ControlScreen
 import com.nbaltas.nickos.ui.master.MasterHome
+import com.nbaltas.nickos.ui.master.JfPickContent
+import com.nbaltas.nickos.ui.master.JfPrep
+import com.nbaltas.nickos.ui.master.JfRow
 import com.nbaltas.nickos.ui.master.PickPanel
 import com.nbaltas.nickos.ui.master.SettingsScreen
 import com.nbaltas.nickos.ui.master.TAB_APPS
@@ -455,6 +458,44 @@ class DesignScreensTest {
         }
     }
 
+    private fun jfMovie() = com.nbaltas.nickos.jellyfin.JfItem(
+        "m1", "Captain Comet", "Movie", null, null, null, null, null, 90L * JfItem.TICKS_PER_MIN, 0, false, null, 2021, null, null, false, false, false, null, null,
+        container = "mkv", size = 1_000_000_000L,
+    )
+
+    @Test fun togetherJellyfinBrowse() {
+        addStatus("cccccccccccc", 23)
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
+        jellyfinShot("Together-Jellyfin-Browse", null, "Continue Watching", together = true)
+    }
+
+    @Test fun togetherJellyfinPick() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-Pick") {
+            val nodes = rememberNodeViews()
+            JfPickContent(jfMovie(), nodes, nodes.filter { it.online }.map { it.node.id }.toSet(), { _, _ -> }, prep = null, note = null, onBack = {}, onPrimary = {})
+        }
+    }
+
+    @Test fun togetherJellyfinGettingReady() {
+        addStatus("cccccccccccc", 23)
+        shot("Together-Jellyfin-GettingReady") {
+            val nodes = rememberNodeViews()
+            val on = nodes.filter { it.online }
+            val rows = on.mapIndexed { i, n ->
+                when (i) {
+                    0 -> JfRow(n.node.id, "Ready", null, ready = true, failed = false)
+                    1 -> JfRow(n.node.id, "42% · 420 MB of 1 GB", 0.42f, ready = false, failed = false)
+                    else -> JfRow(n.node.id, "Failed", null, ready = false, failed = true, error = "Not enough space (needs 1 GB, has 300 MB)")
+                }
+            }
+            JfPickContent(
+                jfMovie(), nodes, on.map { it.node.id }.toSet(), { _, _ -> },
+                prep = JfPrep(0.65f, null, rows), note = "Leo went offline, starting without them", onBack = {}, onPrimary = {},
+            )
+        }
+    }
+
     @Test fun togetherLibraryEmpty() = shot("Together-Library-Empty") { TogetherScreen({}, {}) }
 
     @Test fun togetherRemote() {
@@ -605,16 +646,23 @@ class DesignScreensTest {
         return server
     }
 
-    /** Runs the Control screen's Watch tab against [fakeJellyfin], opens the Jellyfin library, optionally taps [open], and saves the picture. */
+    /** Loads fixture rows in Control Watch or Together, optionally taps [open], and saves the loaded picture. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
-    private fun jellyfinShot(name: String, open: String?, waitFor: String) {
+    private fun jellyfinShot(name: String, open: String?, waitFor: String, together: Boolean = false) {
         val server = fakeJellyfin()
         try {
             app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
             app.store.upsertNode(app.store.nodes.value.first { it.id == "aaaaaaaaaaaa" }.copy(jfUserId = "u1", jfUserName = "Hailey"))
             androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
-                setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {}) } } }
-                onNodeWithTag("jellyfin-library").performClick()
+                setContent {
+                    NickTheme {
+                        Box(Modifier.fillMaxSize().background(C.bg)) {
+                            if (together) TogetherScreen({}, {}, initialSegment = 2)
+                            else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
+                        }
+                    }
+                }
+                if (!together) onNodeWithTag("jellyfin-library").performClick()
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
                 if (open != null) {

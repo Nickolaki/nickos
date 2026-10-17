@@ -27,6 +27,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.util.Random
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -347,6 +349,77 @@ class JellyfinDownloadsTest {
         assertFalse(said.first().isEmpty())
     }
 
+    @Test fun aSlowRescanStillSendsOnceTheFileShowsUp() {
+        // The file appears only after the third rescan, well past the first round of polls.
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans >= 3) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 2, waitSteps = 3, rescanRounds = 6,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1")), sent)
+        assertTrue(rescans >= 3)
+        assertTrue(said.isEmpty())
+    }
+
+    @Test fun cancelAfterDoneStopsThePendingSend() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans >= 3) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 20, waitSteps = 3, rescanRounds = 6,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("done") { lib.state("m1") == DlState.DONE }
+        lib.cancel("m1")
+        Thread.sleep(600)
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun retryAfterDoneThenCancelBeforeLibraryAppearsNeverSends() {
+        val resolving = CountDownLatch(1)
+        val appears = CountDownLatch(1)
+        val resolved = CountDownLatch(1)
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = {
+                if (rescans == 0) emptyList() else {
+                    resolving.countDown()
+                    check(appears.await(2, TimeUnit.SECONDS))
+                    listOf(landed()).also { resolved.countDown() }
+                }
+            },
+            send = { f, t -> sent += f to t }, waitStepMs = 2, waitSteps = 3,
+        )
+        lib.save(item(), setOf("kid1"))
+        try {
+            assertTrue(resolving.await(2, TimeUnit.SECONDS))
+            assertEquals(DlState.DONE, lib.state("m1"))
+            lib.save(item(), setOf("kid2"))
+            assertEquals(DlState.DONE, lib.state("m1"))
+            lib.cancel("m1")
+        } finally {
+            appears.countDown()
+        }
+        assertTrue(resolved.await(2, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertTrue(sent.isEmpty())
+        assertEquals(1, src.opens.size)
+        assertEquals(1, io.created)
+        assertNull(lib.progress.value.getValue("m1").fid)
+    }
+
+    @Test fun retryWhileFinishingMergesTargetsWithoutAnotherDownload() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { libraryNow },
+            send = { f, t -> sent += f to t }, waitStepMs = 5, waitSteps = 100,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("done") { lib.state("m1") == DlState.DONE }
+        lib.save(item(), setOf("kid2"))
+        libraryNow = listOf(landed())
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1", "kid2")), sent)
+        assertEquals(1, src.opens.size)
+    }
+
     @Test fun onTabletMatchesByFileNameOnThisTabletOnly() {
         val m = item()
         val name = Jellyfin.fileName(m)
@@ -355,6 +428,49 @@ class JellyfinDownloadsTest {
         assertFalse(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, n, 1, setOf("kid1"), null))))
         assertFalse(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, n + 1, 1, setOf(Library.SELF), null))))
         assertFalse(JellyfinDownloads.onTablet(m, emptyList()))
+    }
+
+    // ---- watch together from Jellyfin ----
+
+    private fun landed() = LibraryItem("fid9", "Heat", "Heat (1995).mkv", data.size.toLong(), 1, setOf(Library.SELF), null)
+
+    @Test fun sendToIsMergedIntoAnAlreadyQueuedDownload() {
+        src.onRead = { Thread.sleep(10) }
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans > 0) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 5, waitSteps = 40,
+        )
+        lib.save(item())
+        lib.save(item(), setOf("kid1"))
+        lib.save(item(), setOf("kid2"))
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1", "kid2")), sent)
+        assertEquals(1, src.opens.size)
+    }
+
+    @Test fun fidIsResolvedOnDoneEvenWithNobodyToSendTo() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { if (rescans > 0) listOf(landed()) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 5, waitSteps = 40,
+        )
+        lib.save(item())
+        waitFor("fid") { lib.progress.value["m1"]?.fid != null }
+        assertEquals("fid9", lib.progress.value.getValue("m1").fid)
+        assertEquals(DlState.DONE, lib.state("m1"))
+        assertTrue(sent.isEmpty())
+        assertTrue(said.isEmpty())
+    }
+
+    @Test fun inLibraryFindsTheCopyOnAnyTabletByFidThenByName() {
+        val m = item()
+        val n = data.size.toLong()
+        val onKid = LibraryItem("fk", "Heat", Jellyfin.fileName(m), n, 1, setOf("kid1"), null)
+        val other = LibraryItem("fo", "Other", "Other.mkv", n, 1, setOf(Library.SELF), null)
+        assertEquals(onKid, JellyfinDownloads.inLibrary(m, listOf(other, onKid)))
+        assertEquals(other, JellyfinDownloads.inLibrary(m, listOf(other, onKid), fid = "fo"))
+        assertEquals(onKid, JellyfinDownloads.inLibrary(m, listOf(other, onKid), fid = "missing"))
+        assertNull(JellyfinDownloads.inLibrary(m, listOf(other)))
+        assertNull(JellyfinDownloads.inLibrary(m, listOf(LibraryItem("fk", "Heat", Jellyfin.fileName(m), n + 1, 1, setOf("kid1"), null))))
     }
 
     // ---- fix round ----

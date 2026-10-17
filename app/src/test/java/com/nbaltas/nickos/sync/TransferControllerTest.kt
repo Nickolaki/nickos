@@ -97,6 +97,36 @@ class TransferControllerTest {
     }
 
     @Test
+    fun `cancel before the source is serving prevents transfer and sync start`() {
+        has(H, comet)
+        t.sendNow("f2", setOf(L))
+        assertEquals(1, port.cmds(H, "serve").size)
+        t.cancel("f2", L)
+        t.onMessage(H, SyncMessages.encodeServing("f2", true, 47471, "k3y", 900_000_000))
+        jobs(L, job("f2", JobState.WAITING, err = "source"))
+        assertEquals(1, port.cmds(L, "cancel").size)
+        assertTrue(port.cmds(L, "fetch").isEmpty())
+        assertTrue(port.cmds(L, "sync").isEmpty())
+        assertNull(sync.session.value)
+        assertEquals("cancelled copies are not restarted by job reports", 1, port.cmds(H, "serve").size)
+    }
+
+    @Test
+    fun `cancel during serving dispatch skips that target and preserves other targets`() {
+        has(H, comet)
+        t.sendNow("f2", setOf(L, M))
+        port.onSend = { id, message ->
+            if (id == L && message.optString("c") == "fetch") t.cancel("f2", M)
+        }
+        t.onMessage(H, SyncMessages.encodeServing("f2", true, 47471, "k3y", 900_000_000))
+        assertEquals(1, port.cmds(L, "fetch").size)
+        assertEquals(1, port.cmds(M, "cancel").size)
+        assertTrue(port.cmds(M, "fetch").isEmpty())
+        assertTrue(port.cmds(M, "sync").isEmpty())
+        assertNull(sync.session.value)
+    }
+
+    @Test
     fun `a serving answer nobody asked for sends nothing`() {
         has(H, comet)
         t.onMessage(H, SyncMessages.encodeServing("f2", true, 47471, "k3y", 900_000_000))
