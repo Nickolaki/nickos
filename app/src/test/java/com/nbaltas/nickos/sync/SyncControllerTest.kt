@@ -370,4 +370,19 @@ class SyncControllerTest {
         assertEquals("Hailey", c.kid(H))
         assertEquals("A tablet", c.kid("nobody"))
     }
+
+    @Test
+    fun `the artwork address stays with the session through seek, pause and resume`() {
+        link(H, 5000)
+        c.start("f1", "Star Harbour", 600_000, setOf(H), art = "http://jf.local/art.jpg")
+        assertEquals("http://jf.local/art.jpg", c.session.value!!.art)
+        c.seek(120_000)
+        assertEquals("http://jf.local/art.jpg", c.session.value!!.art)
+        c.pause()
+        assertEquals("http://jf.local/art.jpg", c.session.value!!.art)
+        c.resume()
+        assertEquals("http://jf.local/art.jpg", c.session.value!!.art)
+        c.start("f1", "Star Harbour", 600_000, setOf(H))
+        assertNull(c.session.value!!.art)
+    }
 }

@@ -14,6 +14,8 @@ data class SyncSession(
     val playing: Boolean,
     /** The stream address (token inside) when the tablets stream this movie; null for a file on the tablets. Never log it. */
     val url: String? = null,
+    /** An image URL for the parent's player when there is no decoded thumb. Never persisted, never sent to nodes. */
+    val art: String? = null,
 ) {
     /** True when the tablets stream this movie from Jellyfin. */
     val streaming: Boolean get() = JfStream.isStreamFid(fid)

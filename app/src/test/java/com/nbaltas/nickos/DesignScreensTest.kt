@@ -533,6 +533,35 @@ class DesignScreensTest {
         shot("Together-Stream-Waiting") { TogetherScreen({}, {}) }
     }
 
+    @Test fun togetherJellyfinPlaying() {
+        val m = app.master
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(m.sync, "_session", SyncSession(
+            "jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true,
+            "http://jf.local/x", "http://jf.local/Items/m1/Images/Primary",
+        ))
+        set(m.sync, "_states", mapOf(
+            "aaaaaaaaaaaa" to NodeSyncState(SyncState.PLAYING, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+            "bbbbbbbbbbbb" to NodeSyncState(SyncState.PLAYING, 12 * 60_000L, now, 90 * 60_000L, 1f, null, now),
+        ))
+        set(m.sync, "_offsets", mapOf(
+            "aaaaaaaaaaaa" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+            "bbbbbbbbbbbb" to ClockInfo(0L, 20L, SyncQuality.GOOD),
+        ))
+        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
+    }
+
+    /** The tablet's own Now Playing tab during a Jellyfin stream: poster and title from the Jellyfin artwork. */
+    @Test fun controlNowPlayingJellyfinTogether() {
+        val m = app.master
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(m.sync, "_session", SyncSession(
+            "jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true,
+            "http://jf.local/x", "http://jf.local/Items/m1/Images/Primary",
+        ))
+        shot("Control-NowPlaying-JellyfinTogether") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
+    }
+
     @Test fun togetherLibraryEmpty() = shot("Together-Library-Empty") { TogetherScreen({}, {}) }
 
     @Test fun togetherRemote() {

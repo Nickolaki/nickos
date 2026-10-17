@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -105,9 +106,9 @@ fun fmtMs(ms: Long): String {
  * [Artwork]'s placeholder underneath, the Bitmap and the title drawn above it when there is one.
  */
 @Composable
-fun MovieThumb(bitmap: Bitmap?, title: String, modifier: Modifier, radius: Dp = 18.dp, titleSize: Int = 18, showTitle: Boolean = true) {
+fun MovieThumb(bitmap: Bitmap?, title: String, modifier: Modifier, radius: Dp = 18.dp, titleSize: Int = 18, showTitle: Boolean = true, art: String? = null) {
     Box(modifier.clip(RoundedCornerShape(radius))) {
-        Artwork(null, title, Modifier.fillMaxSize(), radius = radius, titleSize = titleSize, showTitle = showTitle && bitmap == null)
+        Artwork(art, title, Modifier.fillMaxSize(), radius = radius, titleSize = titleSize, showTitle = showTitle && bitmap == null && art == null)
         if (bitmap != null) {
             Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (showTitle) {
@@ -500,7 +501,8 @@ internal fun JfPickPanel(
         }
         if (go != null && lib != null) {
             started = true
-            sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go)
+            sync.start(lib.fid, item.displayTitle, lib.durMs.takeIf { it > 0 } ?: (item.runTicks / 10_000), go,
+                art = master.jellyfin()?.let { it.landscape(item) ?: it.poster(item) })
         }
     }
 
@@ -548,7 +550,7 @@ internal fun JfPickPanel(
         label = JfTogether.streamLabel(streamOk.size, streamNo.map(nameOf)),
         onStream = {
             note = null
-            sync.start(client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item))
+            sync.start(client.streamFid(item), item.displayTitle, item.runTicks / 10_000, streamOk, client.authedStreamUrl(item), art = client.landscape(item) ?: client.poster(item))
         },
         failures = failures.values.filter { it.fid == client.streamFid(item) }.map { f ->
             JfStreamFail(f.id, TogetherText.streamError(nameOf(f.id), f.code), f.canSaveInstead)
@@ -722,7 +724,9 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
         val narrow = maxWidth < 1000.dp
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-            thumbs[s.fid]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f) }
+            val bg = thumbs[s.fid]
+            if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
+            else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.35f), radius = 0.dp, showTitle = false)
         }
         val content = @Composable {
             Column(Modifier.padding(40.dp)) {
@@ -730,7 +734,7 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
                 Spacer(Modifier.height(20.dp))
                 // The poster sits left of the title block, as on the tablet pick panel.
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    MovieThumb(thumbs[s.fid], s.title, Modifier.height(if (narrow) 160.dp else 225.dp).aspectRatio(16f / 9f), showTitle = false)
+                    MovieThumb(thumbs[s.fid], s.title, Modifier.height(if (narrow) 160.dp else 225.dp).aspectRatio(16f / 9f), showTitle = false, art = s.art)
                     Column(Modifier.weight(1f)) {
                         EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
                         Title(s.title, if (narrow) 40 else 64, lineHeight = 1.0f)
@@ -833,10 +837,18 @@ fun TabletRemote(nodeId: String) {
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-        thumbs[s.fid]?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f) }
+        val bg = thumbs[s.fid]
+        if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
+        else if (s.art != null) Artwork(s.art, s.title, Modifier.fillMaxSize().alpha(0.35f), radius = 0.dp, showTitle = false)
         Column(Modifier.padding(32.dp)) {
-            EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
-            Title(s.title, 40, lineHeight = 1.0f)
+            // The poster sits left of the title, as on the Watch together player: a local frame, else the Jellyfin artwork.
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                MovieThumb(bg, s.title, Modifier.height(135.dp).aspectRatio(16f / 9f), showTitle = false, art = s.art)
+                Column(Modifier.weight(1f)) {
+                    EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
+                    Title(s.title, 40, lineHeight = 1.0f)
+                }
+            }
             Spacer(Modifier.height(20.dp))
             if (s.durMs > 0) {
                 NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })

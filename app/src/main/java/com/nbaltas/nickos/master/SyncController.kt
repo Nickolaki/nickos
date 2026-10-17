@@ -291,7 +291,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
      * Play [fid] from the start on [nodes] (one tablet is simply a group of one). Replaces any
      * session; tablets of the old one that are not in the new one are stopped.
      */
-    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>, url: String? = null) {
+    fun start(fid: String, title: String, durMs: Long, nodes: Set<String>, url: String? = null, art: String? = null) {
         synchronized(lock) {
             // A stream goes only to tablets that are online, sealed and say stream1. The rest are left out.
             val go = if (url == null) nodes else nodes.filter { eligible(it, true) }.toSet()
@@ -308,7 +308,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
             wait = GroupWait(streaming).also { it.start(go) }
             genAt = now
             _waiting.value = null
-            _session.value = SyncSession(fid, title, durMs, go, 0, now + lead, true, url)
+            _session.value = SyncSession(fid, title, durMs, go, 0, now + lead, true, url, art)
             planAll(now)
         }
     }
@@ -389,7 +389,7 @@ class SyncController(private val port: MasterPort, private val clock: () -> Long
     fun playNext(): Boolean {
         val s = _session.value ?: return false
         val n = next() ?: return false
-        start(n.fid, n.title, n.durMs, s.nodes)
+        start(n.fid, n.title, n.durMs, s.nodes, art = s.art)
         return true
     }
 
