@@ -207,7 +207,13 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         com.nbaltas.nickos.node.AndroidJobIo(ctx, videos, WifiHold(ctx)), JellyfinSource { jellyfin() }, scope,
         rescan = { sync.rescanSelf() }, library = { sync.library() }, send = { fid, to -> transfer.send(fid, to) },
         say = { say(it) },
-    )
+        ledger = object : PendingLedger {
+            private val prefs = ctx.getSharedPreferences("jf_pending", Context.MODE_PRIVATE)
+            override fun all(): Set<String> = prefs.getStringSet("dests", emptySet())!!.toSet()
+            @Synchronized override fun add(dest: String) { prefs.edit().putStringSet("dests", all() + dest).commit() }
+            @Synchronized override fun remove(dest: String) { prefs.edit().putStringSet("dests", all() - dest).commit() }
+        },
+    ).also { d -> scope.launch(Dispatchers.IO) { d.cleanLeftovers() } }
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
 

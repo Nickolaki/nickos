@@ -394,7 +394,7 @@ private fun SeriesDetail(v: NodeView, jf: Jellyfin, uid: String, id: String, onB
                 val eps = episodes
                 if (eps == null) Muted("Loading episodes…", 18)
                 else Column(Modifier.then(if (narrow) Modifier else Modifier.verticalScroll(rememberScrollState())), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val todo = eps.filter { e -> !JellyfinDownloads.onTablet(e, lib) && dl[e.id]?.active != true }
+                    val todo = eps.filter { e -> !JellyfinDownloads.onTablet(e, lib) && dl[e.id]?.let { it.active || it.state == DlState.DONE } != true }
                     if (todo.isNotEmpty()) NickButton(
                         "Save season", { downloads.saveAll(todo) }, Modifier.widthIn(max = 320.dp), leading = Lucide.Download,
                         sub = "${todo.size} episode${if (todo.size == 1) "" else "s"} to this tablet",
@@ -453,8 +453,11 @@ private fun EpisodeRow(
                 Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(18.dp))
                 Text("On this tablet", style = body(15.sp, 600), color = C.muted)
             }
-            else -> Box(Modifier.size(44.dp).clip(CircleShape).background(C.surface2).clickable(onClick = save), contentAlignment = Alignment.Center) {
-                Icon(Lucide.Download, "Save to this tablet", tint = C.text, modifier = Modifier.size(18.dp))
+            else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (dl?.state == DlState.FAILED) Text("Couldn't save", style = body(15.sp, 600), color = C.muted)
+                Box(Modifier.size(44.dp).clip(CircleShape).background(C.surface2).clickable(onClick = save), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Download, "Save to this tablet", tint = C.text, modifier = Modifier.size(18.dp))
+                }
             }
         }
         when {
@@ -558,8 +561,8 @@ internal fun SaveActions(
             progress?.active == true -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ProgressBar(progress.fraction, height = 8.dp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val pct = if (progress.total > 0) "${(progress.fraction * 100).toInt()}%" else if (progress.state == DlState.QUEUED) "Waiting" else "Saving"
-                    Muted(if (progress.state == DlState.QUEUED) "Waiting to save · $pct" else "Saving to this tablet · $pct", 16, Modifier.weight(1f), weight = 600)
+                    val label = if (progress.state == DlState.QUEUED) "Waiting to save" else "Saving to this tablet"
+                    Muted(if (progress.state == DlState.DOWNLOADING && progress.total > 0) "$label · ${(progress.fraction * 100).toInt()}%" else label, 16, Modifier.weight(1f), weight = 600)
                     NickButton("Cancel", cancel, leading = Lucide.X)
                 }
             }
@@ -568,7 +571,7 @@ internal fun SaveActions(
                     Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
                     Text("On this tablet", style = body(17.sp, 700), color = C.text)
                 }
-                NickButton("Send to $tablet", send, Modifier.fillMaxWidth(), big = true, leading = Lucide.Send)
+                if (onTablet) NickButton("Send to $tablet", send, Modifier.fillMaxWidth(), big = true, leading = Lucide.Send)
             }
             else -> {
                 if (progress?.state == DlState.FAILED) Muted(progress.err ?: "Couldn't save it", 15, weight = 600)

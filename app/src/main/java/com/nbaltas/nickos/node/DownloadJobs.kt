@@ -1,11 +1,14 @@
 package com.nbaltas.nickos.node
 
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
 import android.os.StatFs
@@ -107,6 +110,8 @@ interface JobIo {
     fun discard(dest: String)
     /** Keep the CPU and WiFi awake while a copy runs. Called again while running to renew. */
     fun awake(on: Boolean)
+    /** Remove half-made copies this app left in the movie folder, but only those in [mine] (destinations it made and never finished). */
+    fun dropPending(mine: Set<String>) {}
 }
 
 /**
@@ -563,6 +568,25 @@ class AndroidJobIo(private val ctx: Context, private val videos: LocalVideos, pr
 
     override fun discard(dest: String) {
         if (dest.startsWith("content:")) resolver.delete(Uri.parse(dest), null, null) else File(dest).delete()
+    }
+
+    override fun dropPending(mine: Set<String>) {
+        try {
+            val owned = HashSet<String>()
+            if (Build.VERSION.SDK_INT >= 29) {
+                val q = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.Video.Media.IS_PENDING} = 1 AND ${MediaStore.Video.Media.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?")
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(ctx.packageName, "${Environment.DIRECTORY_MOVIES}/${LocalVideos.DOWNLOAD_DIR}%"))
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                }
+                resolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Video.Media._ID), q, null)?.use { c ->
+                    while (c.moveToNext()) owned += ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, c.getLong(0)).toString()
+                }
+            }
+            for (d in mine) {
+                if (d.startsWith("content:")) { if (d in owned) discard(d) } else File(d).delete()
+            }
+        } catch (e: Exception) { Log.w(TAG, "dropPending: ${e.message}") }
     }
 
     @Synchronized

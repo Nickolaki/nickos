@@ -65,6 +65,15 @@ class JellyfinDownloadsTest {
         override fun publish(dest: String, name: String) = File(dest).renameTo(File(File(dest).parentFile, name)).also { if (it) published += name }
         override fun discard(dest: String) { discarded += dest; File(dest).delete() }
         override fun awake(on: Boolean) {}
+        var dropped: Set<String>? = null
+        override fun dropPending(mine: Set<String>) { dropped = mine }
+    }
+
+    class FakeLedger : PendingLedger {
+        val set = LinkedHashSet<String>()
+        override fun all(): Set<String> = set.toSet()
+        override fun add(dest: String) { set += dest }
+        override fun remove(dest: String) { set -= dest }
     }
 
     /** Serves [data]. [breakAt]: the first read past this many bytes throws once. [ranged]: honours Range. */
@@ -77,10 +86,18 @@ class JellyfinDownloadsTest {
         @Volatile var active = 0
         @Volatile var most = 0
         var onRead: (String) -> Unit = {}
+        /** What to say in Content-Range on a 206, given the start we serve from. Null: the honest one. */
+        var rangeHeader: ((Int) -> String?)? = null
+        /** The next Range request is answered with this code and no body (416). */
+        var rangeRefusal: Int? = null
+        /** Reads block until the abort is triggered, then throw. */
+        var stall = false
+        @Volatile var aborted = false
 
-        override fun open(item: JfItem, from: Long): SourceReply {
+        override fun open(item: JfItem, from: Long, abort: Abort): SourceReply {
             opens += item.id to from
             failWith?.let { throw it }
+            if (from > 0) rangeRefusal?.let { rangeRefusal = null; return SourceReply(it, null, 0) }
             if (code != 200) return SourceReply(code, null, 0)
             val start = if (ranged) from.toInt() else 0
             val slice = data.copyOfRange(start, data.size)
@@ -91,6 +108,7 @@ class JellyfinDownloadsTest {
                 override fun read() = raw.read()
                 override fun read(b: ByteArray, off: Int, len: Int): Int {
                     onRead(item.id)
+                    if (stall) { while (!aborted) Thread.sleep(2); throw IOException("Canceled") }
                     if (breakAt >= 0 && !broke && start + served >= breakAt) { broke = true; breakAt = -1; throw IOException("reset") }
                     val n = raw.read(b, off, minOf(len, 8192))
                     if (n > 0) served += n
@@ -98,7 +116,10 @@ class JellyfinDownloadsTest {
                 }
             }
             active++; most = maxOf(most, active)
-            return SourceReply(if (ranged && from > 0) 206 else 200, stream, slice.size.toLong()) { active-- }
+            abort.set { aborted = true }
+            val partial = ranged && from > 0
+            val range = if (partial) (rangeHeader?.invoke(start) ?: "bytes $start-${data.size - 1}/${data.size}") else null
+            return SourceReply(if (partial) 206 else 200, stream, slice.size.toLong(), range) { active-- }
         }
     }
 
@@ -139,7 +160,7 @@ class JellyfinDownloadsTest {
 
     @Test fun episodeNameAndFolder() {
         val e = item(id = "e1", name = "Pilot", type = "Episode", series = "Bluey", season = 2, index = 5, year = null)
-        assertEquals("S02E05 - Pilot.mkv", Jellyfin.fileName(e))
+        assertEquals("Bluey S02E05 - Pilot.mkv", Jellyfin.fileName(e))
         assertEquals("Bluey", Jellyfin.subfolder(e))
     }
 
@@ -147,7 +168,7 @@ class JellyfinDownloadsTest {
         assertEquals("Who Am I 1 (2000).mkv", Jellyfin.fileName(item(name = "Who: Am I? <1>", year = 2000)))
         assertEquals("ABC (1995).mkv", Jellyfin.fileName(item(name = "A/B\\C")))
         val e = item(name = "What?", type = "Episode", series = "Is: This/That", season = 1, index = 1)
-        assertEquals("S01E01 - What.mkv", Jellyfin.fileName(e))
+        assertEquals("Is ThisThat S01E01 - What.mkv", Jellyfin.fileName(e))
         assertEquals("Is ThisThat", Jellyfin.subfolder(e))
     }
 
@@ -169,7 +190,7 @@ class JellyfinDownloadsTest {
         q.save(item(id = "e1", name = "Pilot", type = "Episode", series = "Bluey", season = 1, index = 1))
         waitFor("done") { q.state("e1") == DlState.DONE }
         assertEquals(listOf<String?>("Bluey"), io.folders)
-        assertTrue(File(root, "Bluey/S01E01 - Pilot.mkv").exists())
+        assertTrue(File(root, "Bluey/Bluey S01E01 - Pilot.mkv").exists())
     }
 
     @Test fun oneAtATime() {
@@ -284,7 +305,7 @@ class JellyfinDownloadsTest {
     @Test fun saveAllSkipsWhatIsAlreadyOnTheTablet() {
         val a = item("a", "One", type = "Episode", series = "S", season = 1, index = 1)
         val b = item("b", "Two", type = "Episode", series = "S", season = 1, index = 2)
-        libraryNow = listOf(LibraryItem("f1", "S", Jellyfin.fileName(a), 1, 1, setOf(Library.SELF), null))
+        libraryNow = listOf(LibraryItem("f1", "S", Jellyfin.fileName(a), data.size.toLong(), 1, setOf(Library.SELF), null))
         val q = queue()
         q.saveAll(listOf(a, b))
         waitFor("b done") { q.state("b") == DlState.DONE }
@@ -329,8 +350,217 @@ class JellyfinDownloadsTest {
     @Test fun onTabletMatchesByFileNameOnThisTabletOnly() {
         val m = item()
         val name = Jellyfin.fileName(m)
-        assertTrue(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, 1, 1, setOf(Library.SELF), null))))
-        assertFalse(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, 1, 1, setOf("kid1"), null))))
+        val n = data.size.toLong()
+        assertTrue(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, n, 1, setOf(Library.SELF), null))))
+        assertFalse(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, n, 1, setOf("kid1"), null))))
+        assertFalse(JellyfinDownloads.onTablet(m, listOf(LibraryItem("f", "Heat", name, n + 1, 1, setOf(Library.SELF), null))))
         assertFalse(JellyfinDownloads.onTablet(m, emptyList()))
+    }
+
+    // ---- fix round ----
+
+    private fun partial(q: JellyfinDownloads, id: String = "m1") = q.progress.value.getValue(id)
+
+    @Test fun resumeWithWrongContentRangeStartsOver() {
+        src.breakAt = 100_000
+        src.rangeHeader = { "bytes 5-${data.size - 1}/${data.size}" } // not where we left off
+        val q = queue()
+        q.save(item())
+        waitFor("done") { q.state("m1") == DlState.DONE }
+        assertTrue(src.opens.size >= 3) // first, the resume with the wrong start, then from 0
+        assertEquals(0L, src.opens.last().second)
+        assertArrayEquals(data, File(root, "Heat (1995).mkv").readBytes())
+    }
+
+    @Test fun resumeWithoutContentRangeStartsOver() {
+        src.breakAt = 100_000
+        src.rangeHeader = { "garbage" }
+        val q = queue()
+        q.save(item())
+        waitFor("done") { q.state("m1") == DlState.DONE }
+        assertTrue(src.opens.size >= 3) // first, the resume, then from 0
+        assertEquals(0L, src.opens.last().second)
+        assertArrayEquals(data, File(root, "Heat (1995).mkv").readBytes())
+    }
+
+    @Test fun rangeNotSatisfiableRestarts() {
+        src.breakAt = 100_000
+        src.rangeRefusal = 416
+        val q = queue()
+        q.save(item())
+        waitFor("done") { q.state("m1") == DlState.DONE }
+        assertEquals(0L, src.opens.last().second)
+        assertArrayEquals(data, File(root, "Heat (1995).mkv").readBytes())
+    }
+
+    @Test fun totalComesFromContentRange() {
+        src.breakAt = 100_000
+        val q = queue()
+        q.save(item(size = 0))
+        waitFor("done") { q.state("m1") == DlState.DONE }
+        assertEquals(data.size.toLong(), partial(q).total)
+    }
+
+    @Test fun aStreamThatEndsShortIsNotDone() {
+        // Jellyfin says 300000 bytes but the server only ever has fewer.
+        val short = data.copyOf(100_000)
+        val s = DownloadSource { _, from, abort ->
+            src.opens += "m1" to from
+            SourceReply(if (from > 0) 206 else 200, ByteArrayInputStream(short.copyOfRange(from.toInt(), short.size)), data.size - from,
+                if (from > 0) "bytes $from-${data.size - 1}/${data.size}" else null)
+        }
+        val q = JellyfinDownloads(io, s, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, say = { said += it }, waitStepMs = 2, retries = 2)
+        q.save(item())
+        waitFor("failed") { q.state("m1") == DlState.FAILED }
+        assertTrue(io.published.isEmpty())
+        assertTrue(root.walkTopDown().none { it.isFile })
+    }
+
+    @Test fun cancelStopsAStalledStream() {
+        src.stall = true
+        val q = queue()
+        q.save(item())
+        waitFor("reading") { src.opens.isNotEmpty() }
+        Thread.sleep(30)
+        q.cancel("m1")
+        waitFor("cancelled") { q.state("m1") == DlState.CANCELLED }
+        assertTrue(src.aborted)
+        assertEquals(0, src.active)
+        assertTrue(root.walkTopDown().none { it.isFile })
+    }
+
+    @Test fun anyExceptionDiscardsThePendingFileAfterClosingIt() {
+        val s = DownloadSource { _, _, _ -> throw IllegalStateException("boom") }
+        val led = FakeLedger()
+        val q = JellyfinDownloads(io, s, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, ledger = led, waitStepMs = 2)
+        q.save(item())
+        waitFor("failed") { q.state("m1") == DlState.FAILED }
+        assertEquals(1, io.discarded.size)
+        assertTrue(root.walkTopDown().none { it.isFile })
+        assertTrue(led.set.isEmpty())
+    }
+
+    @Test fun closesTheStreamBeforeDiscarding() {
+        var openAtDiscard = -1
+        val s = DownloadSource { it2, from, a -> src.open(it2, from, a) }
+        val failing = object : JobIo by io {
+            override fun discard(dest: String) { openAtDiscard = src.active; io.discard(dest) }
+        }
+        src.code = 200
+        src.onRead = { throw IllegalStateException("boom") }
+        val q = JellyfinDownloads(failing, s, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, waitStepMs = 2)
+        q.save(item())
+        waitFor("failed") { q.state("m1") == DlState.FAILED }
+        assertEquals(0, openAtDiscard)
+    }
+
+    @Test fun leftoversFromAKilledRunAreDroppedAtStart() {
+        val led = FakeLedger().apply { add("content://media/1"); add("/x/y.part") }
+        val q = JellyfinDownloads(io, src, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, ledger = led)
+        q.cleanLeftovers()
+        assertEquals(setOf("content://media/1", "/x/y.part"), io.dropped)
+        assertTrue(led.set.isEmpty())
+    }
+
+    @Test fun sendsOnlyTheFileWithTheExactNameAndSize() {
+        val name = "Heat (1995).mkv"
+        val n = data.size.toLong()
+        val other = LibraryItem("old", "Heat", name, n + 7, 1, setOf(Library.SELF), null)
+        val mine = LibraryItem("new", "Heat", "Heat (1995) (2).mkv", n, 1, setOf(Library.SELF), null)
+        libraryNow = listOf(other)
+        var looks = 0
+        val q = JellyfinDownloads(
+            io, src, scope, rescan = {}, library = { if (++looks > 4) listOf(other, mine) else listOf(other) },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 2, waitSteps = 40,
+        )
+        q.save(item(), setOf("kid1"))
+        waitFor("sent") { sent.isNotEmpty() }
+        // The old different file kept its name, so this copy was saved as "(2)" and is the one sent.
+        assertTrue(File(root, "Heat (1995) (2).mkv").exists())
+        assertEquals(listOf("new" to setOf("kid1")), sent)
+    }
+
+    @Test fun ambiguousMatchIsNotSent() {
+        val n = data.size.toLong()
+        val a = LibraryItem("a", "Heat", "Heat (1995).mkv", n, 1, setOf(Library.SELF), null)
+        val b = LibraryItem("b", "Heat", "Heat (1995).mkv", n, 1, setOf(Library.SELF), null)
+        var looks = 0
+        val q = JellyfinDownloads(
+            io, src, scope, rescan = {}, library = { if (++looks > 2) listOf(a, b) else emptyList() },
+            send = { f, t -> sent += f to t }, say = { said += it }, waitStepMs = 2, waitSteps = 40,
+        )
+        q.save(item(size = 0), setOf("kid1"))
+        waitFor("said") { said.isNotEmpty() }
+        assertTrue(sent.isEmpty())
+        assertEquals("Heat (1995).mkv is saved. Send it from Watch together", said.last())
+    }
+
+    @Test fun waitsForTheRescanBeforeLookingForTheCopy() {
+        val n = data.size.toLong()
+        var scanned = false
+        val q = JellyfinDownloads(
+            io, src, scope, rescan = { Thread { Thread.sleep(40); scanned = true }.start() },
+            library = { if (scanned) listOf(LibraryItem("f", "Heat", "Heat (1995).mkv", n, 1, setOf(Library.SELF), null)) else emptyList() },
+            send = { f, t -> sent += f to t }, waitStepMs = 5, waitSteps = 100,
+        )
+        q.save(item(), setOf("kid1"))
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals("f", sent[0].first)
+    }
+
+    @Test fun unknownSizeSkipsTheSpaceCheck() {
+        io.space = 1_000 // far less than SPARE
+        val s = DownloadSource { _, _, _ -> SourceReply(200, ByteArrayInputStream(data), 0) } // no Content-Length
+        val q = JellyfinDownloads(io, s, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, waitStepMs = 2)
+        q.save(item(size = 0))
+        waitFor("done") { q.state("m1") == DlState.DONE }
+    }
+
+    @Test fun seasonQueueSkipsQueuedAndDoneAndCapsAtOneHundred() {
+        val eps = (1..130).map { item("e$it", "Ep $it", type = "Episode", series = "S", season = 1, index = it, size = 10) }
+        val s = DownloadSource { _, _, _ -> SourceReply(200, ByteArrayInputStream(ByteArray(10)), 10) }
+        val q = JellyfinDownloads(io, s, scope, rescan = {}, library = { emptyList() }, send = { _, _ -> }, say = { said += it }, waitStepMs = 2)
+        q.saveAll(eps)
+        assertEquals(100, q.progress.value.size)
+        assertTrue(said.any { it.contains("first 100 of 130") })
+        waitFor("all done") { q.progress.value.values.all { it.state == DlState.DONE } }
+        q.saveAll(eps.take(100)) // all done already: nothing is queued twice
+        assertEquals(100, q.progress.value.size)
+        assertTrue(q.progress.value.values.all { it.state == DlState.DONE })
+    }
+
+    // ---- file names ----
+
+    @Test fun namesAreCappedAndTidy() {
+        val long = "A".repeat(300)
+        val n = Jellyfin.fileName(item(name = long, year = 2001))
+        assertEquals(120 + ".mkv".length, n.length)
+        assertTrue(n.endsWith(" (2001).mkv"))
+        assertEquals("hack (2002).mkv", Jellyfin.fileName(item(name = "...hack", year = 2002)))
+        assertEquals("Show.mkv", Jellyfin.fileName(item(name = "Show . .", year = null)))
+        val ep = item(name = "B".repeat(300), type = "Episode", series = "C".repeat(300), season = 1, index = 2)
+        assertTrue(Jellyfin.fileName(ep).removeSuffix(".mkv").length <= 120)
+        assertTrue(Jellyfin.fileName(ep).contains(" S01E02 - "))
+        assertEquals(120, Jellyfin.subfolder(ep)!!.length)
+        assertEquals("Shows", Jellyfin.subfolder(item(type = "Episode", series = "...", season = 1, index = 1)))
+    }
+
+    @Test fun episodesOfTwoShowsDoNotCollide() {
+        val a = item("a", "Pilot", type = "Episode", series = "Alpha", season = 1, index = 1)
+        val b = item("b", "Pilot", type = "Episode", series = "Beta", season = 1, index = 1)
+        assertEquals("Alpha S01E01 - Pilot.mkv", Jellyfin.fileName(a))
+        assertEquals("Beta S01E01 - Pilot.mkv", Jellyfin.fileName(b))
+        val lib = listOf(LibraryItem("f", "t", Jellyfin.fileName(a), data.size.toLong(), 1, setOf(Library.SELF), null))
+        assertTrue(JellyfinDownloads.onTablet(a, lib))
+        assertFalse(JellyfinDownloads.onTablet(b, lib))
+    }
+
+    @Test fun neverOverwritesADifferentExistingFile() {
+        val taken = listOf(
+            LibraryItem("1", "t", "Heat (1995).mkv", 5, 1, setOf(Library.SELF), null),
+            LibraryItem("2", "t", "Heat (1995) (2).mkv", 5, 1, setOf(Library.SELF), null),
+        )
+        assertEquals("Heat (1995) (3).mkv", JellyfinDownloads.uniqueName("Heat (1995).mkv", taken))
+        assertEquals("Other.mkv", JellyfinDownloads.uniqueName("Other.mkv", taken))
     }
 }
