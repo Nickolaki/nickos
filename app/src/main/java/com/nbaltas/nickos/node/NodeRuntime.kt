@@ -224,7 +224,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         override fun show(text: String): Boolean {
             _talkBanner.value = text
             return when (way()) {
-                TalkBannerPolicy.Way.OVERLAY -> overlay.refreshTalkAndWait()
+                TalkBannerPolicy.Way.OVERLAY -> overlay.refreshTalkAndWait() || talkNotice.show(text).also { noticeUp = it }
                 // The banner cannot be drawn over another app without the permission: say it with a loud notification instead.
                 TalkBannerPolicy.Way.NOTICE -> talkNotice.show(text).also { noticeUp = it }
                 TalkBannerPolicy.Way.NONE -> false
