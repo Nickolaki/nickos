@@ -417,11 +417,18 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
     var note by remember(item.id) { mutableStateOf<String?>(null) }
     var stalled by remember(item.id) { mutableStateOf(false) }
 
-    // Any change in what is saving, sending or owned resets the 60 s clock. Nothing for that long: say who is still awaited.
-    val progressSig = listOf(dl?.state, dl?.bytes, dl?.fid, owners, selected.map { id -> lib?.let { transfer.jobFor(id, it.fid)?.done } })
-    LaunchedEffect(preparing, started, progressSig) {
-        stalled = false
-        if (preparing && !started) { delay(JfTogether.STALL_MS); stalled = true }
+    var attempt by remember(item.id) { mutableStateOf(0) }
+
+    // Any progress in saving, sending or ownership resets the 60 s clock. Nothing for that long: say who is still awaited.
+    val progressSig = listOf(dl?.bytes ?: 0L, dl?.fid, owners, selected.map { id -> lib?.let { transfer.jobFor(id, it.fid)?.done } ?: 0L })
+    LaunchedEffect(progressSig) {
+        stalled = JfTogether.showStallPrompt(stalled, progressResumed = true, timedOut = false)
+    }
+    LaunchedEffect(preparing, started, progressSig, attempt) {
+        if (preparing && !started) {
+            delay(JfTogether.STALL_MS)
+            stalled = JfTogether.showStallPrompt(stalled, progressResumed = false, timedOut = true)
+        }
     }
 
     // Start the moment every tablet still online owns the file. Only once per tap, and never wait for an offline tablet.
@@ -475,11 +482,11 @@ internal fun JfPickPanel(item: JfItem, nodes: List<NodeView>, library: List<Libr
                 JfTogether.Plan.SAVE -> downloads.save(item, selected)
             }
         },
-        onRetryRow = { id -> lib?.let { transfer.retry(it.fid, id) } },
+        onRetryRow = { id -> attempt++; lib?.let { transfer.retry(it.fid, id) } },
         onRetrySave = {
             // Plan again from what is true now: send from an owner that is online, else save to this tablet.
             note = null
-            stalled = false
+            attempt++
             downloads.clear(item.id)
             when (JfTogether.plan(selected, owners, online)) {
                 JfTogether.Plan.START_NOW -> {}

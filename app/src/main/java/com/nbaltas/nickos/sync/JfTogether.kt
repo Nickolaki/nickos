@@ -22,6 +22,10 @@ object JfTogether {
     /** No progress at all for this long while getting ready: say who is still being waited for. */
     const val STALL_MS = 60_000L
 
+    /** Retrying alone keeps the action available; only actual progress dismisses it. */
+    fun showStallPrompt(wasShown: Boolean, progressResumed: Boolean, timedOut: Boolean): Boolean =
+        !progressResumed && (wasShown || timedOut)
+
     fun stallText(waiting: List<String>): String = "Still waiting for ${TogetherText.join(waiting)}"
 
     /**

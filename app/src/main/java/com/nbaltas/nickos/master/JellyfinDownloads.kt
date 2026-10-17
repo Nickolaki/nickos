@@ -90,7 +90,7 @@ class JellyfinDownloads(
     private val rescanRounds: Int = 6,
     private val ledger: PendingLedger? = null,
 ) {
-    private class Entry(val item: JfItem, val sendTo: MutableSet<String>, val sub: String?) {
+    private class Entry(val item: JfItem, val sendTo: MutableSet<String>, val sub: String?, val generation: Long) {
         @Volatile var cancelled = false
         val abort = Abort()
     }
@@ -108,20 +108,26 @@ class JellyfinDownloads(
     private var running = false
     /** Saved copies whose send is still waiting for the library to show them, by item id. Cancel reaches them here. */
     private val finishing = HashMap<String, Entry>()
+    private val generations = HashMap<String, Long>()
 
     private val _progress = MutableStateFlow<Map<String, Progress>>(emptyMap())
     /** Progress by Jellyfin item id. An id is absent until it is first queued. */
     val progress: StateFlow<Map<String, Progress>> = _progress
 
-    /** Queue [item] to be saved. When it is already queued or running, only adds [sendTo] to it. [sendTo] are tablet ids to send it to when it lands. */
+    /** Queue [item] to be saved. When it is already queued, running or resolving, only adds [sendTo] to it. [sendTo] are tablet ids to send it to when it lands. */
     fun save(item: JfItem, sendTo: Set<String> = emptySet()) {
         synchronized(lock) {
-            if (_progress.value[item.id]?.active == true) {
-                val live = current?.takeIf { it.item.id == item.id } ?: queue.firstOrNull { it.item.id == item.id }
-                live?.sendTo?.addAll(sendTo)
+            val live = finishing[item.id]
+                ?: current?.takeIf { it.item.id == item.id && !it.cancelled &&
+                    (_progress.value[item.id]?.active == true || _progress.value[item.id]?.state == DlState.DONE) }
+                ?: queue.firstOrNull { it.item.id == item.id }
+            if (live != null && !live.cancelled) {
+                live.sendTo.addAll(sendTo)
                 return
             }
-            queue.addLast(Entry(item, sendTo.toMutableSet(), Jellyfin.subfolder(item)))
+            val generation = (generations[item.id] ?: 0L) + 1
+            generations[item.id] = generation
+            queue.addLast(Entry(item, sendTo.toMutableSet(), Jellyfin.subfolder(item), generation))
             set(item.id, Progress(0, item.size, DlState.QUEUED))
             if (!running) { running = true; scope.launch { drain() } }
         }
@@ -145,15 +151,13 @@ class JellyfinDownloads(
     fun cancel(itemId: String) {
         val live: Entry?
         synchronized(lock) {
-            finishing[itemId]?.let { it.cancelled = true; it.sendTo.clear() }
-            val cur = current
-            if (cur != null && cur.item.id == itemId) { cur.cancelled = true; live = cur }
-            else {
-                live = null
-                val q = queue.firstOrNull { it.item.id == itemId } ?: return
-                queue.remove(q)
-                set(itemId, Progress(0, q.item.size, DlState.CANCELLED))
-            }
+            generations[itemId] = (generations[itemId] ?: 0L) + 1
+            finishing.remove(itemId)?.let { it.cancelled = true; it.sendTo.clear() }
+            live = current?.takeIf { it.item.id == itemId }
+            live?.let { it.cancelled = true; it.sendTo.clear() }
+            val queued = queue.filter { it.item.id == itemId }
+            queued.forEach { it.cancelled = true; it.sendTo.clear(); queue.remove(it) }
+            queued.firstOrNull()?.let { set(itemId, Progress(0, it.item.size, DlState.CANCELLED)) }
         }
         live?.abort?.trigger()
     }
@@ -317,13 +321,19 @@ class JellyfinDownloads(
      * file with exactly this name and size, and only when there is exactly one.
      */
     private suspend fun finish(e: Entry, name: String, bytes: Long) {
-        rescan()
         // Beside the queue, so a slow rescan never holds up the next download. Cancel reaches it through [finishing].
-        synchronized(lock) { finishing[e.item.id] = e }
+        synchronized(lock) {
+            if (!valid(e)) return
+            finishing[e.item.id] = e
+        }
+        rescan()
         scope.launch {
             try { resolve(e, name, bytes) } finally { synchronized(lock) { if (finishing[e.item.id] === e) finishing.remove(e.item.id) } }
         }
     }
+
+    /** Called only while holding [lock]. */
+    private fun valid(e: Entry) = !e.cancelled && generations[e.item.id] == e.generation
 
     /** Looks for the saved copy until it is found or the pick is cancelled, rescanning again after each [waitSteps] polls, up to [rescanRounds] times. */
     private suspend fun resolve(e: Entry, name: String, bytes: Long) {
@@ -331,13 +341,16 @@ class JellyfinDownloads(
         for (round in 0 until rescanRounds) {
             if (round > 0) rescan()
             repeat(waitSteps) {
-                if (e.cancelled) return
+                if (synchronized(lock) { !valid(e) }) return
                 val hits = library().filter { Library.SELF in it.owners && it.name == name && it.size == bytes }
                 if (hits.size == 1) {
                     val fid = hits[0].fid
-                    _progress.update { m -> m[id]?.let { m + (id to it.copy(fid = fid)) } ?: m }
-                    val to = synchronized(lock) { if (e.cancelled) emptySet() else e.sendTo.toSet() }
-                    if (to.isNotEmpty()) send(fid, to)
+                    synchronized(lock) {
+                        if (!valid(e)) return
+                        _progress.update { m -> m[id]?.let { m + (id to it.copy(fid = fid)) } ?: m }
+                        val to = e.sendTo.toSet()
+                        if (to.isNotEmpty()) send(fid, to)
+                    }
                     return
                 }
                 if (hits.size > 1) { if (e.sendTo.isNotEmpty()) say("$name is saved. Send it from Watch together"); return }

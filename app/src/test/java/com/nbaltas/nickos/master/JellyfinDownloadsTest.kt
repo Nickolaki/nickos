@@ -27,6 +27,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.util.Random
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -370,6 +372,52 @@ class JellyfinDownloadsTest {
         lib.cancel("m1")
         Thread.sleep(600)
         assertTrue(sent.isEmpty())
+    }
+
+    @Test fun retryAfterDoneThenCancelBeforeLibraryAppearsNeverSends() {
+        val resolving = CountDownLatch(1)
+        val appears = CountDownLatch(1)
+        val resolved = CountDownLatch(1)
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = {
+                if (rescans == 0) emptyList() else {
+                    resolving.countDown()
+                    check(appears.await(2, TimeUnit.SECONDS))
+                    listOf(landed()).also { resolved.countDown() }
+                }
+            },
+            send = { f, t -> sent += f to t }, waitStepMs = 2, waitSteps = 3,
+        )
+        lib.save(item(), setOf("kid1"))
+        try {
+            assertTrue(resolving.await(2, TimeUnit.SECONDS))
+            assertEquals(DlState.DONE, lib.state("m1"))
+            lib.save(item(), setOf("kid2"))
+            assertEquals(DlState.DONE, lib.state("m1"))
+            lib.cancel("m1")
+        } finally {
+            appears.countDown()
+        }
+        assertTrue(resolved.await(2, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertTrue(sent.isEmpty())
+        assertEquals(1, src.opens.size)
+        assertEquals(1, io.created)
+        assertNull(lib.progress.value.getValue("m1").fid)
+    }
+
+    @Test fun retryWhileFinishingMergesTargetsWithoutAnotherDownload() {
+        val lib = JellyfinDownloads(
+            io, src, scope, rescan = { rescans++ }, library = { libraryNow },
+            send = { f, t -> sent += f to t }, waitStepMs = 5, waitSteps = 100,
+        )
+        lib.save(item(), setOf("kid1"))
+        waitFor("done") { lib.state("m1") == DlState.DONE }
+        lib.save(item(), setOf("kid2"))
+        libraryNow = listOf(landed())
+        waitFor("sent") { sent.isNotEmpty() }
+        assertEquals(listOf("fid9" to setOf("kid1", "kid2")), sent)
+        assertEquals(1, src.opens.size)
     }
 
     @Test fun onTabletMatchesByFileNameOnThisTabletOnly() {

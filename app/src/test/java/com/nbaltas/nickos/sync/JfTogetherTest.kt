@@ -40,6 +40,18 @@ class JfTogetherTest {
         assertEquals(60_000L, JfTogether.STALL_MS)
     }
 
+    @Test fun twoDispatchFailuresWithoutProgressKeepTheStallPrompt() {
+        var shown = JfTogether.showStallPrompt(false, progressResumed = false, timedOut = true)
+        repeat(2) {
+            // Try again restarts the clock, but the dispatch produces no progress.
+            shown = JfTogether.showStallPrompt(shown, progressResumed = false, timedOut = false)
+            assertTrue(shown)
+            shown = JfTogether.showStallPrompt(shown, progressResumed = false, timedOut = true)
+            assertTrue(shown)
+        }
+        assertEquals(false, JfTogether.showStallPrompt(shown, progressResumed = true, timedOut = false))
+    }
+
     @Test fun startsTheMomentEveryoneOwnsIt() {
         assertNull(JfTogether.step(kids, kids, setOf(Library.SELF, "a"), started = false).start)
         val s = JfTogether.step(kids, kids, setOf(Library.SELF, "a", "b"), started = false)
