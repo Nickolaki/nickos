@@ -33,8 +33,11 @@ data class LinkedNode(
     /** The power settings the parent last chose for this tablet; null if never chosen. Sent again on every connect. */
     val powerWake: Boolean? = null,
     val powerOffMin: Int? = null,
+    /** The touch lock the parent last chose for this tablet (true: touch is off); null if never chosen. Sent again on every connect. */
+    val touchOff: Boolean? = null,
 ) {
     fun toJson() = JSONObject().apply {
+        put("touchOff", touchOff ?: JSONObject.NULL)
         put("landscape", landscape ?: JSONObject.NULL)
         put("powerWake", powerWake ?: JSONObject.NULL)
         put("powerOffMin", powerOffMin ?: JSONObject.NULL)
@@ -55,6 +58,7 @@ data class LinkedNode(
             landscape = if (!o.has("landscape") || o.isNull("landscape")) null else o.optBoolean("landscape"),
             powerWake = if (!o.has("powerWake") || o.isNull("powerWake")) null else o.optBoolean("powerWake"),
             powerOffMin = if (!o.has("powerOffMin") || o.isNull("powerOffMin")) null else o.optInt("powerOffMin"),
+            touchOff = if (!o.has("touchOff") || o.isNull("touchOff")) null else o.optBoolean("touchOff"),
         )
     }
 }
@@ -398,6 +402,16 @@ class Store(context: Context) {
         return true
     }
 
+    private val _touchOff = MutableStateFlow(p.getBoolean("touchOff", false))
+    /** The parent turned touch off for this kid tablet. Kept across reboots and app updates. */
+    val touchOff: StateFlow<Boolean> = _touchOff
+    /** True when the choice reached the disk; only then does the app act on it. */
+    fun setTouchOff(v: Boolean): Boolean {
+        val ok = p.edit().putBoolean("touchOff", v).commit()
+        if (ok) _touchOff.value = v
+        return ok
+    }
+
     private val _landscape = MutableStateFlow(p.getBoolean("landscapeLock", false))
     /** The parent locked this kid tablet to landscape. Kept across reboots. */
     val landscapeLock: StateFlow<Boolean> = _landscape
@@ -466,7 +480,7 @@ class Store(context: Context) {
             if (screenTimeout != null) putInt("powerSavedTimeout", screenTimeout)
         }.apply()
         _powerWake.value = false; _powerOffMin.value = 0
-        _masterHomeOptIn.value = false; _landscape.value = false; _kidLockDone.value = false
+        _masterHomeOptIn.value = false; _landscape.value = false; _touchOff.value = false; _kidLockDone.value = false
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
         _masters.value = emptyList(); _allowed.value = emptyList(); _lockedApp.value = null; _locked.value = null

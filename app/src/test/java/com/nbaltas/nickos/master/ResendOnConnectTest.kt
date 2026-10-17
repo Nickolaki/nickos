@@ -93,6 +93,21 @@ class ResendOnConnectTest {
         }
     }
 
+    @Test fun `the touch choice is stored and sent again on every connect`() {
+        app.store.upsertNode(LinkedNode(id, "Noa", 0, "initial", "tok"))
+        Link().use { first ->
+            claim(first.master)
+            app.master.setTouchOff(id, true)
+            assertEquals(true, NetMessages.parseTouch(first.node.read(deadlineMs = 3000)))
+        }
+        assertEquals(true, com.nbaltas.nickos.data.Store(ctx).nodes.value.single { it.id == id }.touchOff)
+        Link().use { second ->
+            claim(second.master)
+            app.master.sendIntent(id)
+            assertEquals(true, NetMessages.parseTouch(second.node.read(deadlineMs = 3000)))
+        }
+    }
+
     @Test fun `old stored tablets without the field still load`() {
         val o = LinkedNode("c", "n", 1, "initial", "t").toJson().apply { remove("landscape") }
         assertNull(LinkedNode.from(o).landscape)
