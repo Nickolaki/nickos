@@ -162,6 +162,25 @@ object TogetherText {
     /** Why a tablet could not play. */
     fun error(err: String?): String = if (err == "missing") "Can't find this movie on the tablet" else "Can't play this file"
 
+    /** What the parent is told when tablet [name] cannot play a streamed movie. [code] is a [com.nbaltas.nickos.master.StreamFail] code. */
+    fun streamError(name: String, code: String): String = when (code) {
+        "cant_reach" -> "$name can't reach Jellyfin"
+        "auth" -> "Jellyfin turned $name's tablet away"
+        "timeout" -> "$name's tablet is too slow for streaming"
+        else -> "$name's tablet can't play this one"
+    }
+
+    /** "Waiting for Leo", "Waiting for Leo and Mia", "Waiting for Leo, Mia and Zoe". */
+    fun waitingFor(names: List<String>): String = "Waiting for " + if (names.isEmpty()) "a tablet" else join(names)
+
+    /** The brief's wording said "him"; the tablet's owner is not known to be a he, so this says "them". */
+    fun tooSlow(name: String): String = "$name is too slow, carrying on without them"
+
+    fun cantStreamYet(name: String): String = "$name can't stream yet"
+
+    const val STREAM_HINT = "Streaming needs good WiFi. For long drives, save to tablets."
+    const val SAVE_INSTEAD = "Save to tablets instead"
+
     const val IN_SYNC_MS = 250L
     const val STALE_MS = 5000L
     private const val MB = 1024L * 1024

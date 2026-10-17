@@ -12,7 +12,14 @@ data class SyncSession(
     val anchorPos: Long,
     val anchorAt: Long,
     val playing: Boolean,
+    /** The stream address (token inside) when the tablets stream this movie; null for a file on the tablets. Never log it. */
+    val url: String? = null,
 ) {
+    /** True when the tablets stream this movie from Jellyfin. */
+    val streaming: Boolean get() = JfStream.isStreamFid(fid)
+
+    override fun toString() = "SyncSession(fid=$fid, nodes=$nodes, playing=$playing, stream=${url != null})"
+
     /**
      * Where playback should be at master-clock time [now]. Before [anchorAt] (the lead time after
      * Play, a seek or a resume) every tablet is holding at [anchorPos], so that is the answer.
@@ -25,7 +32,9 @@ data class SyncSession(
 }
 
 /** What a Node is told: play [fid] so that at its own clock time [at] it is at position [pos]. */
-data class SyncCmd(val fid: String, val pos: Long, val at: Long, val title: String)
+data class SyncCmd(val fid: String, val pos: Long, val at: Long, val title: String, val url: String? = null) {
+    override fun toString() = "SyncCmd(fid=$fid, pos=$pos, at=$at, stream=${url != null})"
+}
 
 object SyncPlan {
     /**
@@ -37,6 +46,6 @@ object SyncPlan {
         val targetMasterTime = now + leadMs
         val pos = if (session.playing) session.expectedPos(targetMasterTime) else session.anchorPos
         val at = targetMasterTime + nodeOffset
-        return SyncCmd(session.fid, pos, at, session.title)
+        return SyncCmd(session.fid, pos, at, session.title, session.url)
     }
 }

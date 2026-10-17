@@ -1,6 +1,7 @@
 package com.nbaltas.nickos.node
 
 import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -12,10 +13,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import com.nbaltas.nickos.sync.DriftAction
 import com.nbaltas.nickos.sync.DriftPolicy
+import com.nbaltas.nickos.sync.JfStream
 import com.nbaltas.nickos.sync.PlayerState
+import com.nbaltas.nickos.sync.StreamError
 import com.nbaltas.nickos.sync.SyncMessages
 import com.nbaltas.nickos.sync.SyncState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,12 +89,19 @@ class SyncPlayer(
     private val startRunnable = Runnable { begin() }
     private val closeRunnable = Runnable { doStop() }
     private val tickRunnable = Runnable { tick() }
+    /** The first load of a stream did not become ready in time. */
+    private val loadTimeout = Runnable { if (fid != null && err == null && !readyOnce) fail(StreamError.CANT_REACH) }
+
+    /** The stream address of the loaded movie, or null for a file. Memory only; carries a token, never logged. */
+    private var streamUrl: String? = null
+    private var readyOnce = false
+    private var rebufferSince = 0L
 
     /** `sync`: load [SyncMessages.SyncCmdMsg.fid] if it is not loaded yet, then follow the anchor. */
     fun onSync(msg: SyncMessages.SyncCmdMsg) {
         val at = forgetGate.now()
-        // Looked up here, off the main thread: a miss rescans the library.
-        val video = videos.find(msg.fid, rescan = false) ?: videos.find(msg.fid)
+        // A streamed movie has no file here. Otherwise looked up here, off the main thread: a miss rescans the library.
+        val video = if (msg.url != null) null else videos.find(msg.fid, rescan = false) ?: videos.find(msg.fid)
         // Bring the player to the front for a new movie or a resume, not for the minute re-anchor.
         if (msg.fid != fid || !playing) try {
             device.wake()
@@ -158,14 +169,24 @@ class SyncPlayer(
         if (msg.fid != fid || err != null || ended) {
             fid = msg.fid
             err = null; ended = false; started = false
+            readyOnce = false; rebufferSince = 0L
+            main.removeCallbacks(loadTimeout)
             policy.reset()
-            if (video == null) return fail("missing")
+            // Held in memory for this movie only: never saved, dropped on stop and on failure.
+            streamUrl = msg.url
+            if (msg.url == null && JfStream.isStreamFid(msg.fid)) return fail(StreamError.CANT_REACH)
+            if (msg.url == null && video == null) return fail("missing")
             val p = player()
             try {
                 p.playWhenReady = false
-                p.setMediaItem(MediaItem.fromUri(video.uri))
+                p.setMediaItem(MediaItem.fromUri(msg.url?.let { Uri.parse(it) } ?: video!!.uri))
                 p.prepare()
-            } catch (e: Exception) { Log.w(TAG, "load", e); return fail("play") }
+            } catch (e: Exception) {
+                // Not the exception itself: its text can hold the stream address.
+                Log.w(TAG, "load failed: ${e.javaClass.simpleName}")
+                return fail(if (msg.url != null) StreamError.UNSUPPORTED else "play")
+            }
+            if (msg.url != null) main.postDelayed(loadTimeout, StreamError.LOAD_TIMEOUT_MS)
             main.removeCallbacks(tickRunnable)
             main.postDelayed(tickRunnable, TICK_MS)
         }
@@ -221,6 +242,14 @@ class SyncPlayer(
         if (fid == null) return
         val p = exo
         if (p != null && err == null && !ended) {
+            if (streamUrl != null && readyOnce) {
+                // A stream that stops filling for too long has failed; the group is not held for it past that.
+                if (p.playbackState == Player.STATE_BUFFERING) {
+                    val now = clock()
+                    if (rebufferSince == 0L) rebufferSince = now
+                    else if (now - rebufferSince > StreamError.REBUFFER_TIMEOUT_MS) return fail(StreamError.TIMEOUT)
+                } else rebufferSince = 0L
+            }
             if (playing && isLocked()) localPause()
             if (playing && started && p.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
                 val now = clock()
@@ -251,14 +280,17 @@ class SyncPlayer(
     private fun fail(code: String) {
         err = code
         playing = false; started = false
-        main.removeCallbacks(startRunnable)
-        try { exo?.stop() } catch (_: Exception) {}
+        main.removeCallbacks(startRunnable); main.removeCallbacks(loadTimeout)
+        try { exo?.let { it.stop(); if (streamUrl != null) it.clearMediaItems() } } catch (_: Exception) {}
+        streamUrl = null
         publish()
         main.postDelayed(closeRunnable, CLOSE_MS)
     }
 
     private fun doStop() {
         main.removeCallbacks(startRunnable); main.removeCallbacks(closeRunnable); main.removeCallbacks(tickRunnable)
+        main.removeCallbacks(loadTimeout)
+        streamUrl = null; readyOnce = false; rebufferSince = 0L
         val had = fid
         try { exo?.let { it.stop(); it.clearMediaItems(); it.setPlaybackSpeed(1f) } } catch (e: Exception) { Log.w(TAG, "stop", e) }
         fid = null
@@ -277,7 +309,7 @@ class SyncPlayer(
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (fid == null) return
-                if (state == Player.STATE_READY) arm()
+                if (state == Player.STATE_READY) { readyOnce = true; main.removeCallbacks(loadTimeout); arm() }
                 if (state == Player.STATE_ENDED && !ended && err == null) {
                     ended = true; playing = false; started = false
                     main.postDelayed(closeRunnable, CLOSE_MS)
@@ -287,7 +319,13 @@ class SyncPlayer(
 
             override fun onPlayerError(error: PlaybackException) {
                 Log.w(TAG, "player: ${error.errorCodeName}")
-                if (fid != null && err == null) fail("play")
+                if (fid != null && err == null) {
+                    if (streamUrl == null) return fail("play")
+                    var http = 0
+                    var c: Throwable? = error.cause
+                    while (c != null && http == 0) { if (c is HttpDataSource.InvalidResponseCodeException) http = c.responseCode; c = c.cause }
+                    fail(StreamError.code(error.errorCode, http))
+                }
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -315,7 +353,8 @@ class SyncPlayer(
             err != null -> SyncState.ERROR
             ended -> SyncState.ENDED
             isLocked() -> SyncState.LOCKED
-            !playing -> SyncState.PAUSED
+            // A stream held for the group still says "buffering" until it has enough, so the Master knows when to go on.
+            !playing -> if (streamUrl != null && (p == null || p.playbackState != Player.STATE_READY)) SyncState.BUFFERING else SyncState.PAUSED
             p == null || p.playbackState != Player.STATE_READY -> if (started) SyncState.BUFFERING else SyncState.LOADING
             started -> SyncState.PLAYING
             else -> SyncState.READY
