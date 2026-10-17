@@ -739,7 +739,7 @@ private fun AboutSection() {
         HomeScreenRow()
         NickButton(if (confirmReset) "Tap again: forget every tablet and start over" else "Reset this tablet", {
             if (confirmReset) {
-                if (EntrySwitch.enableMain(ctx)) app.store.resetAll()
+                if (EntrySwitch.enableMain(ctx)) com.nbaltas.nickos.RoleReset.run(ctx, app)
             } else confirmReset = true
         }, style = BtnStyle.DANGER)
     }

@@ -203,6 +203,7 @@ class DesignScreensTest {
     // ---- setup ----
     @Test fun setupWelcome() = shot("Setup-Welcome") { Welcome {} }
     @Test fun setupRole() = shot("Setup-Role") { RoleScreen({}, {}, {}) }
+    @Config(sdk = [24]) @Test fun setupRoleAndroid7() = shot("Setup-Role-Android7") { RoleScreen({}, {}, {}) }
     @Test fun nodeName() {
         app.store.setName("Hailey's Tablet")
         shot("Node-Name") { NodeNameScreen({}) {} }

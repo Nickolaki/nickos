@@ -309,6 +309,19 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
 
     fun jellyfin(): Jellyfin? = store.jellyfin.value?.let { Jellyfin(it, displayName, store.deviceId) }
 
+    /** Leaving the Master role: the group, discovery, network watch, sweep and every loop stop. A later [start] brings them back. */
+    @Synchronized
+    fun stop() {
+        carNet.stop()
+        sweep.stop()
+        netWatch?.stop()
+        netWatch = null
+        discoveryListener?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
+        discoveryListener = null
+        scope.coroutineContext[Job]?.children?.forEach { it.cancel() }
+        started = false
+    }
+
     @Synchronized
     fun start() {
         // Idempotent, and outside the guard below: after a reset the Master starts again without a new process.
@@ -443,11 +456,19 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
             val host = a.substringBeforeLast(':').takeIf { ':' in a } ?: a
             host to (a.substringAfterLast(':', "").toIntOrNull() ?: Wire.PORT)
         }
+        val startedAt = System.currentTimeMillis()
+        var swept = false
         withTimeoutOrNull(15_000) {
             while (true) {
                 val targets = found.entries() + listOfNotNull(typed?.let { "" to it })
                 val tries = targets.map { (id, addr) -> async { tryPair(id, addr, code) } }
                 tries.awaitAll().firstOrNull { it != null }?.let { return@withTimeoutOrNull it }
+                // NSD found nothing and no address was typed: one sweep of the /24 for tablets mDNS cannot reach.
+                if (PairFallback.due(System.currentTimeMillis() - startedAt, found.entries().size, typed != null, swept)) {
+                    swept = true
+                    PairFallback.sweep(ownIps(), SocketProber(), Wire.PORT) { id, addr -> tryPair(id, addr, code) }
+                        ?.let { return@withTimeoutOrNull it }
+                }
                 delay(1500)
             }
             @Suppress("UNREACHABLE_CODE") null
