@@ -113,6 +113,19 @@ class CamLayoutTest {
     }
 
     @Test
+    fun `three feeds on a phone are one full width tile over two halves`() {
+        val f = CamLayout.rects(Mode.GRID, 3, 400f, 900f, gap = 10f, wide = false, maxCols = 2, stackThree = true)
+        assertEquals(400f, f[0].w, eps)
+        assertEquals(195f, f[1].w, eps)
+        assertEquals(195f, f[2].w, eps)
+        assertEquals(f[1].y, f[2].y, eps)
+        assertEquals(f[0].h, f[1].h, eps)
+        assertEquals(400f, f[2].x + f[2].w, eps)
+        // Without the phone flag the grid is unchanged.
+        assertEquals(195f, CamLayout.rects(Mode.GRID, 3, 400f, 900f, gap = 10f, wide = false, maxCols = 2)[0].w, eps)
+    }
+
+    @Test
     fun `a phone grid never goes past two columns`() {
         val f = CamLayout.rects(Mode.GRID, 5, 400f, 900f, gap = 10f, wide = false, maxCols = 2)
         assertEquals(195f, f[0].w, eps)

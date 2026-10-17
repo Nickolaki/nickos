@@ -262,16 +262,20 @@ fun NickLogo(size: Dp) {
 fun SetupHeader(step: String?, onBack: (() -> Unit)?) {
     if (LocalPhone.current) {
         // Phone: one 64dp row, back + a small mark and name, the step label small on the right. Nothing competes with the title below.
-        Row(
-            Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight).padding(horizontal = PhoneMetrics.gutter),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
-        ) {
-            if (onBack != null) BackButton(onBack)
-            NickLogo(28.dp)
-            Text("NickOS", style = disp(18.sp), color = C.text)
-            Spacer(Modifier.weight(1f))
-            if (step != null) Text(step, style = body(14.sp, 600), color = C.muted, textAlign = TextAlign.End, modifier = Modifier.weight(2f, fill = false))
+        // The step fills the rest of the row and is right-aligned to the gutter; it never wraps. At large font sizes it drops to its own line.
+        val dropped = LocalDensity.current.fontScale >= 1.3f
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.headerHeight).padding(horizontal = PhoneMetrics.gutter),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+            ) {
+                if (onBack != null) BackButton(onBack)
+                NickLogo(28.dp)
+                Text("NickOS", style = disp(18.sp), color = C.text)
+                if (step != null && !dropped) Text(step, style = body(14.sp, 600), color = C.muted, textAlign = TextAlign.End, maxLines = 1, softWrap = false, modifier = Modifier.weight(1f))
+            }
+            if (step != null && dropped) Text(step, style = body(14.sp, 600), color = C.muted, textAlign = TextAlign.End, maxLines = 1, softWrap = false, modifier = Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter))
         }
         return
     }

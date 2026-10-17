@@ -29,6 +29,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
@@ -54,10 +62,20 @@ class TileTalk(
  * can end, including this button leaving the screen mid press.
  */
 @Composable
-private fun Modifier.holdToTalk(onPress: () -> Unit, onRelease: (Boolean) -> Unit): Modifier {
+private fun Modifier.holdToTalk(label: String, talking: Boolean, onPress: () -> Unit, onRelease: (Boolean) -> Unit): Modifier {
     val down by rememberUpdatedState(onPress)
     val up by rememberUpdatedState(onRelease)
-    return pointerInput(Unit) {
+    val isTalking by rememberUpdatedState(talking)
+    // Screen readers cannot hold a finger down: activating the control starts talking and activating it again stops.
+    // Touch timing is the raw press below, untouched.
+    val toggle = { if (isTalking) up(false) else down() }
+    return semantics {
+        role = Role.Button
+        contentDescription = label
+        stateDescription = if (talking) "Talking" else "Ready"
+        onClick(if (talking) "Stop talking" else "Start talking") { toggle(); true }
+        customActions = listOf(CustomAccessibilityAction(if (talking) "Stop talking" else "Start talking") { toggle(); true })
+    }.pointerInput(Unit) {
         detectTapGestures(onPress = {
             down()
             var cancelled = true
@@ -75,7 +93,7 @@ fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, 
             Modifier.height(52.dp).clip(RoundedCornerShape(26.dp))
                 .background(if (bar.talking) C.accent else C.surface2)
                 .alpha(if (bar.enabled || bar.talking) 1f else 0.5f)
-                .holdToTalk(onPress, onRelease)
+                .holdToTalk(bar.button, bar.talking, onPress, onRelease)
                 .padding(horizontal = 22.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -99,7 +117,7 @@ private fun PhoneTalkBar(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean)
             Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp))
                 .background(bg)
                 .alpha(if (bar.enabled || bar.talking) 1f else 0.5f)
-                .holdToTalk(onPress, onRelease)
+                .holdToTalk(bar.button, bar.talking, onPress, onRelease)
                 .padding(horizontal = 22.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
         ) {
@@ -120,7 +138,7 @@ fun TileMic(t: TileTalk) {
     Box(
         Modifier.size(48.dp).clip(CircleShape).background(if (t.talking) C.accent else C.surface)
             .alpha(if (t.enabled || t.talking) 1f else 0.4f)
-            .holdToTalk(t.onPress, t.onRelease),
+            .holdToTalk("Talk", t.talking, t.onPress, t.onRelease),
         contentAlignment = Alignment.Center,
     ) { Icon(Lucide.Mic, null, tint = if (t.talking) C.onAccent else C.text, modifier = Modifier.size(20.dp)) }
 }

@@ -505,7 +505,9 @@ private fun CarNetCard() {
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 14.dp)) {
             Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(if (phone) 22.dp else 26.dp))
-            Text(copy.title, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.25f else 1.3f), color = C.text, maxLines = if (phone) Int.MAX_VALUE else 2, modifier = Modifier.weight(1f))
+            // The network name is one long token: on a phone it stays on one line and loses its middle rather than splitting mid-token (the full name is under Show).
+            if (phone && state is CarNetState.On) Text(copy.title, style = body(18.sp, 800, 1.25f), color = C.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f))
+            else Text(copy.title, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.25f else 1.3f), color = C.text, maxLines = if (phone) Int.MAX_VALUE else 2, modifier = Modifier.weight(1f))
             if (!phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
         }
         if (phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.fillMaxWidth())
@@ -546,10 +548,12 @@ private fun CarNetSecret(ssid: String, pass: String) {
     if (LocalPhone.current) {
         // Phone: name, password and QR code each get the full width, one under the other. Selectable, never squeezed.
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Long names and passwords have no spaces to break at: at large font sizes they get a smaller size on a line of their own.
+            val token = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 14.sp else 20.sp
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column { FieldLabel("Network name"); Text(ssid, style = body(20.sp, 800, 1.25f), color = C.text) }
-                    Column { FieldLabel("Password"); Text(pass, style = body(20.sp, 800, 1.25f), color = C.text) }
+                    Column { FieldLabel("Network name"); Text(ssid, style = body(token, 800, 1.25f), color = C.text) }
+                    Column { FieldLabel("Password"); Text(pass, style = body(token, 800, 1.25f), color = C.text) }
                 }
             }
             Box(Modifier.align(Alignment.CenterHorizontally).size(200.dp).clip(RoundedCornerShape(PhoneMetrics.mediaRadius)).background(Color.White).padding(10.dp), contentAlignment = Alignment.Center) {

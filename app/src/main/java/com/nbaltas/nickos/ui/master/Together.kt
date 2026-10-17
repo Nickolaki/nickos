@@ -66,7 +66,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronLeft
+import androidx.compose.ui.platform.testTag
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.RotateCcw
@@ -157,12 +159,21 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         TogetherRemote(onBack) { f ->
             val jfc = master.jellyfin()
             if (jfc != null && account != null) scope.launch {
-                sync.dismissFailure(f.id)
-                runCatching { jfc.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+                // The failure row goes only once the item is found; otherwise say so and keep the action.
+                try {
+                    val item = jfc.item(account.userId, f.fid.substringAfterLast(':'))
+                    sync.dismissFailure(f.id)
+                    saveInstead = item to f.id
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    master.say("Couldn't reach Jellyfin to save this. Try again.")
+                }
             }
         }
         return
     }
+    androidx.activity.compose.BackHandler(enabled = saveInstead != null) { saveInstead = null }
     saveInstead?.let { (item, id) ->
         val nodes = rememberNodeViews()
         val library = remember { sync.library() }
@@ -227,8 +238,15 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             StreamFailRow(f, sync.kid(f.id), Modifier.padding(horizontal = edge, vertical = 6.dp)) {
                 val account = jfAccount
                 if (jf != null && account != null) failScope.launch {
-                    sync.dismissFailure(f.id)
-                    runCatching { jf.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+                    try {
+                        val item = jf.item(account.userId, f.fid.substringAfterLast(':'))
+                        sync.dismissFailure(f.id)
+                        saveInstead = item to f.id
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        master.say("Couldn't reach Jellyfin to save this. Try again.")
+                    }
                 } else sync.dismissFailure(f.id)
             }
         }
@@ -263,7 +281,14 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             }
         }
         Spacer(Modifier.height(16.dp))
-        Segmented(
+        if (phone) {
+            // One source chip; the Movies/Shows bar is only for the NickOS library (Jellyfin has its own Home/Movies/Shows/History bar).
+            SourceChip(segment == 2) { jfPicked -> segment = if (jfPicked) 2 else 0; openShow = null }
+            if (segment != 2) {
+                Spacer(Modifier.height(12.dp))
+                Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it; openShow = null }, Modifier.padding(horizontal = edge).fillMaxWidth())
+            }
+        } else Segmented(
             listOf("Movies" to null, "Shows" to null, "Jellyfin" to null), segment,
             { segment = it; openShow = null },
             Modifier.padding(horizontal = edge),
@@ -1048,6 +1073,33 @@ internal fun PhoneBackChip(label: String, onBack: () -> Unit) {
     Chip(Modifier.clickable(role = Role.Button, onClick = onBack), height = PhoneMetrics.minTarget) {
         Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(20.dp))
         Text(label, style = body(16.sp, 700), color = C.text, maxLines = 1)
+    }
+}
+
+/**
+ * Phone: which library is browsed, as a small label and ONE 48dp chip with a dropdown, on a row of its own. The Home/Movies/Shows/History
+ * bar stays the only segmented bar. [onPick] gets true for Jellyfin.
+ */
+@Composable
+internal fun SourceChip(jellyfin: Boolean, onPick: (Boolean) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Muted("Source", 14, weight = 600, maxLines = 1)
+        Box {
+            Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button) { open = true }.testTag("source-chip"), height = PhoneMetrics.minTarget) {
+                Text(if (jellyfin) "Jellyfin" else "NickOS library", style = body(16.sp, 700), color = C.text, maxLines = 1)
+                Icon(Lucide.ChevronDown, null, tint = C.muted, modifier = Modifier.size(20.dp))
+            }
+            androidx.compose.material3.DropdownMenu(open, { open = false }) {
+                listOf(false to "NickOS library", true to "Jellyfin").forEach { (jf, label) ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(label, style = body(16.sp, if (jf == jellyfin) 700 else 500), color = C.text) },
+                        onClick = { open = false; onPick(jf) },
+                        modifier = Modifier.heightIn(min = PhoneMetrics.minTarget).then(if (jf) Modifier.testTag("jellyfin-library") else Modifier),
+                    )
+                }
+            }
+        }
     }
 }
 

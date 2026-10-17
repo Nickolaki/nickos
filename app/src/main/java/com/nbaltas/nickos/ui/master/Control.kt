@@ -201,13 +201,28 @@ fun ControlScreen(nodeId: String, tab: Int, onTab: (Int) -> Unit, onBack: () -> 
     // "Save to tablets instead" on a stream failure: the same flow as the Together screen, for the one tablet that failed.
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var saveInstead by remember { mutableStateOf<Pair<JfItem, String>?>(null) }
+    var looking by remember { mutableStateOf(false) }
     val onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit = { f ->
         val jfc = app.master.jellyfin()
-        if (jfc != null && app.store.jellyfin.value != null) scope.launch {
-            app.master.sync.dismissFailure(f.id)
-            runCatching { jfc.item(app.store.jellyfin.value!!.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
-        }
+        val account = app.store.jellyfin.value
+        if (jfc != null && account != null && !looking) {
+            looking = true
+            scope.launch {
+                // Look the item up first: the failure row (and with it this action) goes only once the picker can open.
+                try {
+                    val item = jfc.item(account.userId, f.fid.substringAfterLast(':'))
+                    app.master.sync.dismissFailure(f.id)
+                    saveInstead = item to f.id
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    app.master.say("Couldn't reach Jellyfin to save this. Try again.")
+                } finally { looking = false }
+            }
+        } else if (jfc == null || account == null) app.master.say("Connect Jellyfin in Settings to save this.")
     }
+    // System Back leaves the save picker for this screen, like its own Back button.
+    androidx.activity.compose.BackHandler(enabled = saveInstead != null) { saveInstead = null }
     saveInstead?.let { (item, id) ->
         JfPickPanel(item, rememberNodeViews(), remember { app.master.sync.library() }, app.master, onBack = { saveInstead = null }, saveFor = id)
         return
@@ -257,13 +272,9 @@ private fun PhoneControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBa
             Triple("Playing", "Now Playing", Solid.Play), Triple("Watch", "Watch", Lucide.Film), Triple("Apps", "Apps", Lucide.LayoutGrid),
             Triple("Device", "Device", Lucide.Tablet), Triple("Screen", "Screen", Lucide.Monitor),
         )
-        val tabScroll = rememberScrollState()
-        val requesters = remember { List(tabs.size) { BringIntoViewRequester() } }
-        // Large font: the row scrolls, so the selected tab is brought into view whenever it changes (and on entering this mode).
-        LaunchedEffect(tab, scaled) { if (scaled) requesters[tab.coerceIn(0, tabs.lastIndex)].bringIntoView() }
+        // Large font: all five tabs stay in view. Only the selected tab keeps its label (and gets the wider share); the others are icons.
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter).clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(C.surface).padding(4.dp)
-                .then(if (scaled) Modifier.horizontalScroll(tabScroll) else Modifier),
+            Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter).clip(RoundedCornerShape(PhoneMetrics.fieldRadius)).background(C.surface).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             tabs.forEachIndexed { i, (label, full, icon) ->
@@ -271,14 +282,14 @@ private fun PhoneControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBa
                 val bg by animateColorAsState(if (on) C.accent else Color.Transparent, tween(120), label = "tabBg")
                 val fg by animateColorAsState(if (on) C.onAccent else C.muted, tween(120), label = "tabFg")
                 Column(
-                    (if (scaled) Modifier.widthIn(min = 88.dp) else Modifier.weight(1f)).heightIn(min = 64.dp).bringIntoViewRequester(requesters[i]).clip(RoundedCornerShape(10.dp)).background(bg)
+                    Modifier.weight(if (scaled && on) 2.4f else 1f).heightIn(min = 64.dp).clip(RoundedCornerShape(10.dp)).background(bg)
                         .selectable(selected = on, role = Role.Tab) { onTab(i) }
                         .semantics { contentDescription = full }
                         .padding(horizontal = 4.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
                 ) {
                     Icon(icon, null, tint = fg, modifier = Modifier.size(20.dp))
-                    Text(label, style = body(12.sp, 700, 16f / 12f), color = fg, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
+                    if (!scaled || on) Text(label, style = body(12.sp, 700, 16f / 12f), color = fg, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
                 }
             }
         }

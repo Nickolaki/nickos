@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
@@ -71,7 +72,7 @@ import kotlinx.coroutines.delay
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit) {
+fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings: () -> Unit, onBack: (() -> Unit)? = null) {
     val app = App.get(LocalContext.current)
     val master = app.master
     val sync = master.sync
@@ -81,8 +82,12 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
 
     if (legacy) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(if (LocalPhone.current) PhoneMetrics.gutter else 20.dp)) {
-                NickButton("NickOS library", { legacy = false }, fullOnPhone(), style = BtnStyle.GHOST)
+            if (LocalPhone.current) {
+                Spacer(Modifier.height(PhoneMetrics.relatedGap))
+                SourceChip(true) { jf -> legacy = jf }
+                Spacer(Modifier.height(PhoneMetrics.relatedGap))
+            } else Row(Modifier.fillMaxWidth().padding(20.dp)) {
+                NickButton("NickOS library", { legacy = false }, style = BtnStyle.GHOST)
             }
             WatchTab(v, onPlayed = onPlayed, onSettings = onSettings)
         }
@@ -112,14 +117,13 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         // The header parts take the 16dp gutter themselves; the empty state and the list do their own, so nothing is padded twice.
         val gutter = Modifier.padding(horizontal = PhoneMetrics.gutter)
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
-            Spacer(Modifier.height(PhoneMetrics.relatedGap))
+            // Inside Control the screen already has its header; on its own this is the standard back + title header.
+            if (onBack != null) PhoneHeader("Library", onBack) else Spacer(Modifier.height(PhoneMetrics.relatedGap))
             // What is stored, in its own wrapping lines; the count and the Jellyfin button under the tabs, not beside them.
             EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1), modifier = gutter)
+            if (jfAccount != null) SourceChip(false) { jf -> legacy = jf }
             Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it }, gutter.fillMaxWidth())
             Muted("$count on ${v.node.name}", 14, gutter)
-            if (jfAccount != null) {
-                NickButton("Jellyfin library", { legacy = true }, gutter.fillMaxWidth().testTag("jellyfin-library"), style = BtnStyle.GHOST, leading = Lucide.Server)
-            }
             if (visible.isEmpty()) {
                 Box(Modifier.weight(1f)) {
                     CenterMessage(

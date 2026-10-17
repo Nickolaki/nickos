@@ -210,10 +210,14 @@ private fun Placeholder(
             else -> CamText.rtsp(news)
         }
         if (text.isNotEmpty()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if ((tablet != null && display == TileDisplay.WARMING) || (tablet == null && news == RtspNews.LOOKING)) PulseDot(live)
-                val phone = LocalPhone.current
-                Words(text, if (compact || phone) 14 else 18, if (phone) 4 else if (compact) 2 else 3)
+            val phone = LocalPhone.current
+            // Phone: the dot sits on the first line of the words (a wrapped sentence must not leave it floating mid-height).
+            Row(verticalAlignment = if (phone) Alignment.Top else Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if ((tablet != null && display == TileDisplay.WARMING) || (tablet == null && news == RtspNews.LOOKING)) {
+                    if (phone) Box(Modifier.padding(top = 4.dp)) { PulseDot(live) } else PulseDot(live)
+                }
+                if (phone) Box(Modifier.weight(1f, fill = false)) { Words(text, 14, 4) }
+                else Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
             }
         }
         if (tablet == null || compact) return@Column

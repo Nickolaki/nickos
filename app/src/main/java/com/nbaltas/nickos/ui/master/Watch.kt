@@ -102,8 +102,15 @@ private sealed interface Detail {
 }
 
 private val DetailSaver = androidx.compose.runtime.saveable.Saver<Detail?, String>(
-    save = { d -> when (d) { is Detail.Series -> "s${d.id}"; is Detail.Movie -> "m${d.id}"; else -> "" } },
-    restore = { s -> when { s.startsWith("s") -> Detail.Series(s.substring(1)); s.startsWith("m") -> Detail.Movie(s.substring(1)); else -> null } },
+    save = { d -> when (d) { is Detail.Series -> "s${d.id}"; is Detail.Movie -> "m${d.id}"; is Detail.All -> "a${if (d.landscape) 1 else 0}${d.title}"; else -> "" } },
+    restore = { s ->
+        when {
+            s.startsWith("s") -> Detail.Series(s.substring(1))
+            s.startsWith("m") -> Detail.Movie(s.substring(1))
+            s.startsWith("a") && s.length > 2 -> Detail.All(s.substring(2), emptyList(), s[1] == '1')
+            else -> null
+        }
+    },
 )
 
 /** Browse the tablet's Jellyfin user's library and play things on that tablet. */
@@ -141,9 +148,9 @@ fun JellyfinBrowser(
     jf: Jellyfin, uid: String, key: String, ownerLabel: String?, onPick: ((JfItem) -> Unit)?,
     v: NodeView? = null, play: ((JfItem, Boolean) -> Unit)? = null,
 ) {
-    // Saveable, so the Watch tab keeps its place when the parent visits another tab. A "See all" list is not kept: it falls back to the home rows.
+    // Saveable, so the Watch tab keeps its place when the parent visits another tab. A "See all" list is kept as its title and fetched again.
     var detail by rememberSaveable(key, stateSaver = DetailSaver) { mutableStateOf<Detail?>(null) }
-    var backTo by remember(key) { mutableStateOf<Detail?>(null) }
+    var backTo by rememberSaveable(key, stateSaver = DetailSaver) { mutableStateOf<Detail?>(null) }
     BackHandler(enabled = detail != null) { detail = backTo.also { backTo = null } }
 
     val doPlay: (JfItem, Boolean) -> Unit = { item, fromStart -> if (onPick != null) onPick(item) else play?.invoke(item, fromStart) }
@@ -162,20 +169,34 @@ fun JellyfinBrowser(
     when (val d = detail) {
         is Detail.Series -> SeriesDetail(v, onPick != null, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = doPlay)
         is Detail.Movie -> MovieDetail(v!!, jf, uid, d.id, onBack = { detail = backTo.also { backTo = null } }, play = doPlay)
-        is Detail.All -> if (LocalPhone.current) Column(Modifier.fillMaxSize().padding(start = PhoneMetrics.gutter, end = PhoneMetrics.gutter, top = PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
-            LibraryChip { detail = null }
-            Title(d.title, 32)
-            ItemGrid(d.items, jf, d.landscape, open)
-        } else Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 26.dp)) {
-            Chip(Modifier.clip(RoundedCornerShape(22.dp)).clickable { detail = null }) {
-                Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
-                Text("Library", style = body(16.sp, 600), color = C.text)
+        is Detail.All -> {
+            val all by produceState(d.items, d.title) {
+                if (d.items.isEmpty()) value = try { seeAllItems(jf, uid, d.title) } catch (e: Exception) { emptyList() }
             }
-            Title(d.title, 32, Modifier.padding(vertical = 18.dp))
-            ItemGrid(d.items, jf, d.landscape, open)
+            if (LocalPhone.current) Column(Modifier.fillMaxSize().padding(start = PhoneMetrics.gutter, end = PhoneMetrics.gutter, top = PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+                LibraryChip { detail = null }
+                Title(d.title, 32)
+                ItemGrid(all, jf, d.landscape, open)
+            } else Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 26.dp)) {
+                Chip(Modifier.clip(RoundedCornerShape(22.dp)).clickable { detail = null }) {
+                    Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
+                    Text("Library", style = body(16.sp, 600), color = C.text)
+                }
+                Title(d.title, 32, Modifier.padding(vertical = 18.dp))
+                ItemGrid(all, jf, d.landscape, open)
+            }
         }
         null -> LibraryHome(key, ownerLabel, jf, uid, open, onSeeAll = { t, items, land -> detail = Detail.All(t, items, land) })
     }
+}
+
+/** The items behind a home row's "See all", fetched again after the state was restored. */
+private suspend fun seeAllItems(jf: Jellyfin, uid: String, title: String): List<JfItem> = when (title) {
+    "Continue Watching" -> jf.resume(uid, 20)
+    "Next Up" -> jf.nextUp(uid, 20)
+    "Movies" -> jf.library(uid, "Movie", "DateCreated", desc = true, limit = 30)
+    "Shows" -> jf.library(uid, "Series", "DateCreated", desc = true, limit = 30)
+    else -> emptyList()
 }
 
 fun com.nbaltas.nickos.master.MasterRuntime.toastOffline(name: String) = say("$name is offline")
@@ -490,7 +511,7 @@ private fun SeriesDetail(v: NodeView?, pick: Boolean, jf: Jellyfin, uid: String,
         value = try { jf.resume(uid, 1, parentId = id).firstOrNull() ?: jf.nextUp(uid, 1, seriesId = id).firstOrNull() } catch (e: Exception) { null }
     }
     val seasons by produceState<List<JfItem>>(emptyList(), id) { value = try { jf.seasons(uid, id) } catch (e: Exception) { emptyList() } }
-    var season by remember(id) { mutableStateOf<String?>(null) }
+    var season by rememberSaveable(id) { mutableStateOf<String?>(null) }
     LaunchedEffect(target, seasons) { if (season == null && seasons.isNotEmpty()) season = target?.seasonId?.takeIf { s -> seasons.any { it.id == s } } ?: seasons.first().id }
     val episodes by produceState<List<JfItem>?>(null, id, season) {
         value = null
@@ -505,7 +526,7 @@ private fun SeriesDetail(v: NodeView?, pick: Boolean, jf: Jellyfin, uid: String,
     val lib = remember(videosMap) { app.master.sync.library() }
 
     if (LocalPhone.current) {
-        var expanded by remember(id) { mutableStateOf(false) }
+        var expanded by rememberSaveable(id) { mutableStateOf(false) }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
             LibraryChip(onBack)
             val s = series

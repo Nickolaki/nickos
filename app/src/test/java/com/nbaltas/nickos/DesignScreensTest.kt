@@ -888,7 +888,11 @@ class DesignScreensTest {
                         }
                     }
                 }
-                if (!together) onNodeWithTag("jellyfin-library").performClick()
+                if (!together) {
+                    // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
+                    if (phone) onNodeWithTag("source-chip").performClick()
+                    onNodeWithTag("jellyfin-library").performClick()
+                }
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
                 if (open != null) {
@@ -975,7 +979,7 @@ class DesignScreensTest {
         seedDeletable()
         shot("Master-Tablet-Library") {
             val v = rememberNodeViews().first { it.node.id == deleteNode }
-            TabletLibrary(deleteNode, v, onPlayed = {}, onSettings = {})
+            TabletLibrary(deleteNode, v, onPlayed = {}, onSettings = {}, onBack = {})
         }
     }
 

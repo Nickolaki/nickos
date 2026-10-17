@@ -202,7 +202,8 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = PhoneMetrics.gutter).padding(bottom = PhoneMetrics.gutter),
                 verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap),
             ) {
-                Title("How will you use this device?", 28)
+                // The 28sp exception: Title would map it down to 20 on a phone.
+                Text("How will you use this device?", style = disp(28.sp, 800, 1.15f), color = C.text)
                 RoleCard(Modifier.fillMaxWidth(), Lucide.Tablet, true, C.accent, "Master", "I control", C.accent,
                     "For the parent. Sees and controls every linked tablet. Great mounted at the front of the car.", "Choose Master", onMaster)
                 RoleCard(Modifier.fillMaxWidth(), Lucide.Smartphone, false, Color(0xFFFF7A59), "Node", "Kid's tablet", Color(0xFFFF9B80),

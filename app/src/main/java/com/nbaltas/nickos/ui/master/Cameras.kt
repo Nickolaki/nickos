@@ -34,6 +34,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -438,7 +440,7 @@ fun CamerasScreen(
                 val big = if (mode == CamLayout.Mode.SPOTLIGHT) picked.coerceAtLeast(0) else -1
                 val gap = with(density) { (if (parentPhone) 12.dp else 20.dp).toPx() }
                 val stripH = with(density) { CamLayout.stripHeight(wide, phone).dp.toPx() }
-                val rects = CamLayout.rects(mode, n, w, h, gap, wide, picked.coerceAtLeast(0), stripH, if (phone) 2 else Int.MAX_VALUE)
+                val rects = CamLayout.rects(mode, n, w, h, gap, wide, picked.coerceAtLeast(0), stripH, if (phone) 2 else Int.MAX_VALUE, stackThree = parentPhone)
                 // Six or more sources: the strip runs off to the right and is dragged sideways. The spotlight never shrinks.
                 val overflow = if (mode == CamLayout.Mode.SPOTLIGHT) CamLayout.stripOverflow(n, w, gap, stripH) else 0f
                 var scrolled by remember { mutableFloatStateOf(0f) }
@@ -721,6 +723,9 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
     val app = App.get(LocalContext.current)
     val store = app.store
     val phone = LocalConfiguration.current.screenWidthDp < 600
+    // The real phone layout: 16dp gutters, full-width stacked actions, and the keyboard pushes the sheet up.
+    val ph = LocalPhone.current
+    val act = if (ph) Modifier.fillMaxWidth().heightIn(min = 52.dp) else Modifier
     var name by remember { mutableStateOf(c.name) }
     var rotation by remember { mutableIntStateOf(c.rotation) }
     var useUrl by remember { mutableStateOf(c.host == null && c.url.isNotEmpty()) }
@@ -753,10 +758,10 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
     val tapoOk = LanAddress.octets(chosen) != null && user.isNotBlank() && pass.isNotBlank() && !colon
     val canSave = name.isNotBlank() && (if (useUrl) url.length > 8 else tapoOk)
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onDone), contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onDone).then(if (ph) Modifier.imePadding().navigationBarsPadding() else Modifier), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(if (ph) 16.dp else 24.dp).clip(RoundedCornerShape(if (ph) 24.dp else 30.dp)).background(C.surface).tap {}) {
             Column(
-                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = 32.dp, end = 32.dp, top = 28.dp),
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = if (ph) 16.dp else 32.dp, end = if (ph) 16.dp else 32.dp, top = if (ph) 20.dp else 28.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Title(if (isNew) "Add camera" else "Edit camera", 36)
@@ -783,11 +788,13 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                             scanning -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 PulseDot(live); Muted(EDITOR_LOOKING, 16)
                             }
-                            found.isEmpty() -> Muted(EDITOR_NOT_FOUND, 16, maxLines = 6)
+                            found.isEmpty() -> Muted(EDITOR_NOT_FOUND, 16, maxLines = if (ph) Int.MAX_VALUE else 6)
                         }
-                        if (!scanning && found.isEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            NickButton("Look again", { typing = false; scanKey++ }, style = BtnStyle.GHOST)
-                            if (!typing) NickButton("Type the address", { typing = true }, style = BtnStyle.GHOST)
+                        if (!scanning && found.isEmpty()) {
+                            val again: @Composable () -> Unit = { NickButton("Look again", { typing = false; scanKey++ }, act, style = BtnStyle.GHOST) }
+                            val type: @Composable () -> Unit = { if (!typing) NickButton("Type the address", { typing = true }, act, style = BtnStyle.GHOST) }
+                            if (ph) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { again(); type() }
+                            else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { again(); type() }
                         }
                         if (typing) NickField(typed, { typed = it.trim() }, keyboard = KeyboardType.Uri, placeholder = "192.168.49.23")
                     }
@@ -799,8 +806,8 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                     }
                     if (phone) { account(Modifier); password(Modifier) }
                     else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { account(Modifier.weight(1f)); password(Modifier.weight(1f)) }
-                    if (colon) Muted(EDITOR_COLON, 16, maxLines = 4)
-                    Muted(EDITOR_ACCOUNT_HINT, 16, maxLines = 4)
+                    if (colon) Muted(EDITOR_COLON, 16, maxLines = if (ph) Int.MAX_VALUE else 4)
+                    Muted(EDITOR_ACCOUNT_HINT, 16, maxLines = if (ph) Int.MAX_VALUE else 4)
                     Column {
                         FieldLabel("Picture")
                         Segmented(listOf("Standard" to null, "High" to null), if (hd) 1 else 0, { hd = it == 1 })
@@ -808,24 +815,31 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                     Muted(EDITOR_PICTURE_HINT, 16)
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (ph) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, act, leading = Lucide.RotateCwSquare)
+                    if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, act, style = BtnStyle.DANGER, leading = Lucide.Trash2)
+                } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, leading = Lucide.RotateCwSquare)
                     Spacer(Modifier.weight(1f))
                     if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, style = BtnStyle.DANGER, leading = Lucide.Trash2)
                 }
-                NickButton(if (useUrl) "Use camera details instead" else "Use a stream address instead", { useUrl = !useUrl }, style = BtnStyle.GHOST)
+                NickButton(if (useUrl) "Use camera details instead" else "Use a stream address instead", { useUrl = !useUrl }, act, style = BtnStyle.GHOST)
             }
             // Outside the scroll, so Save is on screen however tall the form gets.
-            Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)) {
+            val save: () -> Unit = {
+                // The Tapo fields and the stream address never travel together: whichever form is showing wins.
+                store.saveCamera(
+                    if (useUrl) c.copy(name = name.trim(), url = url, rotation = rotation, host = null, user = "", pass = "", hd = false)
+                    else c.copy(name = name.trim(), url = "", rotation = rotation, host = chosen, user = user.trim(), pass = pass, hd = hd),
+                )
+                onSaved(); onDone()
+            }
+            if (ph) Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NickButton("Save", save, act, style = BtnStyle.PRIMARY, enabled = canSave)
+                NickButton("Cancel", onDone, act, style = BtnStyle.GHOST)
+            } else Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)) {
                 NickButton("Cancel", onDone, style = BtnStyle.GHOST)
-                NickButton("Save", {
-                    // The Tapo fields and the stream address never travel together: whichever form is showing wins.
-                    store.saveCamera(
-                        if (useUrl) c.copy(name = name.trim(), url = url, rotation = rotation, host = null, user = "", pass = "", hd = false)
-                        else c.copy(name = name.trim(), url = "", rotation = rotation, host = chosen, user = user.trim(), pass = pass, hd = hd),
-                    )
-                    onSaved(); onDone()
-                }, style = BtnStyle.PRIMARY, enabled = canSave)
+                NickButton("Save", save, style = BtnStyle.PRIMARY, enabled = canSave)
             }
         }
     }
