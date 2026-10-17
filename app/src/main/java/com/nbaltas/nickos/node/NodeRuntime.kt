@@ -196,48 +196,42 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     @Volatile var parentUntil = 0L
     val parentMode get() = System.currentTimeMillis() < parentUntil
 
-    /** The parent's "Open setting" window: the lock is paused until this time (90 s at most). Kept in the store, so a restart sees it. */
-    val maintenanceUntil get() = store.maintenanceUntil()
-    val maintenance get() = KioskLock.maintenanceActive(System.currentTimeMillis(), maintenanceUntil)
-
     /** Kiosk and "lock to app" are paused: a parent window or the settings window is open. */
     val lockPaused get() = parentMode || maintenance
 
-    private var relockPending = false
-    private var relockTries = 0
+    /** The packages a kid may be in: the allowlist, the locked app, what a parent opened, Jellyfin. */
+    private fun allowedPackages() = store.allowed.value + listOfNotNull(store.lockedApp.value, openedByParent, device.jellyfinPackage())
 
     /**
-     * The one place the lock goes back on after a parent window or the settings window ran out. Cheap and safe to call often
-     * (NodeApp, [kioskLoop], MainActivity.onResume): it does nothing while a window is open or when nothing ran out. After
-     * applyLockdown, a Device Owner tablet still outside lock task gets MainActivity brought to the front so startLockTask runs.
+     * The parent's "Open setting" window (90 s at most, timed on the monotonic clock, see [KioskRelock]) and the one place the
+     * lock goes back on after it or a parent window ran out. After applyLockdown a Device Owner tablet still outside lock task
+     * gets NickOS brought forward, unless an allowed kid app is really in front.
      */
-    @Synchronized
-    fun relockIfExpired() {
-        when (KioskLock.relockState(System.currentTimeMillis(), parentUntil, maintenanceUntil)) {
-            KioskLock.Relock.ACTIVE -> { relockPending = false; return }
-            KioskLock.Relock.DUE -> { parentUntil = 0; store.setMaintenanceUntil(0); relockPending = true; relockTries = 0 }
-            KioskLock.Relock.IDLE -> {}
-        }
-        if (!relockPending) return
-        applyLockdown()
-        if (!KioskLock.needsFront(device.isDeviceOwner, device.lockTaskNone()) || ++relockTries > MAX_RELOCK_TRIES) { relockPending = false; return }
-        try { device.goHome() } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock front", e) }
-    }
+    private val relock = KioskRelock(
+        elapsed = { android.os.SystemClock.elapsedRealtime() },
+        wall = { System.currentTimeMillis() },
+        markerOpen = { store.maintenanceOpen() },
+        setMarker = { store.setMaintenanceOpen(it) },
+        parentUntil = { parentUntil },
+        clearParent = { parentUntil = 0 },
+        homeVisible = { homeVisible },
+        foreground = { device.foregroundPackage(homeVisible, lastLaunchedFallback = false) },
+        allowed = { allowedPackages() },
+        needsFront = { KioskLock.needsFront(device.isDeviceOwner, device.lockTaskNone()) },
+        applyLockdown = { applyLockdown() },
+        goHome = { try { device.goHome() } catch (e: Exception) { Log.w("NickOS.Kiosk", "relock front", e) } },
+        maxTries = MAX_RELOCK_TRIES,
+    )
+    val maintenance get() = relock.active
 
-    /** Ends the settings window now (Lock now, the service connected, NickOS back in front, a restart) and puts the lock back unless a parent window is open. */
-    @Synchronized
-    fun endMaintenance() {
-        if (store.maintenanceUntil() == 0L) return
-        store.setMaintenanceUntil(0)
-        if (!parentMode) { relockPending = true; relockTries = 0 }
-        relockIfExpired()
-    }
+    /** Cheap and safe to call often (NodeApp, [kioskLoop], MainActivity.onResume). */
+    fun relockIfExpired() = relock.relockIfExpired()
 
-    /** NickOS came to the front: that ends the settings window, once its first moments are over. */
-    fun onForeground() {
-        if (KioskLock.foregroundEndsMaintenance(System.currentTimeMillis(), maintenanceUntil)) endMaintenance()
-        relockIfExpired()
-    }
+    /** Ends the settings window now (Lock now, the service connected, a restart). */
+    fun endMaintenance() = relock.end()
+
+    /** NickOS came to the front. */
+    fun onForeground() = relock.onForeground()
 
     /** Once per app update, with a grown-up's consent: put the remote control switch back if the update dropped it. Android refusing it is final. */
     private fun reenableRemoteOncePerUpdate() {
@@ -370,7 +364,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         jobs += scope.launch { kioskLoop() }
         together.start()
         // A settings window left over from before a restart or reboot ends now; the lock goes back on.
-        if (KioskLock.maintenanceLeftOver(store.maintenanceUntil())) endMaintenance()
+        relock.onStart()
         reenableRemoteOncePerUpdate()
         applyLockdown()
         relockIfExpired()
@@ -591,7 +585,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             // when it times out, the remote control connects, NickOS comes back, the app restarts, or the parent taps Lock now.
             NetMessages.ASK_CONTROL -> {
                 if (master == null) return
-                store.setMaintenanceUntil(System.currentTimeMillis() + KioskLock.MAINTENANCE_MS)
+                relock.begin()
                 device.wake()
                 device.pauseLockdown()
                 try { ctx.startActivity(device.remoteInputPageIntent()) } catch (e: Exception) { Log.w(TAG, "open accessibility settings", e); endMaintenance() }
@@ -742,7 +736,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
                     parentMode = lockPaused,
                     homeVisible = homeVisible,
                     fg = if (owner) null else device.foregroundPackage(false),
-                    allowed = store.allowed.value + listOfNotNull(store.lockedApp.value, openedByParent, device.jellyfinPackage()),
+                    allowed = allowedPackages(),
                     self = ctx.packageName,
                 )
             },

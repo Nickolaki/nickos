@@ -381,9 +381,9 @@ class Store(context: Context) {
     fun remoteReenableUnsupported(): Boolean = p.getBoolean("remoteUnsupported", false)
     fun setRemoteReenableUnsupported() { if (!remoteReenableUnsupported()) p.edit().putBoolean("remoteUnsupported", true).commit() }
 
-    /** When the 90 s settings window ends (wall clock), 0 when none. Stored so a restart can put the lock back. */
-    fun maintenanceUntil(): Long = p.getLong("maintenanceUntil", 0)
-    fun setMaintenanceUntil(v: Long) { if (maintenanceUntil() != v) p.edit().putLong("maintenanceUntil", v).commit() }
+    /** A settings window is open. A marker only, never a time: any restart that finds it set closes the window at once. */
+    fun maintenanceOpen(): Boolean = p.getBoolean("maintenanceOpen", false)
+    fun setMaintenanceOpen(v: Boolean) { if (maintenanceOpen() != v) p.edit().putBoolean("maintenanceOpen", v).commit() }
 
     /**
      * First start of the version that added the kid lock PIN gate: a tablet that is already a Node was set up before the

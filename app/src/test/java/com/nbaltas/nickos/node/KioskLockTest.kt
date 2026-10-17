@@ -52,43 +52,17 @@ class KioskLockTest {
         assertFalse(KioskLock.mayReenable(consent = true, running = false, unsupported = true, lastTriedVersion = 0, version = 99))
     }
 
-    @Test fun `the settings window lasts 90 seconds and then re-locks`() {
-        val until = 1_000_000L + KioskLock.MAINTENANCE_MS
-        assertEquals(90_000L, KioskLock.MAINTENANCE_MS)
-        assertTrue(KioskLock.maintenanceActive(1_000_000L, until))
-        assertTrue(KioskLock.maintenanceActive(until - 1, until))
-        assertFalse(KioskLock.maintenanceActive(until, until))
-        assertFalse(KioskLock.maintenanceOver(until - 1, until))
-        assertTrue(KioskLock.maintenanceOver(until, until))
-        assertFalse(KioskLock.maintenanceOver(5, 0))
+    @Test fun `NickOS is brought forward except over an allowed kid app`() {
+        val allowed = listOf("org.jellyfin.mobile", "com.kid.game")
+        assertFalse(KioskLock.relockGoesHome("org.jellyfin.mobile", allowed))
+        assertFalse(KioskLock.relockGoesHome("com.kid.game", allowed))
+        assertTrue(KioskLock.relockGoesHome(KioskLock.SETTINGS_PKG, allowed))
+        assertTrue(KioskLock.relockGoesHome(KioskLock.SETTINGS_PKG, allowed + KioskLock.SETTINGS_PKG))
+        assertTrue(KioskLock.relockGoesHome("com.other.app", allowed))
+        assertTrue(KioskLock.relockGoesHome(null, allowed))
     }
 
-    @Test fun `a stored window is over after a restart even if its time has not come`() {
-        assertTrue(KioskLock.maintenanceLeftOver(1_090_000L))
-        assertFalse(KioskLock.maintenanceLeftOver(0L))
-        // and the stored deadline, read after the restart once it has passed, is a due re-lock
-        assertEquals(KioskLock.Relock.DUE, KioskLock.relockState(now = 2_000_000L, parentUntil = 0, maintenanceUntil = 1_090_000L))
-    }
-
-    @Test fun `coming back to NickOS ends the window, but not in its first moments`() {
-        val start = 1_000_000L
-        val until = start + KioskLock.MAINTENANCE_MS
-        assertFalse(KioskLock.foregroundEndsMaintenance(start + 500, until))
-        assertFalse(KioskLock.foregroundEndsMaintenance(start + KioskLock.MAINTENANCE_GRACE_MS - 1, until))
-        assertTrue(KioskLock.foregroundEndsMaintenance(start + KioskLock.MAINTENANCE_GRACE_MS, until))
-        assertFalse(KioskLock.foregroundEndsMaintenance(until, until))
-        assertFalse(KioskLock.foregroundEndsMaintenance(start + 10_000, 0))
-    }
-
-    @Test fun `the relock decision leaves an open window alone and acts once when one ran out`() {
-        assertEquals(KioskLock.Relock.IDLE, KioskLock.relockState(100, 0, 0))
-        assertEquals(KioskLock.Relock.ACTIVE, KioskLock.relockState(100, parentUntil = 200, maintenanceUntil = 0))
-        assertEquals(KioskLock.Relock.ACTIVE, KioskLock.relockState(100, parentUntil = 0, maintenanceUntil = 200))
-        // a valid parent window is not interrupted by an expired settings window
-        assertEquals(KioskLock.Relock.ACTIVE, KioskLock.relockState(100, parentUntil = 200, maintenanceUntil = 50))
-        assertEquals(KioskLock.Relock.DUE, KioskLock.relockState(300, parentUntil = 200, maintenanceUntil = 0))
-        assertEquals(KioskLock.Relock.DUE, KioskLock.relockState(300, parentUntil = 0, maintenanceUntil = 250))
-        // MainActivity comes to the front only for a Device Owner tablet that is still outside lock task
+    @Test fun `MainActivity comes to the front only for a Device Owner tablet that is still outside lock task`() {
         assertTrue(KioskLock.needsFront(deviceOwner = true, lockTaskNone = true))
         assertFalse(KioskLock.needsFront(deviceOwner = true, lockTaskNone = false))
         assertFalse(KioskLock.needsFront(deviceOwner = false, lockTaskNone = true))

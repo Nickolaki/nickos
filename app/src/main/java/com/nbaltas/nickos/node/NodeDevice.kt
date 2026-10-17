@@ -283,7 +283,7 @@ class NodeDevice(private val ctx: Context) {
      * Reads usage events incrementally: 6h back the first time, then only what's new.
      */
     @Synchronized
-    fun foregroundPackage(homeVisible: Boolean): String? {
+    fun foregroundPackage(homeVisible: Boolean, lastLaunchedFallback: Boolean = true): String? {
         if (homeVisible) return null
         if (hasUsageAccess()) {
             val usm = ctx.getSystemService(UsageStatsManager::class.java)
@@ -299,7 +299,7 @@ class NodeDevice(private val ctx: Context) {
             val last = usageLast
             if (last != null) return if (last == ctx.packageName || isLauncher(last)) null else last
         }
-        return lastLaunched
+        return if (lastLaunchedFallback) lastLaunched else null
     }
 
     private fun isLauncher(pkg: String): Boolean {

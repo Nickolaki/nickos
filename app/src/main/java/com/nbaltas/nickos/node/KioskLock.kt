@@ -45,29 +45,14 @@ object KioskLock {
 
     // ---- the settings (maintenance) window ----
 
-    /** A stored deadline in the past, or left over from before a restart: the lock goes back on. */
-    fun maintenanceOver(now: Long, until: Long) = until > 0 && now >= until
-
-    fun maintenanceActive(now: Long, until: Long) = now < until
-
-    /** NickOS back in front ends the window, but not in its first moments. */
-    fun foregroundEndsMaintenance(now: Long, until: Long) =
-        until > 0 && now < until && now - (until - MAINTENANCE_MS) >= MAINTENANCE_GRACE_MS
-
-    /** A start of the app with any stored window: the process died or the tablet rebooted, so the lock goes back on. */
-    fun maintenanceLeftOver(until: Long) = until != 0L
-
-    enum class Relock { ACTIVE, DUE, IDLE }
-
-    /** [ACTIVE]: a parent window or the settings window is open, leave it. [DUE]: one has run out and was never cleared. */
-    fun relockState(now: Long, parentUntil: Long, maintenanceUntil: Long): Relock = when {
-        now < parentUntil || now < maintenanceUntil -> Relock.ACTIVE
-        parentUntil > 0 || maintenanceUntil > 0 -> Relock.DUE
-        else -> Relock.IDLE
-    }
-
     /** After applyLockdown: bring the kid home to the front only on a Device Owner tablet that is still not in lock task. */
     fun needsFront(deviceOwner: Boolean, lockTaskNone: Boolean) = deviceOwner && lockTaskNone
+
+    /**
+     * At relock, whether NickOS is brought forward. Only a reliably identified allowed kid app stays (a movie keeps playing);
+     * Settings, any other app, system windows and an unknown foreground (null) go home.
+     */
+    fun relockGoesHome(fg: String?, allowed: Collection<String>): Boolean = fg == null || fg == SETTINGS_PKG || fg !in allowed
 
     // ---- accessibility backstop ----
 
