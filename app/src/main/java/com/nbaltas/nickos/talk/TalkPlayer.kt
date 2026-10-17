@@ -37,10 +37,10 @@ interface TalkIndicator {
 /** Where "Parent is talking" must be seen. Pure, so the locked and missing permission cases are tested. */
 object TalkBannerPolicy {
     /**
-     * The banner drawn over other apps: whenever someone is talking and the kid is outside NickOS's own home screen,
-     * and also over the locked wall (the speech is audible there too). On the home screen NodeApp draws it itself.
+     * The banner is an attached window on every screen, including home and the locked wall.
+     * This lets playback wait for actual window attachment before opening the speaker.
      */
-    fun overlayShows(talking: Boolean, locked: Boolean, homeVisible: Boolean) = talking && (locked || !homeVisible)
+    fun overlayShows(talking: Boolean, locked: Boolean, homeVisible: Boolean) = talking
 
     /** Without the display over other apps permission the overlay cannot appear: a loud notification does the job. */
     fun needsNotification(canOverlay: Boolean) = !canOverlay
@@ -141,6 +141,11 @@ class TalkPlayer(
     private inner class Playing(val sid: String, private val speaker: Speaker) {
         private val queue = LinkedBlockingQueue<ByteArray>(MAX_WAITING)
         @Volatile private var mode = Mode.OPEN
+        private val speakerClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        private fun closeSpeaker(flush: Boolean) {
+            if (speakerClosed.compareAndSet(false, true)) speaker.close(flush)
+        }
 
         /** Speaker and writer thread, or neither. */
         fun open(): Boolean {
@@ -163,6 +168,12 @@ class TalkPlayer(
             if (mode == Mode.OPEN) {
                 if (flush) dropAllButTail()
                 mode = if (flush) Mode.FLUSHING else Mode.CUT
+                // A blocking AudioTrack write must not extend the tail. Pause and flush on another thread
+                // at the deadline; AndroidSpeaker allows close to interrupt a write already in progress.
+                cutoff.schedule({
+                    mode = Mode.CUT
+                    try { closeSpeaker(false) } catch (_: Throwable) {}
+                }, if (flush) TalkBudget.DRAIN_MS else 0L, TimeUnit.MILLISECONDS)
             } else if (!flush && mode == Mode.FLUSHING) mode = Mode.CUT
         }
 
@@ -198,7 +209,7 @@ class TalkPlayer(
                 log("talk write failed: ${e.message}")
                 failed = true
             } finally {
-                try { speaker.close(flush = !failed && mode == Mode.FLUSHING) } catch (_: Throwable) {}
+                try { closeSpeaker(flush = !failed && mode == Mode.FLUSHING) } catch (_: Throwable) {}
                 if (failed) onFailed(sid)
                 finished(this)
             }
@@ -208,6 +219,9 @@ class TalkPlayer(
     companion object {
         /** About a second of audio: more than that is the speaker falling behind, and old audio is no use. */
         const val MAX_WAITING = 25
+        private val cutoff = java.util.concurrent.Executors.newScheduledThreadPool(2) { r ->
+            Thread(r, "NickOS.TalkEnd").also { it.isDaemon = true }
+        }
         private const val POLL_MS = 50L
         /** A speaker that takes nothing this many times in a row is broken. */
         private const val MAX_STUCK = 5

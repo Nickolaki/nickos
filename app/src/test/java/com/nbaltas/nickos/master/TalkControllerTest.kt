@@ -389,7 +389,7 @@ class TalkControllerTest {
         val ctl = TalkController(scope, { mic }, { Wire() }, { true })
         ctl.press(listOf(tgt("a", "Hailey")))
         assertTrue(inStart.await(3, TimeUnit.SECONDS))
-        Thread(Runnable { Thread.sleep(100); go.countDown() }).start()
+        Thread(Runnable { Thread.sleep(600); go.countDown() }).start()
         ctl.stop(TalkStop.RELEASED)
         assertTrue("stop returned while the start was still running", finished.get())
         Thread.sleep(100)

@@ -12,7 +12,7 @@ enum class PermStep { BRIGHTNESS, SCREEN_OFF, NOTIFICATIONS }
  */
 object PermissionAsk {
     const val TITLE = "Let the parent tablet change brightness and turn the screen off?"
-    const val BODY = "Android needs one OK from a grown-up on this tablet. It will show you one or two Android screens. Switch NickOS on in each, then you come back here."
+    const val BODY = "These permissions also let NickOS keep apps in landscape and show when a parent is talking. Android will ask for permission on this tablet. Switch NickOS on in each settings page, then come back here. Talk notifications can be changed in the grown up menu."
     const val ALLOW = "Allow"
     const val NOT_NOW = "Not now"
 

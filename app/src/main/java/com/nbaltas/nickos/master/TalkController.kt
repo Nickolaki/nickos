@@ -232,18 +232,16 @@ class TalkController(
         s.sender.finish()
         // Cancellation and start admission share [Session.micLock]: when this returns, a start that was already
         // admitted has finished and no later one is admitted, so a released press never opens the microphone afterwards.
-        // Only a start that hangs past the wait can still open it; it is closed the moment it returns, nothing is read.
-        if (!cancelStart(s)) android.util.Log.w("NickOS.Talk", "microphone start still running at release")
+        cancelStart(s)
         // The microphone itself is closed off the caller's thread (a finger lifting never waits for a slow close).
         scope.launch(io) { closeMic(s) }
         onStopped(reason)
     }
 
-    /** False when the lock was not free in time (a start is hanging). */
-    private fun cancelStart(s: Session): Boolean {
-        if (!s.micLock.tryLock(CANCEL_WAIT_MS, TimeUnit.MILLISECONDS)) return false
+    /** Waits for an admitted start before acknowledging cancellation. */
+    private fun cancelStart(s: Session) {
+        s.micLock.lock()
         try { s.closed = true } finally { s.micLock.unlock() }
-        return true
     }
 
     // Every stop ends here, under the same lock the start takes (run off the caller's thread).
@@ -296,7 +294,7 @@ class TalkController(
         }
     }
 
-    companion object { const val OLD_CLOSE_WAIT_MS = 2_000L; const val CANCEL_WAIT_MS = 400L }
+    companion object { const val OLD_CLOSE_WAIT_MS = 2_000L }
 }
 
 /** 16 kHz mono 16 bit from the voice communication source, which also cancels echo from the tablet's own speaker. */

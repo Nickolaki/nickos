@@ -811,7 +811,7 @@ class DesignScreensTest {
     @Test fun controlDeviceLandscapeBlocked1024() = deviceTabLandscape("NoPermission", landscapeBlocked)
 
     private fun nodeMenu() = shot("Node-ParentMenu-${sizeTag()}") {
-        com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {})
+        com.nbaltas.nickos.ui.node.ParentMenu(onKidMode = {}, onAllApps = {}, onSettings = {}, onPairAnother = {}, onUpdate = {}, onReset = {}, onAllowCamera = {}, onAllowBrightness = {}, onAllowScreenOff = {}, onTalkNotifications = {})
     }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")

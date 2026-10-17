@@ -37,7 +37,7 @@ class TalkPlayerTest {
             if (n > 0) written.addAndGet(n)
             return n
         }
-        override fun close(flush: Boolean) { closes += flush }
+        override fun close(flush: Boolean) { closes += flush; holdWrites?.countDown() }
     }
 
     private class Indicator : TalkIndicator {
@@ -78,7 +78,7 @@ class TalkPlayerTest {
         assertEquals("Dad", ind.text)
         repeat(10) { p.play(frame) }
         p.end(flush = true)
-        Thread.sleep(100)
+        Thread.sleep(20)
         assertEquals("still audible, so still shown", "Dad", ind.text)
         gate.countDown()
         until("banner cleared") { ind.text == null }
@@ -101,6 +101,28 @@ class TalkPlayerTest {
         val took = System.currentTimeMillis() - t0
         assertTrue("took $took ms", took <= TalkBudget.RELEASE_TO_SILENCE_MS - TalkBudget.NETWORK_ALLOWANCE_MS)
         assertTrue("written ${sp.written.get()}", sp.written.get() < TalkPlayer.MAX_WAITING * 1280 / 2)
+    }
+
+    @Test fun `receiver end and idle cut a blocked speaker within the release budget`() {
+        for (idle in listOf(false, true)) {
+            val gate = CountDownLatch(1)
+            val sp = FakeSpeaker(holdWrites = gate)
+            val ind = Indicator()
+            val p = player(ind, sp)
+            var now = 1_000L
+            val rx = TalkReceiver(p, { true }, { now })
+            val sid = "0123456789abcdef"
+            rx.onMessage("m", TalkMessages.start(sid))
+            repeat(25) { rx.onMessage("m", TalkMessages.frame(sid, it + 1L, frame)) }
+            val began = System.nanoTime()
+            if (idle) { now += TalkReceiver.IDLE_MS; rx.tick() }
+            else rx.onMessage("m", TalkMessages.end(sid))
+            until("speaker cut", 1000) { sp.closes.isNotEmpty() }
+            val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began)
+            assertTrue("idle=$idle took $elapsed ms", elapsed < TalkBudget.RELEASE_TO_SILENCE_MS)
+            assertFalse(rx.active)
+            until("indicator cleared") { ind.text == null }
+        }
     }
 
     @Test fun `a cut during the drain wins over the tail that is playing`() {
@@ -220,7 +242,7 @@ class TalkPlayerTest {
         now += TalkReceiver.IDLE_MS + 1
         rx.tick()
         assertFalse(rx.active)
-        Thread.sleep(100)
+        Thread.sleep(20)
         assertEquals("the speaker is still playing the tail", "Dad", ind.text)
         gate.countDown()
         until("banner cleared") { ind.text == null }
@@ -333,7 +355,7 @@ class TalkPlayerTest {
     // ---- where it is shown ----
     @Test fun `the banner shows over other apps, and over the locked wall, but on the home screen NodeApp draws it`() {
         assertTrue(TalkBannerPolicy.overlayShows(talking = true, locked = false, homeVisible = false))
-        assertFalse(TalkBannerPolicy.overlayShows(talking = true, locked = false, homeVisible = true))
+        assertTrue(TalkBannerPolicy.overlayShows(talking = true, locked = false, homeVisible = true))
         assertTrue("locked, home visible", TalkBannerPolicy.overlayShows(talking = true, locked = true, homeVisible = true))
         assertTrue("locked, in another app", TalkBannerPolicy.overlayShows(talking = true, locked = true, homeVisible = false))
         assertFalse("nobody talking", TalkBannerPolicy.overlayShows(talking = false, locked = true, homeVisible = false))

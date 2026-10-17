@@ -60,8 +60,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         val toast = warn && !locked && !rt.homeVisible
         if (toast && toastView == null) toastView = add(fullScreen = false) { ToastOverlayContent(rt) }
         if (!toast && toastView != null) { remove(toastView); toastView = null }
-        // Same rule for "Dad is talking": over other apps here, on the home screen it is drawn by NodeApp. Also over the
-        // locked wall, because the speech is still audible.
+        // Talk always uses an attached window, including on home, so playback can confirm presentation.
         val talking = com.nbaltas.nickos.talk.TalkBannerPolicy.overlayShows(rt.talkBanner.value != null, locked, rt.homeVisible)
         if (talking && talkView == null) {
             // Only a banner that was added without an exception counts as shown (see talkOnScreen).
@@ -72,8 +71,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
 
     /**
      * Brings the overlay up to date on the main thread and waits (a short while) for it. True only when "Parent is
-     * talking" really is on screen afterwards: the banner window is attached, or the kid home screen is showing and
-     * unlocked, where NodeApp draws it itself.
+     * talking" really is on screen afterwards: the banner window is attached.
      */
     fun refreshTalkAndWait(): Boolean {
         if (Looper.myLooper() == Looper.getMainLooper()) { update(); return talkOnScreen() }
@@ -83,8 +81,7 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     }
 
     fun talkOnScreen(): Boolean {
-        val homeDraws = rt.homeVisible && store.lockedBy.value == null
-        return talkView != null || homeDraws
+        return talkView?.isAttachedToWindow == true
     }
 
     /**

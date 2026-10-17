@@ -235,6 +235,6 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         warn?.let { if (lockedBy == null) BedtimeToastAtBottom(it) }
         if (!canOverlay && lockedBy != null) LockedScreen(store, lockedBy)
         // After the locked wall, so the banner is drawn over it: the speech is audible there too.
-        talkBanner?.let { TalkBannerAtBottom(it) }
+        if (!canOverlay) talkBanner?.let { TalkBannerAtBottom(it) }
     }
 }
