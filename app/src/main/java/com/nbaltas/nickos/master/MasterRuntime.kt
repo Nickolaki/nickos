@@ -464,6 +464,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 transfer.onDisconnected(n.id)
                 cam.onDisconnected(n.id)
             }
+            delivery(c, n.id).close()
             c.close()
         }
     }
@@ -544,7 +545,28 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     // separate so a tablet with a stuck link (audio included) never holds up a command to another tablet.
     private val sendLanes = SendLanes(scope)
 
-    fun send(id: String, o: JSONObject): Boolean = links[id]?.let { c -> sendLanes.launch(id) { c.send(o) }; true } ?: false
+    private val deliveries = java.util.WeakHashMap<Conn, com.nbaltas.nickos.link.CommandDelivery>()
+    private fun delivery(c: Conn, id: String): com.nbaltas.nickos.link.CommandDelivery = synchronized(deliveries) {
+        deliveries.getOrPut(c) { com.nbaltas.nickos.link.CommandDelivery { commandFailed(id) } }
+    }
+
+    private fun commandFailed(id: String) {
+        val name = store.nodes.value.firstOrNull { it.id == id }?.name ?: "tablet"
+        say("Didn't reach $name, try again")
+    }
+
+    fun send(id: String, o: JSONObject): Boolean {
+        val c = links[id] ?: run { commandFailed(id); return false }
+        val d = delivery(c, id)
+        val ticket = d.enqueue() ?: run { commandFailed(id); return false }
+        sendLanes.launch(id) {
+            if (d.maySend(ticket)) {
+                val written = try { c.send(o) } catch (_: Exception) { false }
+                d.complete(ticket, written)
+            }
+        }
+        return true
+    }
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 
