@@ -215,7 +215,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         parentUntil = { parentUntil },
         clearParent = { parentUntil = 0 },
         homeVisible = { homeVisible },
-        foreground = { device.foregroundPackage(homeVisible, lastLaunchedFallback = false) },
+        foreground = { device.foregroundPackage(homeVisible, lastLaunchedFallback = false, strict = true) },
         allowed = { allowedPackages() },
         needsFront = { KioskLock.needsFront(device.isDeviceOwner, device.lockTaskNone()) },
         applyLockdown = { applyLockdown() },

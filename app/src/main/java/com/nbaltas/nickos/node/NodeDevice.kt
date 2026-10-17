@@ -275,29 +275,36 @@ class NodeDevice(private val ctx: Context) {
 
     fun jellyfinPackage(): String? = JELLYFIN_PACKAGES.firstOrNull { label(it) != null }
 
-    private var usageCursor = 0L
-    private var usageLast: String? = null
+    private val usage = UsageForeground()
 
     /**
      * Foreground package, via usage access when granted (SETUP.md), else what NickOS last opened.
      * Reads usage events incrementally: 6h back the first time, then only what's new.
+     * With [strict] (the relock decision) only a verified foreground counts, anything else is null.
      */
     @Synchronized
-    fun foregroundPackage(homeVisible: Boolean, lastLaunchedFallback: Boolean = true): String? {
+    fun foregroundPackage(homeVisible: Boolean, lastLaunchedFallback: Boolean = true, strict: Boolean = false): String? {
         if (homeVisible) return null
         if (hasUsageAccess()) {
             val usm = ctx.getSystemService(UsageStatsManager::class.java)
             val now = System.currentTimeMillis()
-            val from = if (usageCursor == 0L) now - 6 * 60 * 60 * 1000L else usageCursor - 2000
-            val events = usm.queryEvents(from, now)
+            val events = usm.queryEvents(usage.from(now), now)
             val e = UsageEvents.Event()
+            val list = ArrayList<UsageForeground.Ev>()
             while (events.hasNextEvent()) {
                 events.getNextEvent(e)
-                if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) usageLast = e.packageName
+                when (e.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> list.add(UsageForeground.Ev(UsageForeground.Kind.RESUMED, e.packageName))
+                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED, UsageEvents.Event.MOVE_TO_BACKGROUND ->
+                        list.add(UsageForeground.Ev(UsageForeground.Kind.PAUSED, e.packageName))
+                }
             }
-            usageCursor = now
-            val last = usageLast
+            val last = usage.fold(now, true, list, strict)
             if (last != null) return if (last == ctx.packageName || isLauncher(last)) null else last
+            if (strict) return null
+        } else {
+            usage.fold(0L, false, emptyList(), strict)
+            if (strict) return null
         }
         return if (lastLaunchedFallback) lastLaunched else null
     }
