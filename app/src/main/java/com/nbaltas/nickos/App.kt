@@ -33,6 +33,7 @@ class App : Application() {
             { NodeDevice(this).setAlarmVolume(it) },
             { store.setSavedAlarmVolume(null) },
         )
+        com.nbaltas.nickos.power.PowerRecovery.retry(this, store)
     }
 
     companion object {

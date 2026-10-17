@@ -93,7 +93,8 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
     }
 
     fun talkOnScreen(): Boolean {
-        return talkView?.isAttachedToWindow == true
+        val v = talkView
+        return talkBannerShown(v != null, v?.isAttachedToWindow == true, v?.parent != null)
     }
 
     /**
@@ -168,6 +169,12 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         if (v != null) try { wm.removeView(v) } catch (_: Exception) {}
     }
 }
+
+/**
+ * The talking banner counts as shown once its window was added and is still added. Attachment happens on a later
+ * traversal, but WindowManager.addView assigns the parent synchronously.
+ */
+internal fun talkBannerShown(added: Boolean, attached: Boolean, hasParent: Boolean): Boolean = added && (attached || hasParent)
 
 @androidx.compose.runtime.Composable
 private fun LockedOverlayContent(store: Store) {

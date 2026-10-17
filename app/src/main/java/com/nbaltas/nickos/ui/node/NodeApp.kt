@@ -209,11 +209,13 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                     val handBackHome = KioskPolicy.afterReset(rt.device.isDeviceOwner, rt.device.isHome())
                     com.nbaltas.nickos.node.Provisioning.forget(ctx) // no longer a QR kid tablet in the making
                     rt.sayGoodbye()
+                    rt.powerRunner.release() // the tablet's own screen timeout goes back too
                     rt.releaseLandscape() // give the tablet's own rotation settings back before the stored copy is wiped
                     rt.device.releaseLockdown()
                     (ctx as? Activity)?.let { try { it.stopLockTask() } catch (_: Exception) {} }
                     NodeService.stop(ctx)
                     store.resetAll()
+                    com.nbaltas.nickos.power.PowerRecovery.retry(ctx, store)
                     com.nbaltas.nickos.node.RotationRecovery.retry(ctx, store) // a restore that could not finish is kept and tried again
                     // Android has no API to hand the home role back: without this the Home button opens NickOS Setup forever.
                     if (handBackHome) try {

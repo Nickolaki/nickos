@@ -32,7 +32,7 @@ class TalkPlanTest {
         assertEquals("Hailey", TalkText.who(listOf("Hailey")))
         assertEquals("Hailey, Leo", TalkText.who(listOf("Hailey", "Leo")))
         assertEquals("Hailey, Leo, Mia", TalkText.who(listOf("Hailey", "Leo", "Mia")))
-        assertEquals("4 tablets", TalkText.who(listOf("Hailey", "Leo", "Mia", "Zoe")))
+        assertEquals("Hailey, Leo, Mia and Zoe", TalkText.who(listOf("Hailey", "Leo", "Mia", "Zoe")))
         assertEquals("Talking to Hailey, Leo", TalkText.talking(listOf("Hailey", "Leo")))
     }
 

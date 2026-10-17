@@ -30,9 +30,14 @@ data class LinkedNode(
     val wifiSaved: Boolean? = null,
     /** The landscape lock the parent last chose for this tablet; null if never chosen. Sent again on every connect, so a lost command cannot undo it. */
     val landscape: Boolean? = null,
+    /** The power settings the parent last chose for this tablet; null if never chosen. Sent again on every connect. */
+    val powerWake: Boolean? = null,
+    val powerOffMin: Int? = null,
 ) {
     fun toJson() = JSONObject().apply {
         put("landscape", landscape ?: JSONObject.NULL)
+        put("powerWake", powerWake ?: JSONObject.NULL)
+        put("powerOffMin", powerOffMin ?: JSONObject.NULL)
         put("id", id); put("name", name); put("color", color); put("avatar", avatar); put("token", token)
         put("host", host); put("port", port); put("lastSeen", lastSeen); put("lastBattery", lastBattery)
         put("jfUserId", jfUserId); put("jfUserName", jfUserName)
@@ -48,6 +53,8 @@ data class LinkedNode(
             jfUserId = o.optStr("jfUserId"), jfUserName = o.optStr("jfUserName"),
             wifiSaved = if (!o.has("wifiSaved") || o.isNull("wifiSaved")) null else o.optBoolean("wifiSaved"),
             landscape = if (!o.has("landscape") || o.isNull("landscape")) null else o.optBoolean("landscape"),
+            powerWake = if (!o.has("powerWake") || o.isNull("powerWake")) null else o.optBoolean("powerWake"),
+            powerOffMin = if (!o.has("powerOffMin") || o.isNull("powerOffMin")) null else o.optInt("powerOffMin"),
         )
     }
 }
@@ -391,6 +398,34 @@ class Store(context: Context) {
         return e.commit()
     }
 
+    private val _powerWake = MutableStateFlow(p.getBoolean("powerWakeOnCharge", false))
+    /** Wake the screen when power is plugged in. The Master's own choice, or on a Node the one the parent sent. */
+    val powerWakeOnCharge: StateFlow<Boolean> = _powerWake
+    private val _powerOffMin = MutableStateFlow(p.getInt("powerBatteryOffMin", 0))
+    /** Minutes of idle before the screen goes off while not charging; 0 is off. */
+    val powerBatteryOffMin: StateFlow<Int> = _powerOffMin
+    /** True when the choice reached the disk; only then does the app act on it. */
+    fun setPower(wake: Boolean, offMin: Int): Boolean {
+        val ok = p.edit().putBoolean("powerWakeOnCharge", wake).putInt("powerBatteryOffMin", offMin).commit()
+        if (ok) { _powerWake.value = wake; _powerOffMin.value = offMin }
+        return ok
+    }
+
+    /** The tablet's own screen off timeout (milliseconds) as it was before the battery timer changed it, or null when it has not. */
+    fun savedScreenTimeout(): Int? = durableTimeout
+    // SharedPreferences updates its memory even when commit() fails, so what counts is only what a commit confirmed.
+    @Volatile private var durableTimeout: Int? = if (p.contains("powerSavedTimeout")) p.getInt("powerSavedTimeout", 0) else null
+    /** True only when the change reached the disk: the timer changes nothing on the tablet without that. A failed removal leaves the copy present. */
+    @Synchronized
+    fun setSavedScreenTimeout(ms: Int?): Boolean {
+        val e = p.edit()
+        if (ms == null) e.remove("powerSavedTimeout") else e.putInt("powerSavedTimeout", ms)
+        val ok = e.commit()
+        if (ok) durableTimeout = ms
+        else durableTimeout.let { d -> p.edit().apply { if (d == null) remove("powerSavedTimeout") else putInt("powerSavedTimeout", d) }.apply() }
+        return ok
+    }
+
     private val _resume = MutableStateFlow(readList("resume") { ResumeCard.from(it) })
     val resume: StateFlow<List<ResumeCard>> = _resume
     fun setResume(v: List<ResumeCard>) { writeList("resume", v) { it.toJson() }; _resume.value = v }
@@ -401,13 +436,16 @@ class Store(context: Context) {
         // A rotation restore that has not finished is the tablet's own setting, not NickOS data: it survives a reset and is retried.
         val rotation = savedRotation()
         val alarmVolume = savedAlarmVolume() // likewise the tablet's own alarm volume
+        val screenTimeout = savedScreenTimeout()
         val migration = p.getInt(KEY_MIGRATION, 0)
         p.edit().clear().putString("deviceId", deviceId).apply {
             if (migration > 0) putInt(KEY_MIGRATION, migration)
             if (carnet != null) putString(KEY_CARNET, carnet)
             if (alarmVolume != null) putInt("alarmVolSaved", alarmVolume)
             if (rotation != null) putInt("rotSavedAccel", rotation.accelerometer).putInt("rotSavedUser", rotation.user)
+            if (screenTimeout != null) putInt("powerSavedTimeout", screenTimeout)
         }.apply()
+        _powerWake.value = false; _powerOffMin.value = 0
         _masterHomeOptIn.value = false; _landscape.value = false; _kidLockDone.value = false
         _role.value = Role.NONE; _name.value = ""; _color.value = 0; _avatar.value = "initial"
         _pin.value = DEFAULT_PIN; _nodes.value = emptyList(); _hotspot.value = null; _carNetOn.value = true; _jellyfin.value = null; _quickApps.value = emptyList()
