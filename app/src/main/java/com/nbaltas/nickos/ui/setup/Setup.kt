@@ -48,6 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
@@ -78,6 +79,7 @@ import com.nbaltas.nickos.jellyfin.Jellyfin
 import com.nbaltas.nickos.master.MasterRuntime
 import com.nbaltas.nickos.master.NodeStatus
 import com.nbaltas.nickos.node.NodeService
+import com.nbaltas.nickos.node.NodeSupport
 import com.nbaltas.nickos.ui.theme.AvatarColors
 import com.nbaltas.nickos.ui.theme.AvatarIcons
 import com.nbaltas.nickos.ui.theme.Avatar
@@ -118,8 +120,9 @@ fun SetupFlow() {
         Step.WELCOME -> null
         Step.ROLE -> { { step = Step.WELCOME } }
         Step.NODE_NAME -> if (provisioned) null else { { step = Step.ROLE } }
-        Step.MASTER_NET -> { { step = Step.ROLE } }
-        Step.MASTER_ADD -> { { step = Step.ROLE } }
+        // Backing out of Master setup: the role is not committed, so the runtime started for it stops here.
+        Step.MASTER_NET -> { { app.master.stop(); step = Step.ROLE } }
+        Step.MASTER_ADD -> { { app.master.stop(); step = Step.ROLE } }
         Step.NODE_CODE -> { { step = Step.NODE_NAME } }
         Step.MASTER_LINKED -> null
         Step.MASTER_JELLYFIN -> { { step = Step.MASTER_LINKED } }
@@ -167,7 +170,7 @@ internal fun Welcome(onStart: () -> Unit) {
 }
 
 @Composable
-internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit) {
+internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> Unit, nodeAllowed: Boolean = NodeSupport.ok()) {
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Step 1 of 3", onBack)
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -182,7 +185,8 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
                     RoleCard(m, Lucide.Tablet, true, C.accent, "Master", "I control", C.accent,
                         "For the parent. Sees and controls every linked tablet. Great mounted at the front of the car.", "Choose Master", onMaster)
                     RoleCard(m, Lucide.Smartphone, false, Color(0xFFFF7A59), "Node", "Kid's tablet", Color(0xFFFF9B80),
-                        "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode)
+                        "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode,
+                        enabled = nodeAllowed, note = if (nodeAllowed) null else NodeSupport.REFUSAL_COPY)
                 }
                 if (narrow) Column(verticalArrangement = Arrangement.spacedBy(24.dp)) { cards(Modifier.fillMaxWidth()) }
                 else Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(32.dp)) { cards(Modifier.weight(1f).fillMaxHeight()) }
@@ -195,10 +199,12 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
 private fun RoleCard(
     modifier: Modifier, icon: androidx.compose.ui.graphics.vector.ImageVector, rotate: Boolean, tile: Color,
     title: String, sub: String, subColor: Color, desc: String, cta: String, onClick: () -> Unit,
+    enabled: Boolean = true, note: String? = null,
 ) {
     val shape = RoundedCornerShape(32.dp)
     Column(
-        modifier.heightIn(min = 440.dp).clip(shape).background(C.surface).border(2.dp, C.line, shape).clickable(onClick = onClick).padding(40.dp),
+        modifier.heightIn(min = 440.dp).alpha(if (enabled) 1f else 0.5f).clip(shape).background(C.surface).border(2.dp, C.line, shape)
+            .clickable(enabled = enabled, onClick = onClick).padding(40.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Box(Modifier.size(112.dp).clip(RoundedCornerShape(32.dp)).background(tile), contentAlignment = Alignment.Center) {
@@ -209,6 +215,7 @@ private fun RoleCard(
             Text(sub, style = body(24.sp, 700), color = subColor)
         }
         Muted(desc, 20)
+        if (note != null) Muted(note, 20)
         Spacer(Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(cta, style = body(19.sp, 700), color = C.text)
@@ -218,6 +225,9 @@ private fun RoleCard(
 }
 
 fun Modifier.rotate90() = rotate(90f)
+
+/** The Node card works only from Android 8; below that the picker shows [NodeSupport.REFUSAL_COPY] instead. */
+internal fun nodeCardEnabled(sdk: Int = Build.VERSION.SDK_INT): Boolean = NodeSupport.ok(sdk)
 
 // ---------------- Node ----------------
 

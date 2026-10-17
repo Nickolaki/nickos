@@ -423,6 +423,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     private val pairGate = PairGate(onChange = { _pairingCode.value = it })
 
     fun openPairing(): String {
+        // Below Android 8 the Node never opens its port, so a code would be a dead screen.
+        if (!NodeSupport.ok()) return ""
         val code = pairGate.open()
         scope.launch { delay(PairGate.TTL_MS + 100); pairGate.expireIfDue() }
         return code

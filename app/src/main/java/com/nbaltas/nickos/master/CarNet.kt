@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import com.nbaltas.nickos.data.Hotspot
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
@@ -243,7 +244,8 @@ class CarNet(
         l.cancel()
         port.onEvent = null
         val ssid = wanted().ssid
-        stopping = scope.launch {
+        // ATOMIC: cancelling the scope's children right after this call cannot skip the removal before its body begins.
+        stopping = scope.launch(start = CoroutineStart.ATOMIC) {
             withContext(NonCancellable) {
                 l.join()
                 val g = withTimeoutOrNull(config.callTimeoutMs) { try { port.groupInfo() } catch (e: Exception) { null } }
@@ -256,6 +258,12 @@ class CarNet(
             }
         }
         publish(CarNetState.Starting)
+    }
+
+    /** Waits for the removal that [stop] started, at most [timeoutMs]. True when it finished or none was running. */
+    suspend fun awaitStopped(timeoutMs: Long): Boolean {
+        val j = stopping ?: return true
+        return withTimeoutOrNull(timeoutMs) { j.join(); true } ?: false
     }
 
     private suspend fun run() {

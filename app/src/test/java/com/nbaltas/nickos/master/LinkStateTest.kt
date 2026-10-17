@@ -78,6 +78,19 @@ class LinkStateTest {
     }
 
     @Test
+    fun `a handshake from before stop cannot claim`() {
+        val t = LinkTable<String>()
+        val gen = t.generation()
+        t.invalidate()                                         // stop() ran while the handshake was blocked
+        val replaced = mutableListOf<String>()
+        assertFalse(t.claimIfCurrent("n", "late", gen) { replaced += it })
+        assertNull(t["n"])
+        assertTrue(t.claimIfCurrent("n", "fresh", t.generation()) { replaced += it })
+        assertEquals("fresh", t["n"])
+        assertTrue(replaced.isEmpty())
+    }
+
+    @Test
     fun `drop removes whatever is current`() {
         val t = LinkTable<String>()
         t.claim("n", "x")
