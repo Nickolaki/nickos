@@ -76,6 +76,8 @@ data class NodeStatus(
     val screenOffOk: Boolean = true,
     /** The landscape lock as the Node reports it. Null for an old Node: the Master hides the switch. */
     val landscape: NetMessages.LandscapeStatus? = null,
+    /** The power settings as the Node reports them. Null for an old Node: the Master hides the controls. */
+    val power: NetMessages.PowerStatus? = null,
     /** "ok", or "needs_permission" when the Node cannot show that a parent is talking, so it will not play talk audio. Old Nodes omit it: assumed ok. */
     val talk: String = TalkMessages.STATUS_OK,
 ) {
@@ -106,6 +108,7 @@ data class NodeStatus(
                 caps = o.optJSONArray("caps").strings(),
                 brightnessOk = o.optBoolean("brightnessOk", true), screenOffOk = o.optBoolean("screenOffOk", true),
                 landscape = NetMessages.decodeLandscape(o),
+                power = NetMessages.decodePowerStatus(o),
                 talk = o.optString("talk", TalkMessages.STATUS_OK).ifBlank { TalkMessages.STATUS_OK },
             )
         }
@@ -138,6 +141,16 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     private val links = LinkTable<Conn>()
     private val loops = LinkLoops(scope) { id -> linkLoop(id) }
     private var started = false
+
+    /** This tablet's own power settings (wake on charge, screen off on battery): see [PowerRunner]. */
+    val powerRunner = com.nbaltas.nickos.power.PowerRunner(ctx, store)
+
+    /** Saves the parent tablet's own choice and applies it. False when it could not be saved. */
+    fun setOwnPower(wake: Boolean, offMin: Int): Boolean {
+        if (!store.setPower(wake, offMin)) return false
+        powerRunner.refresh()
+        return true
+    }
 
     private val found = FoundTable()
     private var discoveryListener: NsdManager.DiscoveryListener? = null
@@ -296,8 +309,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         scope.launch {
             // Only a reset (Master to no role) removes the group. Setup runs with no role yet and must keep it.
             var prev = store.role.value
-            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) carNet.stop(); prev = r }
+            store.role.collect { r -> if (prev == Role.MASTER && r != Role.MASTER) { carNet.stop(); powerRunner.release() }; prev = r }
         }
+        powerRunner.start()
         scope.launch { sessionLoop() }
         scope.launch { while (isActive) { com.nbaltas.nickos.update.Updater.check(); delay(6 * 60 * 60_000L) } }
         scope.launch { resumeLoop() }
@@ -485,7 +499,9 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
      * a lost one is lost.
      */
     internal fun sendIntent(id: String) {
-        store.nodes.value.firstOrNull { it.id == id }?.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        val node = store.nodes.value.firstOrNull { it.id == id } ?: return
+        node.landscape?.let { send(id, NetMessages.orientationCmd(it)) }
+        if (node.powerWake != null || node.powerOffMin != null) send(id, NetMessages.powerCmd(node.powerWake ?: false, node.powerOffMin ?: 0))
     }
 
     private fun runLink(n: LinkedNode, c: Conn) {
@@ -598,6 +614,12 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
         store.updateNode(id) { it.copy(landscape = on) }
         sendControl(id, NetMessages.orientationCmd(on))
+    }
+
+    /** Wake on charge and screen off on battery for a kid tablet. Remembered first, like the landscape lock. */
+    fun setPower(id: String, wake: Boolean, offMin: Int) {
+        store.updateNode(id) { it.copy(powerWake = wake, powerOffMin = offMin) }
+        sendControl(id, NetMessages.powerCmd(wake, offMin))
     }
 
     fun setVolume(id: String, v: Int) { sendControl(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }

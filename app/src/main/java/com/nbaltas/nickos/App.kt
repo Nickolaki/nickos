@@ -27,6 +27,7 @@ class App : Application() {
         // An update does not run the provisioning callbacks: a Device Owner kid tablet puts its HOME choice back here, parent mode or not.
         if (store.role.value == Role.NODE) NodeDevice.makeHome(this)
         com.nbaltas.nickos.node.RotationRecovery.retry(this, store)
+        com.nbaltas.nickos.power.PowerRecovery.retry(this, store)
     }
 
     companion object {

@@ -107,6 +107,37 @@ object NetMessages {
         return LandscapeStatus(o.optBoolean("lock"), state)
     }
 
+    /**
+     * Master to Node: {"t":"cmd","c":"power","wake":true,"offMin":5}. [wake] wakes the screen when power is plugged in;
+     * [offMin] is the minutes of idle before the screen goes off on battery (0 is off). The Node answers in "status" with
+     * "power":{"wake","offMin","state"} (state: on, off or no_permission). A Node that predates it omits the field.
+     */
+    const val POWER = "power"
+    data class PowerCmd(val wake: Boolean, val offMin: Int)
+    fun powerCmd(wake: Boolean, offMin: Int): JSONObject = JSONObject().put("t", "cmd").put("c", POWER).put("wake", wake).put("offMin", offMin)
+
+    /** Null unless this is a power command with a real boolean and a whole number of minutes from 0 to 600. */
+    fun decodePower(m: JSONObject?): PowerCmd? {
+        if (m == null || m.optString("t") != "cmd" || m.optString("c") != POWER) return null
+        if (m.opt("wake") !is Boolean || m.opt("offMin") !is Int) return null
+        val min = m.getInt("offMin")
+        if (min !in 0..600) return null
+        return PowerCmd(m.getBoolean("wake"), min)
+    }
+
+    data class PowerStatus(val wake: Boolean, val offMin: Int, val state: String) {
+        val needsPermission get() = state == STATE_NO_PERMISSION
+    }
+
+    fun encodePower(s: PowerStatus): JSONObject = JSONObject().put("wake", s.wake).put("offMin", s.offMin).put("state", s.state)
+
+    /** Null when the Node predates the feature and sent none: the Master hides the controls. */
+    fun decodePowerStatus(status: JSONObject): PowerStatus? {
+        val o = status.optJSONObject("power") ?: return null
+        val state = o.optString("state").takeIf { it == STATE_ON || it == STATE_OFF || it == STATE_NO_PERMISSION } ?: return null
+        return PowerStatus(o.optBoolean("wake"), o.optInt("offMin"), state)
+    }
+
     fun encodeWifi(s: WifiStatus): JSONObject =
         JSONObject().put("saved", s.saved).put("approve", s.approve).put("do", s.deviceOwner).put("doze", s.doze)
 

@@ -265,6 +265,9 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
     /** Turns the lock off and gives the tablet's own rotation settings back (unlink, reset). */
     fun releaseLandscape() { store.setLandscapeLock(false); landscape.apply(false) }
 
+    /** The parent's power settings (wake on charge, screen off on battery): see [PowerRunner]. */
+    val powerRunner = com.nbaltas.nickos.power.PowerRunner(ctx, store)
+
     /** Watch together: the movie library, the synced player and the answers to its commands. */
     val together = NodeTogether(ctx, store, device, scope, { homeVisible }, ::broadcast)
     val videos get() = together.videos
@@ -293,6 +296,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         netWatch = NetWatch(ctx) { wifi.ensureOn(); wifi.refreshApproval(); advertiser.refresh() }.also { it.start() }
         jobs += scope.launch { acceptLoop(ss) }
         applyLandscape()
+        powerRunner.start()
         jobs += scope.launch { statusLoop() }
         jobs += scope.launch { bedtimeLoop() }
         jobs += scope.launch { while (isActive) { delay(200); try { talk.tick(); if (!talkPlayer.indicatorHolds()) { Log.w(TAG, "talk ended: the indicator was lost"); talk.stop() } } catch (e: Exception) { Log.w(TAG, "talk tick", e) } } }
@@ -497,7 +501,8 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             "restart" -> m.optString("pkg").ifEmpty { device.jellyfinPackage() }?.let { device.restart(it) }
             "apps" -> sendApps()
             "update" -> scope.launch { com.nbaltas.nickos.update.Updater.updateIfNewer(ctx) }
-            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) releaseLandscape() }
+            "unlink" -> { store.removeMaster(masterId); talk.onMasterGone(masterId); if (store.masters.value.isEmpty()) { releaseLandscape(); powerRunner.release() } }
+            NetMessages.POWER -> NetMessages.decodePower(m)?.let { if (store.setPower(it.wake, it.offMin)) powerRunner.refresh() else Log.w(TAG, "could not save the power choice") }
             NetMessages.ORIENTATION -> NetMessages.decodeOrientation(m)?.let { if (store.setLandscapeLock(it)) applyLandscape() else Log.w(TAG, "could not save the landscape choice") }
             // Save (or with an empty ssid forget) the car hotspot. Never reconnects: Android picks the network.
             "wifi" -> NetMessages.decodeWifiCmd(m)?.let { wifi.save(it.ssid, it.pass, it.gw) }
@@ -541,6 +546,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             .put("caps", JSONArray(NodeTogether.CAPS + CamMessages.CAP + NetMessages.CAP + Handshake.CAP + TalkMessages.CAP))
             .put("wifi", NetMessages.encodeWifi(wifi.state()))
             .put("landscape", NetMessages.encodeLandscape(landscape.status(store.landscapeLock.value)))
+            .put("power", NetMessages.encodePower(powerRunner.status()))
             .put("now", System.currentTimeMillis())
     }
 
@@ -551,6 +557,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             delay(1500)
             // Also with no parent connected: the lock must hold after a reboot, and a permission may arrive later.
             applyLandscape()
+            powerRunner.refresh()
             if (sessions.isEmpty()) continue
             val s = status()
             val key = s.toString().replace(Regex("\"now\":\\d+"), "")
@@ -621,6 +628,7 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
         cam.destroy()
         overlay.hideAll()
         overlay.landscapeGuard(false)
+        powerRunner.stop()
     }
 
     companion object { private const val TAG = "NickOS.Node" }
