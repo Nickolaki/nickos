@@ -53,13 +53,15 @@ object CamLayout {
         spotlightIndex: Int = 0,
         stripH: Float = stripHeight(wide),
         maxCols: Int = Int.MAX_VALUE,
+        /** Phone: three feeds are one full-width tile over two half-width ones, not a 2x2 grid with a hole. */
+        stackThree: Boolean = false,
     ): List<Frame> {
         if (n <= 0) return emptyList()
         if (n == 1) return listOf(Frame(0f, 0f, w, h))
         return when (mode) {
             Mode.SINGLE -> List(n) { Frame(0f, 0f, w, h) }
-            Mode.PAIR -> if (n == 2) pair(w, h, gap, wide) else grid(n, w, h, gap, maxCols)
-            Mode.GRID -> grid(n, w, h, gap, maxCols)
+            Mode.PAIR -> if (n == 2) pair(w, h, gap, wide) else grid(n, w, h, gap, maxCols, stackThree)
+            Mode.GRID -> grid(n, w, h, gap, maxCols, stackThree)
             Mode.SPOTLIGHT -> spotlight(n, w, h, gap, spotlightIndex.coerceIn(0, n - 1), stripH)
         }
     }
@@ -74,9 +76,15 @@ object CamLayout {
         }
 
     /** Equal cells, row by row. A short last row leaves its cells empty: a stretched tile would jump when the next camera arrives. */
-    private fun grid(n: Int, w: Float, h: Float, gap: Float, maxCols: Int): List<Frame> {
+    private fun grid(n: Int, w: Float, h: Float, gap: Float, maxCols: Int, stackThree: Boolean): List<Frame> {
         val cols = ceil(sqrt(n.toDouble())).toInt().coerceIn(1, maxCols.coerceAtLeast(1))
         val rows = ceil(n / cols.toDouble()).toInt()
+        // Three feeds on a phone: the first is one full-width tile, the other two share the row below, so no cell is left empty.
+        if (cols == 2 && n == 3 && stackThree) {
+            val rh = (h - gap) / 2f
+            val half = (w - gap) / 2f
+            return listOf(Frame(0f, 0f, w, rh), Frame(0f, rh + gap, half, rh), Frame(half + gap, rh + gap, half, rh))
+        }
         val cw = (w - gap * (cols - 1)) / cols
         val ch = (h - gap * (rows - 1)) / rows
         return List(n) { i -> Frame((i % cols) * (cw + gap), (i / cols) * (ch + gap), cw, ch) }

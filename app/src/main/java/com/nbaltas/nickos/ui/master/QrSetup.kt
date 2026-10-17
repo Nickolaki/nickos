@@ -46,6 +46,9 @@ import com.nbaltas.nickos.ui.theme.FieldLabel
 import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.SetupHeader
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import androidx.compose.foundation.layout.imePadding
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.disp
@@ -81,9 +84,10 @@ fun QrSetupScreen(
             val landscape = maxWidth > maxHeight && maxWidth >= 700.dp
             val narrow = maxWidth < 1000.dp && !landscape
             val compact = landscape && (maxWidth < 1100.dp || maxHeight < 800.dp)
-            val qrSize = if (compact) (maxHeight - 40.dp - 30.dp).coerceIn(260.dp, 460.dp) else 460.dp
+            val phone = LocalPhone.current
+            val qrSize = if (phone) (maxWidth - PhoneMetrics.gutter * 2).coerceIn(200.dp, 460.dp) else if (compact) (maxHeight - 40.dp - 30.dp).coerceIn(260.dp, 460.dp) else 460.dp
             val steps: @Composable (Modifier) -> Unit = { mod ->
-                Column(mod, verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 20.dp)) {
+                Column(mod, verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else if (compact) 12.dp else 20.dp)) {
                     Title("Set up a new kid tablet", if (compact) 38 else 48, lineHeight = 1.02f)
                     Muted("No cables or computer needed. The kid lock is switched on from the start.", if (compact) 17 else 20)
                     Step(1, "Start from a new or factory reset tablet. Settings, System, Reset options, Erase all data.")
@@ -92,7 +96,10 @@ fun QrSetupScreen(
                     Step(4, "It downloads NickOS and switches the kid lock on. When it finishes, NickOS opens. Name the tablet and enter its 6 digit code on this tablet.")
                     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Muted("Put your home WiFi here and the tablet joins it by itself during setup.", 16)
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        if (phone) {
+                            Column { FieldLabel("WiFi name"); NickField(ssid, { ssid = it }) }
+                            Column { FieldLabel("WiFi password"); NickField(pass, { pass = it }, password = true) }
+                        } else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Column(Modifier.weight(1f)) { FieldLabel("WiFi name"); NickField(ssid, { ssid = it }) }
                             Column(Modifier.weight(1f)) { FieldLabel("WiFi password"); NickField(pass, { pass = it }, password = true) }
                         }
@@ -101,14 +108,14 @@ fun QrSetupScreen(
             }
             val code: @Composable () -> Unit = {
                 Column(Modifier.width(qrSize), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(qrSize).clip(RoundedCornerShape(36.dp)).background(Color.White).padding(if (compact) 16.dp else 24.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(qrSize).clip(RoundedCornerShape(if (phone) 20.dp else 36.dp)).background(Color.White).padding(if (phone) 12.dp else if (compact) 16.dp else 24.dp), contentAlignment = Alignment.Center) {
                         qr?.let { Image(it.asImageBitmap(), "Setup QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None) }
                     }
                     Muted(checksumLine(fromServer != null), 14, maxLines = 3)
                 }
             }
             if (narrow) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(32.dp)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(if (phone) PhoneMetrics.gutter else 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 32.dp)) {
                     code(); steps(Modifier.fillMaxWidth())
                 }
             } else {
@@ -128,11 +135,12 @@ internal fun checksumLine(fromServer: Boolean) =
 
 @Composable
 private fun Step(n: Int, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+    val phone = LocalPhone.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp)) {
+        Box(Modifier.size(if (phone) 32.dp else 40.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
             Text("$n", style = disp(20.sp), color = C.onAccent)
         }
-        Text(text, style = body(19.sp, 600, 1.35f), color = C.text, modifier = Modifier.widthIn(max = 560.dp))
+        Text(text, style = body(if (phone) 16.sp else 19.sp, 600, 1.35f), color = C.text, modifier = Modifier.widthIn(max = 560.dp))
     }
 }
 

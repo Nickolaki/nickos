@@ -131,6 +131,15 @@ val Eyebrow = TextStyle(
     letterSpacing = 0.12.em,
 )
 
+/** Phone eyebrow (spec §1): 12/16sp, bold, 1sp tracking. */
+val PhoneEyebrow = TextStyle(
+    fontFamily = Body,
+    fontWeight = FontWeight(700),
+    fontSize = 12.sp,
+    lineHeight = 16.sp,
+    letterSpacing = 1.sp,
+)
+
 enum class ThemeMode { DARK, LIGHT, SYSTEM }
 
 @Composable

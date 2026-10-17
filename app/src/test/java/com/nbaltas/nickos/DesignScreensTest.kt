@@ -86,6 +86,7 @@ import com.nbaltas.nickos.ui.setup.RoleScreen
 import com.nbaltas.nickos.ui.setup.Welcome
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Before
 import org.junit.Test
@@ -122,6 +123,27 @@ class DesignScreensTest {
         const val CHANGE_THRESHOLD = 0.0005f
 
         const val CAR_SSID = "DIRECT-NK-NickOS-a1b2"
+
+        /** A Galaxy S25 held upright. */
+        const val PHONE_QUALIFIERS = "w411dp-h891dp-port-xhdpi"
+
+        /** Every parent state that also gets a phone picture (design/screens/phone). Kid (Node-*) screens are not here. */
+        val PHONE_SCREENS = setOf(
+            "Cameras-Empty", "Cameras-Grid", "Cameras-Nothing-On", "Cameras-Pair", "Cameras-Single", "Cameras-Spotlight",
+            "Cameras-States", "Cameras-Talk-Ready", "Cameras-Talk-Talking", "Cameras-Talk-Update",
+            "Control-Apps", "Control-Device-Ring", "Control-Device", "Control-Movie", "Control-NothingPlaying",
+            "Control-NowPlaying-JellyfinTogether", "Control-NowPlaying", "Control-Offline-CarNet-Off", "Control-Offline-NoDetails",
+            "Control-Offline", "Control-Series", "Control-Watch-Library", "Control-Watch",
+            "Master-AddCode", "Master-Home-CarNet-Off", "Master-Home-Empty", "Master-Home", "Master-Jellyfin", "Master-Linked",
+            "Master-Pause-Sheet", "Master-Tablet-Library", "Master-Tablet-Pick-Delete",
+            "Screen-Viewer-Control", "Screen-Viewer-Lost", "Screen-Viewer-NeedsConsent", "Screen-Viewer-ViewOnly",
+            "Settings-About", "Settings-Cameras", "Settings-Jellyfin", "Settings-PIN", "Settings-Tablets-CarNet-Manual",
+            "Settings-Tablets-CarNet-Off", "Settings-Tablets-CarNet-On", "Settings-Tablets-CarNet-SwitchedOff", "Settings-Tablets",
+            "Settings-Theme", "Setup-Master-CarNet", "Setup-Role-Android7", "Setup-Role", "Setup-Welcome",
+            "Together-Jellyfin-Browse", "Together-Jellyfin-GettingReady", "Together-Jellyfin-Pick", "Together-Jellyfin-Playing",
+            "Together-Jellyfin-Stream-Converted", "Together-Jellyfin-Stream", "Together-Library-Empty", "Together-Library",
+            "Together-Pick", "Together-Remote", "Together-Shows", "Together-Stream-Waiting",
+        )
     }
 
     /** Set only by the landscape sweep below: renders go to design/screens/sweep/<name><suffix>.png. */
@@ -142,6 +164,27 @@ class DesignScreensTest {
                     "A side-by-side of what changed is in app/build/outputs/roborazzi. (${e.message})",
                 e,
             )
+        }
+        phoneShot(name, content)
+    }
+
+    /**
+     * The phone copy of a parent screen: the same state, rendered at 411x891dp inside the real [ParentLayoutProvider],
+     * into design/screens/phone/<name>.png. Runs after the tablet picture has been compared, so the tablet pictures and
+     * their tests are exactly as before. Node (kid) screens are not in [PHONE_SCREENS] and have no phone copy.
+     */
+    private fun phoneShot(name: String, content: @Composable () -> Unit) {
+        if (sweepSuffix.isNotEmpty() || name !in PHONE_SCREENS) return
+        org.robolectric.RuntimeEnvironment.setQualifiers(PHONE_QUALIFIERS)
+        try {
+            captureRoboImage(
+                "../design/screens/phone/$name.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            ) {
+                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { content() } } }
+            }
+        } catch (e: AssertionError) {
+            throw AssertionError("Phone screen \"$name\" no longer matches design/screens/phone/$name.png. (${e.message})", e)
         }
     }
 
@@ -216,6 +259,57 @@ class DesignScreensTest {
 
     // ---- master ----
     @Test fun masterHome() = shot("Master-Home") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    /** The phone Home with the system font at its largest (2.0): nothing may be cut off. Phone only, so no tablet picture. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun masterHomePhoneFont200() {
+        captureRoboImage(
+            "../design/screens/phone/Master-Home-font200.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) {
+            NickTheme {
+                Box(Modifier.fillMaxSize().background(C.bg)) {
+                    val d = androidx.compose.ui.platform.LocalDensity.current
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 2f)) {
+                        ParentLayoutProvider { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+                    }
+                }
+            }
+        }
+    }
+    /** A phone picture with the system font at 2.0, written to design/screens/phone/<name>.png. Phone only, so no tablet picture. */
+    private fun phoneFont200(name: String, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/phone/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) {
+            NickTheme {
+                Box(Modifier.fillMaxSize().background(C.bg)) {
+                    val d = androidx.compose.ui.platform.LocalDensity.current
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 2f)) {
+                        ParentLayoutProvider { content() }
+                    }
+                }
+            }
+        }
+    }
+    /** A phone-only picture at the normal font, written to design/screens/phone/<name>.png. */
+    private fun phoneOnly(name: String, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/phone/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { content() } } } }
+    }
+    /** The phone settings list itself (no section open). */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun settingsPhoneList() = phoneOnly("Settings-Phone-List") { SettingsScreen(null, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun settingsTabletsPhoneFont200() = phoneFont200("Settings-Tablets-font200") { SettingsScreen(0, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun setupRolePhoneFont200() = phoneFont200("Setup-Role-font200") { RoleScreen({}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun controlDevicePhoneFont200() = phoneFont200("Control-Device-font200") { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun controlNowPlayingPhoneFont200() = phoneFont200("Control-NowPlaying-font200") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     @Test fun masterHomeEmpty() {
         listOf("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc").forEach { app.store.removeNode(it) }
         shot("Master-Home-Empty") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
@@ -380,6 +474,18 @@ class DesignScreensTest {
         shot("Cameras-Talk-Ready") { CamerasScreen({}, {}, live = false) }
     }
 
+    /** Phone, system font 2.0: the hold button keeps its 52dp and the helper slot its two lines. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun camerasTalkReadyPhoneFont200() {
+        seedCams()
+        talkCaps(CH, CL)
+        cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(), CM to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        camPicture(CL, camGreen.first, camGreen.second)
+        camPicture(CM, camPlum.first, camPlum.second)
+        phoneFont200("Cameras-Talk-Ready-font200") { CamerasScreen({}, {}, live = false) }
+    }
+
     /** A press in progress: the button is lit and the line names the frozen recipients. */
     @Test fun camerasTalking() {
         seedCams()
@@ -447,6 +553,25 @@ class DesignScreensTest {
     }
 
     @Test fun togetherPick() {
+        val item = seedTogetherPick()
+        shot("Together-Pick") { TogetherPickContent(item) }
+    }
+
+    /** The phone Pick panel with the system font at 2.0: the title, the transfer rows and Play must stay reachable. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherPickPhoneFont200() {
+        val item = seedTogetherPick()
+        phoneFont200("Together-Pick-font200") { TogetherPickContent(item) }
+    }
+
+    @Composable
+    private fun TogetherPickContent(item: com.nbaltas.nickos.sync.LibraryItem) {
+        val m = app.master
+        val nodes = rememberNodeViews()
+        PickPanel(item, thumb = null, nodes = nodes, sync = m.sync, transfer = m.transfer, backLabel = "Movies", onBack = {})
+    }
+
+    private fun seedTogetherPick(): com.nbaltas.nickos.sync.LibraryItem {
         val m = app.master
         addStatus("cccccccccccc", 23)
         set(m.sync, "_videos", mapOf(
@@ -456,11 +581,7 @@ class DesignScreensTest {
         set(m.transfer, "_jobs", mapOf(
             "bbbbbbbbbbbb" to listOf(SyncMessages.JobEntry("cc", "Captain Comet", "running", 420_000_000L, 1_000_000_000L)),
         ))
-        val item = Library.merge(m.sync.videos.value.mapValues { it.value.list }).first { it.fid == "cc" }
-        shot("Together-Pick") {
-            val nodes = rememberNodeViews()
-            PickPanel(item, thumb = null, nodes = nodes, sync = m.sync, transfer = m.transfer, backLabel = "Movies", onBack = {})
-        }
+        return Library.merge(m.sync.videos.value.mapValues { it.value.list }).first { it.fid == "cc" }
     }
 
     private fun jfMovie() = com.nbaltas.nickos.jellyfin.JfItem(
@@ -551,6 +672,18 @@ class DesignScreensTest {
     }
 
     @Test fun togetherJellyfinPlaying() {
+        seedJellyfinPlaying()
+        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
+    }
+
+    /** The phone group remote with the system font at 2.0: the title, the status slot, the transport and the volume must stay reachable. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherJellyfinPlayingPhoneFont200() {
+        seedJellyfinPlaying()
+        phoneFont200("Together-Jellyfin-Playing-font200") { TogetherScreen({}, {}) }
+    }
+
+    private fun seedJellyfinPlaying() {
         val m = app.master
         val now = android.os.SystemClock.elapsedRealtime()
         set(m.sync, "_session", SyncSession(
@@ -565,7 +698,6 @@ class DesignScreensTest {
             "aaaaaaaaaaaa" to ClockInfo(0L, 20L, SyncQuality.GOOD),
             "bbbbbbbbbbbb" to ClockInfo(0L, 20L, SyncQuality.GOOD),
         ))
-        shot("Together-Jellyfin-Playing") { TogetherScreen({}, {}) }
     }
 
     /** The tablet's own Now Playing tab during a Jellyfin stream: poster and title from the Jellyfin artwork. */
@@ -730,8 +862,16 @@ class DesignScreensTest {
     }
 
     /** Loads fixture rows in Control Watch or Together, optionally taps [open], and saves the loaded picture. */
-    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
     private fun jellyfinShot(name: String, open: String?, waitFor: String, together: Boolean = false) {
+        jellyfinShotOnce(name, open, waitFor, together, phone = false)
+        if (name in PHONE_SCREENS) {
+            org.robolectric.RuntimeEnvironment.setQualifiers(PHONE_QUALIFIERS)
+            jellyfinShotOnce(name, open, waitFor, together, phone = true)
+        }
+    }
+
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    private fun jellyfinShotOnce(name: String, open: String?, waitFor: String, together: Boolean, phone: Boolean) {
         val server = fakeJellyfin()
         try {
             app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
@@ -740,12 +880,19 @@ class DesignScreensTest {
                 setContent {
                     NickTheme {
                         Box(Modifier.fillMaxSize().background(C.bg)) {
-                            if (together) TogetherScreen({}, {}, initialSegment = 2)
-                            else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
+                            val screen: @Composable () -> Unit = {
+                                if (together) TogetherScreen({}, {}, initialSegment = 2)
+                                else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
+                            }
+                            if (phone) ParentLayoutProvider(screen) else screen()
                         }
                     }
                 }
-                if (!together) onNodeWithTag("jellyfin-library").performClick()
+                if (!together) {
+                    // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
+                    if (phone) onNodeWithTag("source-chip").performClick()
+                    onNodeWithTag("jellyfin-library").performClick()
+                }
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
                 if (open != null) {
@@ -754,7 +901,7 @@ class DesignScreensTest {
                 }
                 waitForIdle()
                 onRoot().captureRoboImage(
-                    "../design/screens/$name.png",
+                    if (phone) "../design/screens/phone/$name.png" else "../design/screens/$name.png",
                     roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
                 )
             }
@@ -832,7 +979,7 @@ class DesignScreensTest {
         seedDeletable()
         shot("Master-Tablet-Library") {
             val v = rememberNodeViews().first { it.node.id == deleteNode }
-            TabletLibrary(deleteNode, v, onPlayed = {}, onSettings = {})
+            TabletLibrary(deleteNode, v, onPlayed = {}, onSettings = {}, onBack = {})
         }
     }
 
@@ -1063,6 +1210,12 @@ class DesignScreensTest {
     @Test fun screenViewerWithControl() = viewer("Screen-Viewer-Control", control = true)
     @Test fun screenViewerNeedsConsent() = viewer("Screen-Viewer-NeedsConsent", control = false, frame = null, state = "needs_consent")
     @Test fun screenViewerLost() = viewer("Screen-Viewer-Lost", control = false, lost = true)
+
+    /** Phone, system font 2.0: Stop, Back and Home must still fit as three equal buttons. */
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun screenViewerControlPhoneFont200() = phoneFont200("Screen-Viewer-Control-font200") {
+        com.nbaltas.nickos.ui.master.ScreenViewer(kidScreen(), "live", true, false, {}, {}, {}, {}, { _, _ -> }, { _, _, _, _, _ -> })
+    }
 
     // ---- Tapo camera on the car network ----
     private fun tapo(id: String, name: String, host: String) =

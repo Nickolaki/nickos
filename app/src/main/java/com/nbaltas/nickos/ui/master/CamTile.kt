@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -63,6 +64,7 @@ import com.nbaltas.nickos.ui.theme.BtnStyle
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.Dot
+import com.nbaltas.nickos.ui.theme.LocalPhone
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.tap
@@ -128,7 +130,7 @@ fun CamTile(
     val shown = if (preset == RtspNews.LOOKING || preset == RtspNews.MOVED) preset else news
     val picture = if (tablet != null) (frame != null && display.showsVideo) || (leaving && last[0] != null) else shown == RtspNews.LIVE
 
-    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
+    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(if (LocalPhone.current) 20.dp else 22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
         Placeholder(source, display, shown, preset != null || live, compact, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
 
         if (tablet != null) {
@@ -208,13 +210,18 @@ private fun Placeholder(
             else -> CamText.rtsp(news)
         }
         if (text.isNotEmpty()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if ((tablet != null && display == TileDisplay.WARMING) || (tablet == null && news == RtspNews.LOOKING)) PulseDot(live)
-                Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
+            val phone = LocalPhone.current
+            // Phone: the dot sits on the first line of the words (a wrapped sentence must not leave it floating mid-height).
+            Row(verticalAlignment = if (phone) Alignment.Top else Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if ((tablet != null && display == TileDisplay.WARMING) || (tablet == null && news == RtspNews.LOOKING)) {
+                    if (phone) Box(Modifier.padding(top = 4.dp)) { PulseDot(live) } else PulseDot(live)
+                }
+                if (phone) Box(Modifier.weight(1f, fill = false)) { Words(text, 14, 4) }
+                else Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
             }
         }
         if (tablet == null || compact) return@Column
-        CamText.hint(display, tablet.name)?.let { Words(it, 15, 3) }
+        CamText.hint(display, tablet.name)?.let { if (LocalPhone.current) Words(it, 14, 4) else Words(it, 15, 3) }
         when (display) {
             TileDisplay.UPDATE_NEEDED -> NickButton(CamText.OPEN_SETTINGS, onAction, style = BtnStyle.GHOST)
             // Outlined, not the filled secondary style: that fill is this tile's own background colour.
@@ -247,6 +254,13 @@ internal fun PulseDot(live: Boolean) {
 
 @Composable
 internal fun WarmBadge(compact: Boolean, modifier: Modifier = Modifier) {
+    if (LocalPhone.current) {
+        // Phone: a fixed 36dp circle that never stretches into an oval; the tile's own words say why it is warm.
+        Box(modifier.size(36.dp).clip(CircleShape).background(C.danger), contentAlignment = Alignment.Center) {
+            Icon(Lucide.Thermometer, CamText.WARM_BADGE, tint = C.onAccent, modifier = Modifier.size(18.dp))
+        }
+        return
+    }
     Chip(modifier, height = 36.dp, bg = C.danger, padding = PaddingValues(horizontal = 12.dp)) {
         Icon(Lucide.Thermometer, null, tint = C.onAccent, modifier = Modifier.size(18.dp))
         if (!compact) Text(CamText.WARM_BADGE, style = body(14.sp, 700), color = C.onAccent, maxLines = 1)

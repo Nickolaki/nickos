@@ -17,6 +17,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickSwitch
@@ -28,6 +43,10 @@ import com.nbaltas.nickos.ui.theme.body
  */
 @Composable
 fun PowerControls(wake: Boolean, offMin: Int, problem: String?, onChange: (wake: Boolean, offMin: Int) -> Unit, modifier: Modifier = Modifier) {
+    if (LocalPhone.current) {
+        PhonePowerControls(wake, offMin, problem, onChange, modifier)
+        return
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth().toggleable(wake, role = androidx.compose.ui.semantics.Role.Switch) { onChange(it, offMin) },
@@ -48,6 +67,41 @@ fun PowerControls(wake: Boolean, offMin: Int, problem: String?, onChange: (wake:
             }
         }
         if (problem != null) Text(problem, style = body(14.sp, 700), color = C.danger)
+    }
+}
+
+/** Phone: a full-width wrapping switch row, then the idle times as a 3x2 grid (two per row at large font sizes) of equal number-over-"min" cells, each at least 56dp high. */
+@Composable
+private fun PhonePowerControls(wake: Boolean, offMin: Int, problem: String?, onChange: (wake: Boolean, offMin: Int) -> Unit, modifier: Modifier) {
+    val scaled = LocalDensity.current.fontScale >= 1.5f
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+        SwitchRow("Wake the screen when plugged in", wake) { onChange(it, offMin) }
+        Text("Screen off on battery", style = body(14.sp, 700, 1.3f), color = C.muted)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PowerControlsText.choices.chunked(if (scaled) 2 else 3).forEach { rowChoices ->
+                Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rowChoices.forEach { min ->
+                        val sel = min == offMin
+                        val bg by animateColorAsState(if (sel) C.accent else C.surface2, tween(120), label = "powerBg")
+                        val fg = if (sel) C.onAccent else C.text
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight().heightIn(min = 56.dp).clip(RoundedCornerShape(PhoneMetrics.nestedRadius)).background(bg)
+                                .selectable(selected = sel, role = Role.RadioButton) { onChange(wake, min) }
+                                .semantics { contentDescription = if (min == 0) "Off" else "$min minutes" }.padding(vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                        ) {
+                            // Like the bedtime choices: the number over "min"; Off is a cell too.
+                            if (min == 0) Text("Off", style = body(18.sp, 700, 1.1f), color = fg)
+                            else {
+                                Text("$min", style = body(18.sp, 700, 1.1f).copy(fontFeatureSettings = "tnum"), color = fg)
+                                Text("min", style = body(12.sp, 600, 16f / 12f), color = fg.copy(alpha = 0.8f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (problem != null) Text(problem, style = body(14.sp, 700, 1.4f), color = C.danger)
     }
 }
 

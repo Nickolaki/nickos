@@ -7,8 +7,21 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.semantics.Role
+import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.PhoneHeader
+import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import com.nbaltas.nickos.ui.theme.selfNoun
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +45,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,7 +67,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronLeft
+import androidx.compose.ui.platform.testTag
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.RotateCcw
@@ -144,12 +160,21 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         TogetherRemote(onBack) { f ->
             val jfc = master.jellyfin()
             if (jfc != null && account != null) scope.launch {
-                sync.dismissFailure(f.id)
-                runCatching { jfc.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+                // The failure row goes only once the item is found; otherwise say so and keep the action.
+                try {
+                    val item = jfc.item(account.userId, f.fid.substringAfterLast(':'))
+                    sync.dismissFailure(f.id)
+                    saveInstead = item to f.id
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    master.say("Couldn't reach Jellyfin to save this. Try again.")
+                }
             }
         }
         return
     }
+    androidx.activity.compose.BackHandler(enabled = saveInstead != null) { saveInstead = null }
     saveInstead?.let { (item, id) ->
         val nodes = rememberNodeViews()
         val library = remember { sync.library() }
@@ -173,7 +198,8 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
 
     val library = remember(videosMap) { sync.library() }
     val order = remember(nodes) { listOf(Library.SELF) + nodes.map { it.node.id } }
-    val name: (String) -> String = { id -> if (id == Library.SELF) "This tablet" else nodes.firstOrNull { it.node.id == id }?.node?.name?.let { com.nbaltas.nickos.node.parentName(it) } ?: "A tablet" }
+    val selfName = "This ${selfNoun()}"
+    val name: (String) -> String = { id -> if (id == Library.SELF) selfName else nodes.firstOrNull { it.node.id == id }?.node?.name?.let { com.nbaltas.nickos.node.parentName(it) } ?: "A tablet" }
     val expected = remember(nodes) { setOf(Library.SELF) + nodes.filter { it.online && it.status?.supportsSync == true }.map { it.node.id } }
 
     openItem?.let { fid ->
@@ -197,8 +223,11 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         return
     }
 
+    val phone = LocalPhone.current
+    val edge = if (phone) PhoneMetrics.gutter else 40.dp
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (phone) PhoneHeader("Watch together", onBack) { IconCircle(Lucide.RefreshCw, { sync.rescan() }, label = "Look again") }
+        else Row(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BackButton(onBack)
             Spacer(Modifier.width(20.dp))
             Title("Watch together", 40, Modifier.weight(1f))
@@ -208,25 +237,34 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         val streamFails by sync.failed.collectAsState()
         val failScope = rememberCoroutineScope()
         streamFails.values.forEach { f ->
-            StreamFailRow(f, sync.kid(f.id), Modifier.padding(horizontal = 40.dp, vertical = 6.dp)) {
+            StreamFailRow(f, sync.kid(f.id), Modifier.padding(horizontal = edge, vertical = 6.dp)) {
                 val account = jfAccount
                 if (jf != null && account != null) failScope.launch {
-                    sync.dismissFailure(f.id)
-                    runCatching { jf.item(account.userId, f.fid.substringAfterLast(':')) }.onSuccess { saveInstead = it to f.id }
+                    try {
+                        val item = jf.item(account.userId, f.fid.substringAfterLast(':'))
+                        sync.dismissFailure(f.id)
+                        saveInstead = item to f.id
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        master.say("Couldn't reach Jellyfin to save this. Try again.")
+                    }
                 } else sync.dismissFailure(f.id)
             }
         }
+        // Phone: 56dp pills in a row that scrolls, 16dp from the edge; the next pill peeks out at the end.
         LazyRow(
-            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            if (phone) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            contentPadding = if (phone) PaddingValues(horizontal = edge) else PaddingValues(0.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 val label = TogetherText.chip(true, true, Library.SELF in scanning, selfPerm, Library.ownedBy(library, Library.SELF).size, 0)
                 Chip(Modifier.clickable {
                     if (label == "No video access") videosLauncher.launch(LocalVideos.permissions().toTypedArray())
-                }) {
-                    Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(28.dp))
-                    Column { Text("This tablet", style = body(16.sp, 700), color = C.text); Muted(label, 15) }
+                }, height = if (phone) 56.dp else 44.dp) {
+                    Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(if (phone) 24.dp else 28.dp))
+                    Column { Text("This ${selfNoun(phone)}", style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
                 }
             }
             items(nodes) { n ->
@@ -238,17 +276,24 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                         "No video access" -> master.say("On ${n.node.name}, hold the avatar, enter the PIN, then tap Allow videos")
                         else -> {}
                     }
-                }) {
-                    Avatar(n.node.name, n.node.color, n.node.avatar, 28.dp)
-                    Column { Text(n.node.name, style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15) }
+                }, height = if (phone) 56.dp else 44.dp) {
+                    Avatar(n.node.name, n.node.color, n.node.avatar, if (phone) 32.dp else 28.dp)
+                    Column { Text(n.node.name, style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
                 }
             }
         }
         Spacer(Modifier.height(16.dp))
-        Segmented(
+        if (phone) {
+            // One source chip; the Movies/Shows bar is only for the NickOS library (Jellyfin has its own Home/Movies/Shows/History bar).
+            SourceChip(segment == 2) { jfPicked -> segment = if (jfPicked) 2 else 0; openShow = null }
+            if (segment != 2) {
+                Spacer(Modifier.height(12.dp))
+                Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it; openShow = null }, Modifier.padding(horizontal = edge).fillMaxWidth())
+            }
+        } else Segmented(
             listOf("Movies" to null, "Shows" to null, "Jellyfin" to null), segment,
             { segment = it; openShow = null },
-            Modifier.padding(horizontal = 40.dp),
+            Modifier.padding(horizontal = edge),
         )
         Spacer(Modifier.height(12.dp))
 
@@ -258,30 +303,31 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         val scanningCount = scanning.size
 
         when {
-            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this tablet are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
-                NickButton("Allow videos on this tablet", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, style = BtnStyle.PRIMARY, big = true)
+            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this ${selfNoun(phone)} are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
+                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
             }
             segment == 2 && jf == null -> CenterMessage("Connect Jellyfin", "Add your Jellyfin server in Settings to pick a movie or show and watch it together.") {
-                NickButton("Open Settings", { onSettings(1) }, style = BtnStyle.PRIMARY, big = true)
+                NickButton("Open Settings", { onSettings(1) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
             }
             segment == 2 -> JellyfinBrowser(jf!!, jfAccount!!.userId, "together", null, onPick = { openJf = it })
-            onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this tablet, show up here.") {
-                NickButton("All tablets", onBack, style = BtnStyle.GHOST, big = true)
+            onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this ${selfNoun(phone)}, show up here.") {
+                NickButton("All tablets", onBack, fullOnPhone(), style = BtnStyle.GHOST, big = !LocalPhone.current)
             }
             onlineNodes.isNotEmpty() && capableOnline.isEmpty() -> CenterMessage("Update the kids' tablets", "Watch together needs the latest NickOS on each tablet. Update them from Settings, then come back.") {
-                NickButton("Open Settings", { onSettings(5) }, style = BtnStyle.PRIMARY, big = true)
+                NickButton("Open Settings", { onSettings(5) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
             }
             else -> {
                 val visible = if (segment == 0) Library.movies(library) else null
                 val shows = if (segment == 1) Library.shows(library) else emptyList()
-                Column(Modifier.fillMaxSize().padding(horizontal = 40.dp)) {
-                    if (scanningCount > 0) Muted("Looking for movies on $scanningCount tablets...", 18, Modifier.padding(bottom = 12.dp))
+                // Phone: the empty state and the list pad themselves with the 16dp gutter, so this column adds none.
+                Column(Modifier.fillMaxSize().padding(horizontal = if (phone) 0.dp else edge)) {
+                    if (scanningCount > 0) Muted("Looking for movies on $scanningCount tablets...", 18, Modifier.padding(start = if (phone) edge else 0.dp, end = if (phone) edge else 0.dp, bottom = 12.dp))
                     when {
-                        segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this tablet or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
-                            NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
+                        segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this ${selfNoun(phone)} or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
+                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
                         }
-                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.") {
-                            NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
+                        segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this ${selfNoun(phone)}, or send them from another tablet.") {
+                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
                         }
                         segment == 0 -> LibraryGrid(visible!!, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
                         openShow != null -> LibraryGrid(openShow!!.episodes, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
@@ -304,6 +350,23 @@ private fun LibraryGrid(
     transfer: com.nbaltas.nickos.master.TransferController,
     onOpen: (LibraryItem) -> Unit,
 ) {
+    if (LocalPhone.current) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhoneMetrics.gutter, end = PhoneMetrics.gutter, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(items, key = { it.fid }) { item ->
+                val avail = TogetherText.availability(item.owners, expected, order, name)
+                val jobs = transfer.cardJobs(item.fid)
+                PhoneMediaRow(
+                    art = { MovieThumb(thumbs[item.fid], item.title, it, radius = PhoneMetrics.nestedRadius, showTitle = false) },
+                    title = item.title, onClick = { onOpen(item) },
+                ) {
+                    Muted(if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown", 14)
+                    Text(avail.text, style = body(14.sp, 600, 1.3f), color = if (avail.all) C.online else C.muted)
+                    TogetherText.jobLine(jobs)?.let { Text(it, style = body(14.sp, 600, 1.3f), color = C.accent) }
+                }
+            }
+        }
+        return
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(264.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -326,6 +389,17 @@ private fun LibraryGrid(
 
 @Composable
 private fun ShowGrid(shows: List<Show>, thumbs: Map<String, Bitmap>, onOpen: (Show) -> Unit) {
+    if (LocalPhone.current) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhoneMetrics.gutter, end = PhoneMetrics.gutter, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(shows, key = { it.name }) { show ->
+                PhoneMediaRow(
+                    art = { MovieThumb(show.episodes.firstOrNull()?.let { thumbs[it.fid] }, show.name, it, radius = PhoneMetrics.nestedRadius, showTitle = false) },
+                    title = show.name, onClick = { onOpen(show) },
+                ) { Muted("${show.episodes.size} episodes", 14) }
+            }
+        }
+        return
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(264.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -359,6 +433,56 @@ internal fun PickPanel(
     val lacking = remember(item.fid, videosMap, jobsMap) { transfer.lacking(item.fid) }
     val sendBlocked = transfer.sendBlocked(item.fid)
     val epLabel = item.episode?.let { TogetherText.episodeLine(it) }
+
+    if (LocalPhone.current) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+            PhoneBackChip(backLabel, onBack)
+            PhoneMediaHeader(
+                art = { MovieThumb(thumb, item.title, it, radius = PhoneMetrics.nestedRadius, showTitle = false) },
+                eyebrow = epLabel, title = item.title,
+                meta = if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown",
+            )
+            nodes.forEach { n ->
+                val has = n.node.id in item.owners
+                val capable = n.status?.supportsSync == true
+                val job = transfer.jobFor(n.node.id, item.fid)
+                val jobState = job?.let { JobState.of(it.state) }
+                val running = job != null && jobState != JobState.FAILED && jobState != JobState.DONE && jobState != JobState.CANCELLED
+                PhoneDeviceRow(
+                    n,
+                    status = when {
+                        !capable -> "Update needed"
+                        running || job != null && jobState == JobState.FAILED -> null
+                        has && n.online -> "Ready"
+                        has -> "Offline"
+                        n.online -> if (sendBlocked != null) sendBlocked else "Not on this tablet"
+                        else -> "Offline"
+                    },
+                    top = {
+                        if (capable && !running && !(job != null && jobState == JobState.FAILED)) when {
+                            has && n.online -> NickSwitch(n.node.id in selected) { on -> selected = if (on) selected + n.node.id else selected - n.node.id }
+                            has -> NickSwitch(on = false, enabled = false) {}
+                            n.online && sendBlocked == null -> NickButton("Send", { transfer.send(item.fid, setOf(n.node.id)) }, style = BtnStyle.SECONDARY)
+                        }
+                    },
+                ) {
+                    if (capable && job != null && jobState == JobState.FAILED) {
+                        Text(TogetherText.jobError(job.err, job.size), style = body(14.sp, 500, 1.3f), color = C.danger)
+                        NickButton("Try again", { transfer.retry(item.fid, n.node.id) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                    } else if (capable && running) {
+                        PhoneProgressLine(TogetherText.percent(job!!.done, job.size) / 100f, TogetherText.jobProgress(job)) { transfer.cancel(item.fid, n.node.id) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(PhoneMetrics.relatedGap))
+            val k = selected.size
+            val playLabel = if (k == 1) "Play on ${nodes.firstOrNull { it.node.id == selected.first() }?.node?.name ?: sync.kid(selected.first())}" else "Play on $k tablets"
+            NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0)
+            val j = lacking.size
+            if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY, leading = Lucide.Send, enabled = sendBlocked == null)
+        }
+        return
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
@@ -418,10 +542,10 @@ internal fun PickPanel(
         Spacer(Modifier.height(20.dp))
         val k = selected.size
         val playLabel = if (k == 1) "Play on ${nodes.firstOrNull { it.node.id == selected.first() }?.node?.name ?: sync.kid(selected.first())}" else "Play on $k tablets"
-        NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0)
+        NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0)
         Spacer(Modifier.height(12.dp))
         val j = lacking.size
-        if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = true, leading = Lucide.Send, enabled = sendBlocked == null)
+        if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.Send, enabled = sendBlocked == null)
     }
 }
 
@@ -611,6 +735,10 @@ internal fun JfPickContent(
     /** The Jellyfin artwork for the poster; null draws the placeholder. */
     art: String? = null,
 ) {
+    if (LocalPhone.current) {
+        PhoneJfPickContent(item, nodes, selected, onToggle, prep, note, onBack, onPrimary, onRetryRow, onRetrySave, onCancel, stream, art)
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
             Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
@@ -654,18 +782,18 @@ internal fun JfPickContent(
             if (stream != null) {
                 NickButton(
                     if (k == 0) "Pick a tablet" else if (stream.count == 0) "No tablet can stream yet" else stream.label, stream.onStream,
-                    style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
+                    style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
                 )
                 Spacer(Modifier.height(12.dp))
                 NickButton(
                     "Save to tablets", onPrimary,
-                    style = BtnStyle.SECONDARY, big = true, leading = Lucide.Tablet, enabled = k > 0,
+                    style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.Tablet, enabled = k > 0,
                 )
                 Muted(TogetherText.STREAM_HINT, 15, Modifier.padding(top = 10.dp))
                 stream.convertedLine?.let { Muted(it, 15, Modifier.padding(top = 4.dp)) }
             } else NickButton(
                 if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
-                style = BtnStyle.PRIMARY, big = true, leading = Solid.Play, enabled = k > 0,
+                style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0,
             )
         } else {
             Title("Getting ready", 30)
@@ -703,7 +831,7 @@ internal fun JfPickContent(
             }
             note?.let { Muted(it, 16, Modifier.padding(top = 8.dp)) }
             Spacer(Modifier.height(20.dp))
-            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, big = true, leading = Lucide.X)
+            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.X)
         }
     }
 }
@@ -711,6 +839,14 @@ internal fun JfPickContent(
 /** One tablet that could not stream: why, and "Save to tablets instead" when saving would help. */
 @Composable
 internal fun StreamFailRow(f: com.nbaltas.nickos.master.StreamFail, who: String, modifier: Modifier = Modifier, onSave: () -> Unit) {
+    if (LocalPhone.current) {
+        // The reason gets the full width and wraps; the save button is a full-width row under it.
+        Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+            Text(TogetherText.streamError(who, f.code), style = body(14.sp, 500, 1.3f), color = C.danger)
+            if (f.canSaveInstead) NickButton(TogetherText.SAVE_INSTEAD, onSave, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+        }
+        return
+    }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(TogetherText.streamError(who, f.code), style = body(15.sp, 500, 1.3f), color = C.danger)
         if (f.canSaveInstead) NickButton(TogetherText.SAVE_INSTEAD, onSave, style = BtnStyle.SECONDARY)
@@ -724,6 +860,10 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
     val sync = master.sync
     val session by sync.session.collectAsState()
     val s = session ?: return onBack()
+    if (LocalPhone.current) {
+        PhoneGroupRemote(null, rememberScrollState(), onBack, onSaveInstead)
+        return
+    }
     val states by sync.states.collectAsState()
     val waiting by sync.waiting.collectAsState()
     val streamFails by sync.failed.collectAsState()
@@ -910,8 +1050,9 @@ private fun SkipButtonWatch(back: Boolean, secs: Int = 10, onClick: () -> Unit) 
 
 @Composable
 private fun VolumeCard(label: String, value: Int, onCommit: (Int) -> Unit) {
+    val phone = LocalPhone.current
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(C.surface).padding(18.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.cardRadius else 26.dp)).background(C.surface).padding(if (phone) PhoneMetrics.cardPadding else 18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -919,5 +1060,294 @@ private fun VolumeCard(label: String, value: Int, onCommit: (Int) -> Unit) {
             Text(label, style = body(17.sp, 700), color = C.text)
         }
         NickSlider(value / 100f, {}, { f -> onCommit((f * 100).toInt()) })
+    }
+}
+
+// ---------------- phone ----------------
+
+/** A button or field that fills the width on a phone and keeps its own size on a tablet. */
+@Composable
+internal fun fullOnPhone(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else Modifier
+
+/** The "back to <where>" pill, at least 48dp high. */
+@Composable
+internal fun PhoneBackChip(label: String, onBack: () -> Unit) {
+    Chip(Modifier.clickable(role = Role.Button, onClick = onBack), height = PhoneMetrics.minTarget) {
+        Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(20.dp))
+        Text(label, style = body(16.sp, 700), color = C.text, maxLines = 1)
+    }
+}
+
+/**
+ * Phone: which library is browsed, as a small label and ONE 48dp chip with a dropdown, on a row of its own. The Home/Movies/Shows/History
+ * bar stays the only segmented bar. [onPick] gets true for Jellyfin.
+ */
+@Composable
+internal fun SourceChip(jellyfin: Boolean, onPick: (Boolean) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = PhoneMetrics.gutter), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Muted("Source", 14, weight = 600, maxLines = 1)
+        Box {
+            Chip(Modifier.clip(RoundedCornerShape(24.dp)).clickable(role = Role.Button) { open = true }.testTag("source-chip"), height = PhoneMetrics.minTarget) {
+                Text(if (jellyfin) "Jellyfin" else "NickOS library", style = body(16.sp, 700), color = C.text, maxLines = 1)
+                Icon(Lucide.ChevronDown, null, tint = C.muted, modifier = Modifier.size(20.dp))
+            }
+            androidx.compose.material3.DropdownMenu(open, { open = false }) {
+                listOf(false to "NickOS library", true to "Jellyfin").forEach { (jf, label) ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(label, style = body(16.sp, if (jf == jellyfin) 700 else 500), color = C.text) },
+                        onClick = { open = false; onPick(jf) },
+                        modifier = Modifier.heightIn(min = PhoneMetrics.minTarget).then(if (jf) Modifier.testTag("jellyfin-library") else Modifier),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A phone media header, stacked: the art 160dp high at 16:9, then the title (24, wraps at words, three lines) and
+ * the meta line (14) under it. Nothing sits beside the title, so it can never be pushed off the right edge.
+ */
+@Composable
+internal fun PhoneMediaHeader(
+    art: @Composable (Modifier) -> Unit, eyebrow: String?, title: String, meta: String?,
+    eyebrowColor: Color = C.muted, extra: @Composable ColumnScope.() -> Unit = {}, fullWidthArt: Boolean = false,
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+        art(if (fullWidthArt) Modifier.fillMaxWidth().aspectRatio(16f / 9f) else Modifier.height(160.dp).aspectRatio(16f / 9f))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            eyebrow?.let { EyebrowText(it, eyebrowColor) }
+            PhoneMediaTitle(title)
+            meta?.let { Text(it, style = body(14.sp, 500, 1.3f), color = C.muted) }
+            extra()
+        }
+    }
+}
+
+/** A compact list row for a movie or show: 112x72 art, a weighted title (18, two lines) and the lines under it (14). */
+@Composable
+internal fun PhoneMediaRow(art: @Composable (Modifier) -> Unit, title: String, onClick: () -> Unit, meta: @Composable ColumnScope.() -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 72.dp).clip(RoundedCornerShape(PhoneMetrics.nestedRadius)).clickable(role = Role.Button, onClick = onClick).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap),
+    ) {
+        art(Modifier.size(112.dp, 72.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = body(18.sp, 700, 1.25f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            meta()
+        }
+    }
+}
+
+/**
+ * One tablet in a pick or progress list, as a Column: avatar, weighted name (18) and status (14) on top with [top] at the end,
+ * then [below] (a progress bar, an error) across the full width.
+ */
+@Composable
+internal fun PhoneDeviceRowBase(
+    avatar: @Composable () -> Unit, name: String, status: String?,
+    top: @Composable RowScope.() -> Unit = {}, below: @Composable ColumnScope.() -> Unit = {},
+) {
+    Column(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.minTarget), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+            avatar()
+            Column(Modifier.weight(1f)) {
+                Text(name, style = body(18.sp, 700, 1.25f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (status != null) Text(status, style = body(14.sp, 500, 1.3f), color = C.muted)
+            }
+            top()
+        }
+        below()
+    }
+}
+
+@Composable
+private fun PhoneDeviceRow(n: NodeView, status: String?, top: @Composable RowScope.() -> Unit = {}, below: @Composable ColumnScope.() -> Unit = {}) =
+    PhoneDeviceRowBase({ Avatar(n.node.name, n.node.color, n.node.avatar, 32.dp) }, n.node.name, status, top, below)
+
+/** A full-width 6dp bar, then the figures (14, tabular digits) with an optional 48dp cancel at the end. The bar eases over 150ms. */
+@Composable
+internal fun PhoneProgressLine(fraction: Float, text: String, onCancel: (() -> Unit)? = null) {
+    val shown by animateFloatAsState(fraction, tween(150), label = "progress")
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ProgressBar(shown, Modifier.fillMaxWidth(), height = 6.dp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, style = body(14.sp, 600, 1.3f).copy(fontFeatureSettings = "tnum"), color = C.muted, modifier = Modifier.weight(1f))
+            if (onCancel != null) IconCircle(Lucide.X, onCancel, label = "Cancel")
+        }
+    }
+}
+
+@Composable
+private fun PhoneJfPickContent(
+    item: JfItem, nodes: List<NodeView>, selected: Set<String>, onToggle: (String, Boolean) -> Unit,
+    prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
+    onRetryRow: (String) -> Unit, onRetrySave: () -> Unit, onCancel: () -> Unit, stream: JfStreamUi?, art: String?,
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PhoneMetrics.gutter), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+        PhoneBackChip("Jellyfin", onBack)
+        PhoneMediaHeader(
+            art = { MovieThumb(null, item.displayTitle, it, radius = PhoneMetrics.nestedRadius, showTitle = false, art = art) },
+            eyebrow = if (item.isEpisode) "${item.epCode} · ${item.name}" else null, title = item.displayTitle,
+            meta = if (item.runMin > 0) minutesText(item.runMin) else "Length unknown",
+        )
+        if (prep == null) {
+            nodes.forEach { n ->
+                val capable = n.status?.supportsSync == true
+                PhoneDeviceRow(n, status = if (!capable) "Update needed" else if (!n.online) "Offline" else null, top = {
+                    if (capable && n.online) NickSwitch(n.node.id in selected) { on -> onToggle(n.node.id, on) }
+                })
+            }
+            note?.let { Muted(it, 14) }
+            stream?.failures?.forEach { f ->
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+                    Text(f.text, style = body(14.sp, 500, 1.3f), color = C.danger)
+                    if (f.canSave) NickButton(TogetherText.SAVE_INSTEAD, { stream.onSaveInstead(f.id) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                }
+            }
+            Spacer(Modifier.height(PhoneMetrics.relatedGap))
+            val k = selected.size
+            if (stream != null) {
+                NickButton(
+                    if (k == 0) "Pick a tablet" else if (stream.count == 0) "No tablet can stream yet" else stream.label, stream.onStream,
+                    Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
+                )
+                NickButton("Save to tablets", onPrimary, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY, leading = Lucide.Tablet, enabled = k > 0)
+                Muted(TogetherText.STREAM_HINT, 14)
+                stream.convertedLine?.let { Muted(it, 14) }
+            } else NickButton(
+                if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
+                Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0,
+            )
+        } else {
+            Title("Getting ready", 40)
+            if (prep.saveFraction != null) {
+                PhoneDeviceRowBase({ Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(32.dp)) }, "Saving to this ${selfNoun()}", null) {
+                    PhoneProgressLine(prep.saveFraction, "${(prep.saveFraction * 100).toInt()}%")
+                }
+            }
+            (prep.saveError ?: prep.stuck)?.let {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
+                    Text(it, style = body(14.sp, 500, 1.3f), color = if (prep.saveError != null) C.danger else C.text)
+                    NickButton("Try again", onRetrySave, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                }
+            }
+            prep.rows.forEach { r ->
+                val n = nodes.firstOrNull { it.node.id == r.id } ?: return@forEach
+                val bar = r.fraction != null && !r.ready && !r.failed
+                PhoneDeviceRow(n, status = if (r.failed || bar) null else r.text) {
+                    if (r.failed) {
+                        Text(r.error ?: r.text, style = body(14.sp, 500, 1.3f), color = C.danger)
+                        NickButton("Try again", { onRetryRow(r.id) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                    } else if (bar) PhoneProgressLine(r.fraction!!, r.text)
+                }
+            }
+            note?.let { Muted(it, 14) }
+            Spacer(Modifier.height(PhoneMetrics.relatedGap))
+            NickButton("Cancel", onCancel, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY, leading = Lucide.X)
+        }
+    }
+}
+
+/**
+ * The Together remote on a phone, shared by the Together screen ([nodeId] null: the whole group, with its volume and the
+ * tablet list) and Control's Now Playing tab for one tablet ([nodeId] set: just the transport). A stacked media header,
+ * the seek bar, a reserved status slot so the controls never jump, then play 72 / skip 56 and an equal Next + Stop row.
+ */
+@Composable
+internal fun PhoneGroupRemote(
+    nodeId: String?, scroll: ScrollState, onBack: (() -> Unit)? = null,
+    onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit,
+) {
+    val app = App.get(LocalContext.current)
+    val master = app.master
+    val sync = master.sync
+    val session by sync.session.collectAsState()
+    val s = session ?: return
+    if (nodeId != null && nodeId !in s.nodes) return
+    val states by sync.states.collectAsState()
+    val waiting by sync.waiting.collectAsState()
+    val streamFails by sync.failed.collectAsState()
+    rememberNow(500)
+    val pos = sync.expectedPos()
+    val nodes = rememberNodeViews().filter { it.node.id in s.nodes }
+    val library = remember(s.fid) { sync.library() }
+    val thumbs by sync.thumbs.collectAsState()
+    val item = library.firstOrNull { it.fid == s.fid }
+    val epLabel = item?.episode?.let { TogetherText.episodeLine(it) }
+    val next = sync.next()
+    val starting = sync.starting()
+    val bg = thumbs[s.fid]
+
+    Box(Modifier.fillMaxSize()) {
+        // A plain dark gradient: a blurred copy of the poster behind the content read as a shape.
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to C.bg.copy(alpha = 0.92f), 1f to C.bg)))
+        Column(
+            Modifier.fillMaxSize().verticalScroll(scroll).padding(PhoneMetrics.gutter),
+            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap),
+        ) {
+            if (onBack != null) BackButton(onBack)
+            PhoneMediaHeader(
+                art = { MovieThumb(bg, s.title, it, radius = PhoneMetrics.nestedRadius, showTitle = false, art = s.art) },
+                eyebrow = if (epLabel != null) "Watching together · $epLabel" else "Watching together", eyebrowColor = C.accent,
+                title = s.title, meta = if (nodeId == null) "On ${TogetherText.join(nodes.map { it.node.name })}" else null,
+                fullWidthArt = true,
+            )
+            // One line tall, kept under the title (not between the times and the buttons) so it leaves no gap above the transport row.
+            Column(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalArrangement = Arrangement.Center) {
+                if (starting > 0) Text("Starting on $starting tablets...", style = body(16.sp, 500, 1.3f), color = C.muted)
+                waiting?.let { Text(it, style = body(16.sp, 700, 1.3f), color = C.accent) }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (s.durMs > 0) {
+                    NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })
+                    PhoneTimes(fmtMs(pos), fmtMs(s.durMs))
+                } else {
+                    Box(Modifier.fillMaxWidth().height(PhoneMetrics.minTarget), contentAlignment = Alignment.Center) { ProgressBar(0f, height = 8.dp) }
+                    PhoneTimes("--:--", "--:--")
+                }
+            }
+            streamFails.values.filter { it.fid == s.fid && (nodeId == null || it.id == nodeId) }.forEach { f ->
+                StreamFailRow(f, sync.kid(f.id)) { onSaveInstead(f) }
+            }
+            PhoneTransport(playing = s.playing, backSecs = 10, fwdSecs = 10, onBack = { sync.skip(-10_000) }, onToggle = { sync.toggle() }, onForward = { sync.skip(10_000) })
+            PhoneNextStop(
+                showNext = item?.episode != null, nextEnabled = next != null, onNext = { sync.playNext() },
+                stopLabel = if (nodeId == null && nodes.size > 1) "Stop for everyone" else "Stop", onStop = { sync.stop() },
+            )
+            if (nodeId == null) {
+                val statuses = master.status.collectAsState().value
+                val avgVol = nodes.mapNotNull { statuses[it.node.id]?.volume }.let { if (it.isEmpty()) 50 else it.average().toInt() }
+                VolumeCard(if (nodes.size <= 1) "Volume" else "Everyone's volume", avgVol) { v -> nodes.filter { it.online }.forEach { master.setVolume(it.node.id, v) } }
+                if (nodes.size > 1) {
+                    EyebrowText("Tablets")
+                    nodes.forEach { n ->
+                        val line = sync.stateLine(n.node.id)
+                        val inSync = sync.inSync(n.node.id)
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding),
+                            verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) {
+                                Avatar(n.node.name, n.node.color, n.node.avatar, 32.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(n.node.name, style = body(18.sp, 700, 1.25f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (inSync) Dot(C.online, 8.dp)
+                                        Muted(line, 14)
+                                    }
+                                }
+                                IconCircle(Lucide.X, { sync.remove(n.node.id) }, label = "Remove ${n.node.name}")
+                            }
+                            NickSlider(
+                                (statuses[n.node.id]?.volume ?: 50) / 100f,
+                                {}, { f -> master.setVolume(n.node.id, (f * 100).toInt()) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
