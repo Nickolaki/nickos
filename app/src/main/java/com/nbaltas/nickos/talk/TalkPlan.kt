@@ -32,10 +32,10 @@ object TalkText {
     const val TRY_AGAIN = "Try again"
     const val CANT_HEAR = "Can't hear you: allow notifications on this tablet"
 
-    /** "Hailey", "Hailey, Leo", and a count once the list would be long. */
+    /** Every name: "Hailey", "Hailey, Leo", and from four on "Hailey, Leo, Mia and Sam". */
     fun who(names: List<String>): String = when {
         names.size <= 3 -> names.joinToString(", ")
-        else -> "${names.size} tablets"
+        else -> names.dropLast(1).joinToString(", ") + " and " + names.last()
     }
 
     fun talking(names: List<String>) = "Talking to ${who(names)}"

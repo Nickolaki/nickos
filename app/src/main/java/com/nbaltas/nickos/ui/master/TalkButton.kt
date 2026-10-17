@@ -73,7 +73,7 @@ fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, 
             Icon(Lucide.Mic, null, tint = if (bar.talking) C.onAccent else C.text, modifier = Modifier.size(22.dp))
             Text(bar.button, style = body(17.sp, 700), color = if (bar.talking) C.onAccent else C.text, maxLines = 1)
         }
-        Muted(bar.line, 16, Modifier, maxLines = 1)
+        Muted(bar.line, 16, Modifier, maxLines = 2)
     }
 }
 
