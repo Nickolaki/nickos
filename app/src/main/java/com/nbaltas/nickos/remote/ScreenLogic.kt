@@ -148,6 +148,9 @@ class ScreenKeys(private val newKey: () -> String) {
     /** Every key the stream accepts right now. */
     fun all(): Collection<String> = keys.values.toList()
 
+    /** Every key the stream accepts right now, by the Master it was made for. */
+    fun byMaster(): Map<String, String> = HashMap(keys)
+
     /** What [master] is told: the port and key only on a sealed link, while live, and only its own key. */
     fun stateFor(wire: String, control: String, port: Int, master: String, sealed: Boolean): RemoteMessages.State {
         val key = if (ScreenGate.allows(sealed) && wire == RemoteMessages.LIVE) keys[master] else null

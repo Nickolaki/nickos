@@ -2,7 +2,6 @@ package com.nbaltas.nickos.master
 
 import android.graphics.Bitmap
 import android.util.Log
-import com.nbaltas.nickos.cam.CamPlan
 import com.nbaltas.nickos.remote.RemoteMessages
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,13 +9,15 @@ import org.json.JSONObject
 
 /**
  * Watching, and touching, one kid tablet's screen at a time. [watch] asks the tablet to share; its `screenState` says
- * when the picture is live and where to read it; the pictures come through the same [MjpegClient] as a tablet camera.
+ * when the picture is live and where to read it; the pictures come through a [ScreenClient]: encrypted, and authenticated with this Master's own key.
  * Leaving the screen ([unwatch]) tells the tablet to stop. The tablet turns the stream off by itself too.
  */
 class ScreenController(
     private val send: (String, JSONObject) -> Boolean,
-    private val open: (url: String, onFrame: (MjpegClient.Frame) -> Unit, onEnded: (String) -> Unit) -> CamStream =
-        { url, onFrame, onEnded -> MjpegClient(url, onFrame, onEnded).start() },
+    /** This Master's id (12 hex) as the tablets know it. */
+    private val masterId: () -> String,
+    private val open: (host: String, port: Int, masterId: String, key: String, onFrame: (Bitmap) -> Unit, onEnded: (String) -> Unit) -> CamStream =
+        { host, port, id, key, onFrame, onEnded -> ScreenClient(host, port, id, key, onFrame, onEnded).start() },
 ) {
     private val lock = Any()
     private val hosts = HashMap<String, String>()
@@ -72,13 +73,16 @@ class ScreenController(
                 if (stream != null) { closeStream(); _lost.value = true }
                 return
             }
-            val url = CamPlan.streamUrl(hosts[id], s.port, s.key) ?: return
+            val host = hosts[id]
+            val key = s.key
+            if (host.isNullOrEmpty() || s.port !in 1..65535 || key.isNullOrEmpty()) return
+            val url = "$host:${s.port}#$key"
             if (url == streamUrl && stream != null) return
             closeStream()
             _lost.value = false
             streamUrl = url
             val mine = url
-            stream = open(url, { f -> if (streamUrl == mine) _frame.value = f.bitmap }, { reason -> onEnded(mine, reason) })
+            stream = open(host, s.port, masterId(), key, { b -> if (streamUrl == mine) _frame.value = b }, { reason -> onEnded(mine, reason) })
         }
     }
 

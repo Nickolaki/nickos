@@ -215,7 +215,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     /** Tablet cameras: the parent's toggles, each tablet's camera state and its stream. */
     val cam = CamController(this, store)
     /** Seeing and controlling a kid tablet's screen. */
-    val screen = ScreenController(send = { id, o -> send(id, o) })
+    val screen = ScreenController(send = { id, o -> send(id, o) }, masterId = { store.deviceId })
 
     /**
      * Push to talk. Audio frames never go through [send] (one ordered queue for every command to every tablet):

@@ -1,10 +1,5 @@
 package com.nbaltas.nickos.remote
 
-import com.nbaltas.nickos.node.CamServer
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -14,7 +9,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.TimeUnit
 
 /** The security fix round: sealed links only, an indicator before capture, control only while that Master watches. */
 @RunWith(RobolectricTestRunner::class)
@@ -191,84 +185,5 @@ class ScreenFixTest {
         assertEquals(s, RemoteMessages.decodeState(org.json.JSONObject(RemoteMessages.encodeState(s).toString())))
     }
 
-    // ---- control needs a real viewer of that Master ----
-
-    private val http = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
-    private val open = ArrayList<Response>()
-    private var server: CamServer? = null
-
-    @After
-    fun tearDown() {
-        open.forEach { it.close() }
-        server?.stop()
-    }
-
-    private fun get(s: CamServer, key: String): Response =
-        http.newCall(Request.Builder().url("http://127.0.0.1:${s.port}/cam?k=$key").build()).execute().also { open += it }
-
-    private fun waitFor(what: String, cond: () -> Boolean) {
-        val end = System.nanoTime() + 5_000_000_000L
-        while (!cond()) {
-            assertTrue("timed out: $what", System.nanoTime() < end)
-            Thread.sleep(20)
-        }
-    }
-
-    @Test
-    fun `only the Master whose key is reading can control, and not after it disconnects`() {
-        val k = keys()
-        val a = k.keyFor("A")
-        val b = k.keyFor("B") // B only sent screenStart
-        val s = CamServer(
-            "", onIdle = {}, preferredPort = 0, graceMs = 60_000, firstGraceMs = 60_000,
-            clock = { System.nanoTime() / 1_000_000 }, keys = { k.all() },
-        )
-        assertTrue(s.start())
-        server = s
-
-        // Before the first viewer connects, nobody controls.
-        assertFalse(k.mayControl("A", s.connectedKeys()))
-        assertFalse(k.mayControl("B", s.connectedKeys()))
-
-        val ra = get(s, a)
-        assertEquals(200, ra.code)
-        waitFor("A connected") { s.clientCount == 1 }
-        assertTrue(k.mayControl("A", s.connectedKeys()))
-        assertFalse("B never opened the stream", k.mayControl("B", s.connectedKeys()))
-
-        // A key nobody was given opens nothing.
-        assertEquals(403, get(s, "nope").code)
-        assertEquals(403, get(s, "").code)
-
-        // A leaves: A loses control at once.
-        ra.close()
-        waitFor("A gone") { s.clientCount == 0 }
-        assertFalse(k.mayControl("A", s.connectedKeys()))
-
-        // B reads for real: now B may, A still may not.
-        val rb = get(s, b)
-        assertEquals(200, rb.code)
-        waitFor("B connected") { s.clientCount == 1 }
-        assertTrue(k.mayControl("B", s.connectedKeys()))
-        assertFalse(k.mayControl("A", s.connectedKeys()))
-    }
-
-    @Test
-    fun `a Master that stopped loses its key and its reader is cut off`() {
-        val k = keys()
-        val a = k.keyFor("A")
-        val s = CamServer(
-            "", onIdle = {}, preferredPort = 0, graceMs = 60_000, firstGraceMs = 60_000,
-            clock = { System.nanoTime() / 1_000_000 }, keys = { k.all() },
-        )
-        assertTrue(s.start())
-        server = s
-        get(s, a)
-        waitFor("A connected") { s.clientCount == 1 }
-        k.remove("A")
-        s.dropKey(a)
-        waitFor("A cut off") { s.clientCount == 0 }
-        assertFalse(k.mayControl("A", s.connectedKeys()))
-        assertEquals(403, get(s, a).code)
-    }
+    // Control needs a real viewer of that Master: see ScreenServerTest.
 }

@@ -55,7 +55,7 @@ fun realDisplaySize(ctx: Context): Pair<Int, Int> {
 }
 
 /**
- * The kid tablet's screen, streamed to a parent as JPEGs through a [CamServer] of its own. The grown-up allows screen
+ * The kid tablet's screen, streamed to a parent as JPEGs through a [ScreenServer] (encrypted, one key per parent). The grown-up allows screen
  * capture once on this tablet (the grown-up menu). The grant is kept until a reboot, unlink, reset, or the system or the
  * grown-up ends it, because Android 14 and up ask again for every new grant.
  *
@@ -101,7 +101,7 @@ class ScreenStreamer(
     private var wake: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
 
-    @Volatile private var server: CamServer? = null
+    @Volatile private var server: ScreenServer? = null
     @Volatile private var gate = FrameGate(clock = clock)
     @Volatile private var sawFrame = false
     private var gen = 0
@@ -234,7 +234,7 @@ class ScreenStreamer(
         // Fresh keys for every stream, one for each Master that asked.
         keys.clear()
         viewers.forEach { keys.keyFor(it) }
-        val s = CamServer("", onIdle = { main.post { if (gen == run) { viewers.clear(); keys.clear(); stopNow() } } }, preferredPort = PORT, clock = clock, keys = { keys.all() })
+        val s = ScreenServer(onIdle = { main.post { if (gen == run) { viewers.clear(); keys.clear(); stopNow() } } }, preferredPort = PORT, clock = clock, keys = { keys.byMaster() })
         if (!s.start()) { indicator.clear(); consent.stop(); setWire(RemoteMessages.READY); return }
         server = s
         port = s.port
