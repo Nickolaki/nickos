@@ -52,8 +52,8 @@ class AndroidSpeaker(ctx: Context) : Speaker {
                 .setBufferSizeInBytes(maxOf(min, TalkMessages.FRAME_BYTES * TalkBudget.TRACK_FRAMES))
                 .setTransferMode(AudioTrack.MODE_STREAM).build()
             track = t
-            takeFocus()
             t.play()
+            takeFocus()
         } catch (e: Throwable) {
             close(false)
             throw e
@@ -67,29 +67,36 @@ class AndroidSpeaker(ctx: Context) : Speaker {
         return n
     }
 
-    @Synchronized
-    override fun close(flush: Boolean) {
-        if (closed) return
-        closed = true
-        val t = track
-        track = null
+    override fun closeUntil(deadlineNanos: Long) {
+        val t = synchronized(this) { if (closed) return else track }
         if (t != null) {
             try {
-                if (flush) waitPlayed(t)
-                // Whatever is still buffered is thrown away now, not played out: release to silence stays short.
-                t.pause(); t.flush()
+                while (System.nanoTime() < deadlineNanos) {
+                    val done = synchronized(this) { closed || t.playbackHeadPosition.toLong() >= framesWritten }
+                    if (done) break
+                    val remaining = deadlineNanos - System.nanoTime()
+                    if (remaining > 0) java.util.concurrent.TimeUnit.NANOSECONDS.sleep(minOf(remaining, 5_000_000L))
+                }
             } catch (_: Exception) {}
-            try { t.release() } catch (_: Exception) {}
         }
-        giveFocus()
+        close(false)
     }
 
-    /** The tail plays on for at most [DRAIN_MS] (a normal end), then the caller pauses and flushes. */
-    private fun waitPlayed(t: AudioTrack) {
-        val until = System.currentTimeMillis() + DRAIN_MS
-        while (System.currentTimeMillis() < until) {
-            if (t.playbackHeadPosition.toLong() >= framesWritten) return
-            Thread.sleep(20)
+    override fun close(flush: Boolean) {
+        if (flush) {
+            closeUntil(System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(DRAIN_MS))
+            return
+        }
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            val t = track
+            track = null
+            if (t != null) {
+                try { t.pause(); t.flush() } catch (_: Exception) {}
+                try { t.release() } catch (_: Exception) {}
+            }
+            giveFocus()
         }
     }
 

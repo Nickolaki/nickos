@@ -60,14 +60,9 @@ object EntryFlow {
         return !p.enabled(want.other) || p.setEnabled(want.other, false)
     }
 
-    /**
-     * What the running activity does about the wanted door. A parent who just opted in to the home screen keeps the
-     * running [Entry.PARENT] (the home request dialog is open over it): [Entry.MAIN] is only turned on, and turns
-     * [Entry.PARENT] off once it runs itself.
-     */
+    /** Move the running activity to the confirmed door, leaving only one launcher icon. */
     fun reconcile(p: EntryPort, want: Entry, running: Entry, role: Role, start: (Entry) -> Boolean, finish: () -> Unit): Boolean = when {
         running == want -> converge(p, want)
-        want == Entry.MAIN && role == Role.MASTER -> p.enabled(Entry.MAIN) || p.setEnabled(Entry.MAIN, true)
         else -> switchTo(p, want, start, finish)
     }
 }

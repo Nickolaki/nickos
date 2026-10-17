@@ -25,6 +25,9 @@ enum class StartScreen { HOME, KIOSK, ASK, MENU }
 
 /** Pure rules for launcher mode (the fallback for a tablet that was not factory reset). */
 object KioskPolicy {
+    fun parentScreenMayStay(setup: Boolean, existing: Boolean, parentMode: Boolean) =
+        parentMode || (setup && !existing)
+
     fun status(s: KioskState): KioskStatus {
         if (s.deviceOwner) return KioskStatus.Owner
         if (s.home) return KioskStatus.Ready

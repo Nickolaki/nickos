@@ -728,6 +728,8 @@ private fun HomeScreenRow() {
     var isHome by remember { mutableStateOf(isDefaultHome(ctx)) }
     val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) {
         isHome = isDefaultHome(ctx)
+        app.store.setMasterHomeOptIn(isHome == true)
+        EntrySwitch.applyStored(ctx)
     }
     // Turning it off opens no page, so look again right after any switch change. Android takes a moment to settle.
     androidx.compose.runtime.LaunchedEffect(optIn) {
@@ -739,7 +741,11 @@ private fun HomeScreenRow() {
     // Look again when the parent comes back from the system page.
     val lifecycle = (ctx as? androidx.lifecycle.LifecycleOwner)?.lifecycle
     androidx.compose.runtime.DisposableEffect(lifecycle) {
-        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) isHome = isDefaultHome(ctx) }
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+            isHome = isDefaultHome(ctx)
+            app.store.setMasterHomeOptIn(isHome == true)
+            EntrySwitch.applyStored(ctx)
+        } }
         lifecycle?.addObserver(obs)
         onDispose { lifecycle?.removeObserver(obs) }
     }
@@ -754,9 +760,15 @@ private fun HomeScreenRow() {
         NickSwitch(optIn) { on ->
             // On: the HOME offer is switched on before the system is asked. Off: the running activity switches the door back.
             if (on) EntrySwitch.enableMain(ctx)
-            app.store.setMasterHomeOptIn(on)
-            if (on) homeRequestIntent(ctx)?.let {
-                try { ask.launch(it) } catch (_: android.content.ActivityNotFoundException) {}
+            if (!on) app.store.setMasterHomeOptIn(false)
+            if (on) {
+                val request = homeRequestIntent(ctx)
+                if (request != null) {
+                    try { ask.launch(request) } catch (_: android.content.ActivityNotFoundException) { EntrySwitch.applyStored(ctx) }
+                } else {
+                    app.store.setMasterHomeOptIn(isDefaultHome(ctx) == true)
+                    EntrySwitch.applyStored(ctx)
+                }
             }
         }
     }

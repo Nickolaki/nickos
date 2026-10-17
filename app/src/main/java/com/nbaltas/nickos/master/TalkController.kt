@@ -175,8 +175,8 @@ class TalkController(
         @Volatile var active = true
         /** Start admission, start, cancellation and close of the microphone all go through this one lock. */
         val micLock = java.util.concurrent.locks.ReentrantLock()
-        /** Set under [micLock] by the cancellation or the close: from then on this press never starts its microphone. */
-        var closed = false
+        /** Cancellation is published without waiting for a slow microphone startup. */
+        @Volatile var closed = false
         /** Counted down once this press's microphone is closed. */
         val released = CountDownLatch(1)
     }
@@ -230,18 +230,10 @@ class TalkController(
             s
         }
         s.sender.finish()
-        // Cancellation and start admission share [Session.micLock]: when this returns, a start that was already
-        // admitted has finished and no later one is admitted, so a released press never opens the microphone afterwards.
-        cancelStart(s)
+        s.closed = true
         // The microphone itself is closed off the caller's thread (a finger lifting never waits for a slow close).
         scope.launch(io) { closeMic(s) }
         onStopped(reason)
-    }
-
-    /** Waits for an admitted start before acknowledging cancellation. */
-    private fun cancelStart(s: Session) {
-        s.micLock.lock()
-        try { s.closed = true } finally { s.micLock.unlock() }
     }
 
     // Every stop ends here, under the same lock the start takes (run off the caller's thread).
@@ -270,7 +262,7 @@ class TalkController(
                 return
             }
             s.micLock.lock()
-            val started = try { if (!s.active || s.closed) false else { s.mic.start(); true } } finally { s.micLock.unlock() }
+            val started = try { if (!s.active || s.closed) false else { s.mic.start(); if (!s.active || s.closed) { s.mic.stop(); false } else true } } finally { s.micLock.unlock() }
             if (!started) return
             val buf = ByteArray(TalkMessages.FRAME_BYTES)
             while (s.active) {

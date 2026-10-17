@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CommandDeliveryTest {
+    @Test fun `failed queued writes report only once per dying connection`() {
+        var failures = 0
+        val d = CommandDelivery { failures++ }
+        val tickets = List(5) { d.enqueue()!! }
+        tickets.forEach { d.complete(it, false) }
+        d.close()
+        assertEquals(1, failures)
+        assertNull(d.enqueue())
+    }
+
     @Test fun `closing a stalled link reports its queued and in flight commands once`() {
         var failures = 0
         val d = CommandDelivery { failures++ }

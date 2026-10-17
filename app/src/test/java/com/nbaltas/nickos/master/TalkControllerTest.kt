@@ -338,7 +338,7 @@ class TalkControllerTest {
         assertTrue(mic.stopped.get() >= 1)
     }
 
-    @Test fun `going to the background while the microphone is starting waits for the start, then closes it and records nothing`() {
+    @Test fun `going to the background during microphone start returns immediately and records nothing`() {
         val entered = CountDownLatch(1); val go = CountDownLatch(1)
         val closed = AtomicInteger(0); val reads = AtomicInteger(0)
         val slow = object : MicPort {
@@ -350,9 +350,11 @@ class TalkControllerTest {
         val ctl = TalkController(scope, { slow }, { w }, { true })
         ctl.press(listOf(tgt("a", "Hailey")))
         assertTrue(entered.await(3, TimeUnit.SECONDS))
-        Thread(Runnable { Thread.sleep(150); go.countDown() }).start()
+        val began = System.nanoTime()
         ctl.stop(TalkStop.BACKGROUNDED)
-        assertEquals("stop returns only after the start in progress has finished", 0L, go.count)
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began) < 100)
+        assertEquals(1L, go.count)
+        go.countDown()
         until("closed after the start") { closed.get() >= 1 }
         assertEquals("nothing was recorded", 0, reads.get())
         assertTrue(w.frames().isEmpty())
@@ -378,7 +380,7 @@ class TalkControllerTest {
         assertEquals("a microphone was opened after its press was released", 0, late.get())
     }
 
-    @Test fun `a start that is already admitted is waited for, a later one is refused`() {
+    @Test fun `an admitted start does not block release and is closed before recording`() {
         val inStart = CountDownLatch(1); val go = CountDownLatch(1)
         val starts = AtomicInteger(0); val finished = AtomicBoolean(false)
         val mic = object : MicPort {
@@ -389,9 +391,9 @@ class TalkControllerTest {
         val ctl = TalkController(scope, { mic }, { Wire() }, { true })
         ctl.press(listOf(tgt("a", "Hailey")))
         assertTrue(inStart.await(3, TimeUnit.SECONDS))
-        Thread(Runnable { Thread.sleep(600); go.countDown() }).start()
         ctl.stop(TalkStop.RELEASED)
-        assertTrue("stop returned while the start was still running", finished.get())
+        assertFalse("stop must return while startup is blocked", finished.get())
+        go.countDown()
         Thread.sleep(100)
         assertEquals(1, starts.get())
     }

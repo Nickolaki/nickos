@@ -125,6 +125,70 @@ class TalkPlayerTest {
         }
     }
 
+    @Test fun `one deadline includes writes and draining and cutoff interrupts an entered drain`() {
+        val ind = Indicator()
+        val draining = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val wrote = CountDownLatch(1)
+        val writeGate = CountDownLatch(1)
+        val sp = object : Speaker {
+            override fun open() {}
+            override fun write(pcm: ByteArray, off: Int, len: Int): Int {
+                wrote.countDown()
+                writeGate.await(2, TimeUnit.SECONDS)
+                Thread.sleep(40)
+                return len
+            }
+            override fun closeUntil(deadlineNanos: Long) {
+                draining.countDown()
+                // A stalled drain must not exclude the deadline's forced release.
+                released.await(2, TimeUnit.SECONDS)
+            }
+            override fun close(flush: Boolean) { released.countDown() }
+        }
+        val p = TalkPlayer({ sp }, ind, { "Dad" }, {})
+        assertTrue(p.begin("s", "m"))
+        p.play(frame)
+        assertTrue(wrote.await(2, TimeUnit.SECONDS))
+        val began = System.nanoTime()
+        p.end(true)
+        writeGate.countDown()
+        assertTrue(draining.await(2, TimeUnit.SECONDS))
+        assertTrue(released.await(TalkBudget.RELEASE_TO_SILENCE_MS.toLong(), TimeUnit.MILLISECONDS))
+        val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began)
+        assertTrue("released after $elapsed ms", elapsed < TalkBudget.RELEASE_TO_SILENCE_MS)
+        until("indicator cleared") { ind.text == null }
+    }
+
+    @Test fun `tail allowed by the total budget is not cut at the old drain timeout`() {
+        val gate = CountDownLatch(1)
+        val wrote = CountDownLatch(1)
+        val count = AtomicInteger()
+        val ind = Indicator()
+        val closes = CopyOnWriteArrayList<Boolean>()
+        val sp = object : Speaker {
+            override fun open() {}
+            override fun write(pcm: ByteArray, off: Int, len: Int): Int {
+                wrote.countDown()
+                gate.await(2, TimeUnit.SECONDS)
+                Thread.sleep(40)
+                count.incrementAndGet()
+                return len
+            }
+            override fun close(flush: Boolean) { closes += flush }
+        }
+        val p = TalkPlayer({ sp }, ind, { "Dad" }, {})
+        p.begin("s", "m")
+        p.play(frame)
+        assertTrue(wrote.await(2, TimeUnit.SECONDS))
+        repeat(8) { p.play(frame) }
+        p.end(true)
+        gate.countDown()
+        until("tail done") { ind.text == null }
+        assertEquals(1 + TalkBudget.TAIL_FRAMES, count.get())
+        assertEquals(listOf(true), closes.toList())
+    }
+
     @Test fun `the indicator waits for a concurrent cutoff to finish closing the speaker`() {
         val writing = CountDownLatch(1)
         val cut = CountDownLatch(1)

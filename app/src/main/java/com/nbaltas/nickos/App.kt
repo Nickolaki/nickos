@@ -22,7 +22,7 @@ class App : Application() {
         super.onCreate()
         store.migrateKidLock() // before any screen decides whether this Node is an existing one
         // A parent tablet that already is the home screen (chosen before this version) keeps being offered.
-        if (store.role.value == Role.MASTER && !store.masterHomeOptIn.value && isDefaultHome(this) == true) store.setMasterHomeOptIn(true)
+        if (store.role.value == Role.MASTER) store.setMasterHomeOptIn(isDefaultHome(this) == true)
         EntrySwitch.apply(this, store.role.value, store.masterHomeOptIn.value)
         // An update does not run the provisioning callbacks: a Device Owner kid tablet puts its HOME choice back here, parent mode or not.
         if (store.role.value == Role.NODE) NodeDevice.makeHome(this)

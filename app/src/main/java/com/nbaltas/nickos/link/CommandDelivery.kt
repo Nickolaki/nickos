@@ -14,7 +14,7 @@ class CommandDelivery(private val failed: () -> Unit) {
 
     @Synchronized fun complete(ticket: Any, written: Boolean) {
         if (!pending.remove(ticket)) return
-        if (!written) failed()
+        if (!written) { closed = true; pending.clear(); failed() }
     }
 
     @Synchronized fun close() {

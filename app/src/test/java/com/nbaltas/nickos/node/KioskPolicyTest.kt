@@ -9,6 +9,15 @@ class KioskPolicyTest {
     private fun st(owner: Boolean = false, home: Boolean = false, overlay: Boolean = false, usage: Boolean = false, admin: Boolean = false) =
         KioskState(owner, home, overlay, usage, admin)
 
+    @Test fun `parent screens expire and only initial setup may stay without a PIN`() {
+        for (existing in listOf(false, true)) {
+            assertFalse(KioskPolicy.parentScreenMayStay(false, existing, false))
+            assertTrue(KioskPolicy.parentScreenMayStay(false, existing, true))
+            assertTrue(KioskPolicy.parentScreenMayStay(true, existing, true))
+            assertEquals(!existing, KioskPolicy.parentScreenMayStay(true, existing, false))
+        }
+    }
+
     @Test fun `device owner is the full lock whatever else is true`() {
         assertEquals(KioskStatus.Owner, KioskPolicy.status(st(owner = true)))
         assertFalse(KioskPolicy.setupNeeded(st(owner = true)))

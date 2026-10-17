@@ -112,6 +112,10 @@ open class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (app.store.role.value == Role.MASTER && app.store.masterHomeOptIn.value && isDefaultHome(this) != true) {
+            app.store.setMasterHomeOptIn(false)
+            EntrySwitch.applyStored(this)
+        }
         com.nbaltas.nickos.node.RotationRecovery.retry(this, app.store)
         if (app.store.role.value == Role.NODE && com.nbaltas.nickos.node.NodeSupport.ok()) {
             app.node.homeVisible = true

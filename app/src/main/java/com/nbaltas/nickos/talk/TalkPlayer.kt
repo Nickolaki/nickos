@@ -14,6 +14,8 @@ interface Speaker {
      * give up focus. Otherwise cut it off at once. Either way nothing buffered is played out later. Safe to call twice.
      */
     fun close(flush: Boolean)
+    /** One monotonic deadline shared by queued writes and speaker draining. A cut may interrupt a drain. */
+    fun closeUntil(deadlineNanos: Long) { close(true) }
 }
 
 /** What tells the people near the tablet that a parent is talking: the banner, and a notification when it cannot be drawn over an app. */
@@ -143,10 +145,23 @@ class TalkPlayer(
         @Volatile private var mode = Mode.OPEN
         private val closeLock = Any()
         private var speakerClosed = false
+        @Volatile private var deadlineNanos = Long.MAX_VALUE
+        private var draining = false
 
-        private fun closeSpeaker(flush: Boolean) = synchronized(closeLock) {
-            // The writer must wait for a concurrent cutoff to finish closing before clearing the indicator.
-            if (!speakerClosed) { speakerClosed = true; speaker.close(flush) }
+        private fun closeSpeaker(flush: Boolean) {
+            if (flush) {
+                val drain = synchronized(closeLock) {
+                    if (speakerClosed || draining) false else { draining = true; true }
+                }
+                if (drain) {
+                    try { speaker.closeUntil(deadlineNanos) } finally {
+                        synchronized(closeLock) { speakerClosed = true }
+                    }
+                }
+            } else synchronized(closeLock) {
+                // A cutoff can release the track while the writer is waiting for playback.
+                if (!speakerClosed) { speaker.close(false); speakerClosed = true }
+            }
         }
 
         /** Speaker and writer thread, or neither. */
@@ -168,15 +183,21 @@ class TalkPlayer(
         /** [flush]: keep only the short tail and play it. A cut always wins, also over a tail that is already playing. */
         fun close(flush: Boolean) {
             if (mode == Mode.OPEN) {
-                if (flush) dropAllButTail()
+                if (flush) {
+                    deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(TalkBudget.releaseTailMs.toLong())
+                    dropAllButTail()
+                }
                 mode = if (flush) Mode.FLUSHING else Mode.CUT
                 // A blocking AudioTrack write must not extend the tail. Pause and flush on another thread
                 // at the deadline; AndroidSpeaker allows close to interrupt a write already in progress.
                 cutoff.schedule({
                     mode = Mode.CUT
                     try { closeSpeaker(false) } catch (_: Throwable) {}
-                }, if (flush) TalkBudget.DRAIN_MS else 0L, TimeUnit.MILLISECONDS)
-            } else if (!flush && mode == Mode.FLUSHING) mode = Mode.CUT
+                }, if (flush) TalkBudget.releaseTailMs.toLong() else 0L, TimeUnit.MILLISECONDS)
+            } else if (!flush && mode == Mode.FLUSHING) {
+                mode = Mode.CUT
+                cutoff.execute { try { closeSpeaker(false) } catch (_: Throwable) {} }
+            }
         }
 
         /** The oldest [TalkBudget.TAIL_FRAMES] stay (the speech carries on from what is playing), the rest is dropped. */

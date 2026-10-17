@@ -33,6 +33,7 @@ private class FakeEntryPort(main: Boolean = true, parent: Boolean = false, val f
         writes += tag
         if (tag in failOn) return false
         state[e] = on
+        assertTrue("a component switch must always leave a launcher enabled", state.values.any { it })
         return true
     }
 }
@@ -115,17 +116,25 @@ class EntryFlowTest {
         assertEquals(listOf("MAIN:on", "PARENT:off"), p.writes)
     }
 
-    @Test fun `opting in only turns the plain door on and leaves the running parent door`() {
+    @Test fun `confirmed opt in switches to the plain door without duplicate icons`() {
         val p = FakeEntryPort(main = false, parent = true)
         var started = false
         assertTrue(EntryFlow.reconcile(p, Entry.MAIN, Entry.PARENT, Role.MASTER, start = { started = true; true }, finish = { started = true }))
-        assertFalse(started)
-        assertEquals(listOf("MAIN:on"), p.writes)
-        assertTrue(p.enabled(Entry.PARENT))
+        assertTrue(started)
+        assertEquals(listOf("MAIN:on", "PARENT:off"), p.writes)
+        assertFalse(p.enabled(Entry.PARENT))
         // Once the plain door runs, it turns the parent door off.
         assertTrue(EntryFlow.reconcile(p, Entry.MAIN, Entry.MAIN, Role.MASTER, start = { true }, finish = {}))
         assertFalse(p.enabled(Entry.PARENT))
         assertTrue(p.enabled(Entry.MAIN))
+    }
+
+    @Test fun `cancelled home request restores only the parent icon`() {
+        val p = FakeEntryPort(main = true, parent = true)
+        assertTrue(EntryFlow.converge(p, EntryPolicy.wanted(Role.MASTER, false)))
+        assertFalse(p.enabled(Entry.MAIN))
+        assertTrue(p.enabled(Entry.PARENT))
+        assertEquals(listOf("MAIN:off"), p.writes)
     }
 
     @Test fun `opting out switches back to the parent door in order`() {

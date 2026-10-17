@@ -555,10 +555,14 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         say("Didn't reach $name, try again")
     }
 
-    fun send(id: String, o: JSONObject): Boolean {
-        val c = links[id] ?: run { commandFailed(id); return false }
+    fun send(id: String, o: JSONObject, trackDelivery: Boolean = false): Boolean {
+        val c = links[id] ?: run { if (trackDelivery) commandFailed(id); return false }
+        if (!trackDelivery) {
+            sendLanes.launch(id) { try { c.send(o) } catch (_: Exception) {} }
+            return true
+        }
         val d = delivery(c, id)
-        val ticket = d.enqueue() ?: run { commandFailed(id); return false }
+        val ticket = d.enqueue() ?: return false
         sendLanes.launch(id) {
             if (d.maySend(ticket)) {
                 val written = try { c.send(o) } catch (_: Exception) { false }
@@ -567,6 +571,8 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
         }
         return true
     }
+
+    private fun sendControl(id: String, o: JSONObject) = send(id, o, trackDelivery = true)
 
     fun cmd(c: String) = JSONObject().put("t", "cmd").put("c", c)
 
@@ -591,43 +597,43 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
     fun setLandscape(id: String, on: Boolean) {
         // Remembered before sending: if the command is lost with a stuck link, the next connect sends it again.
         store.updateNode(id) { it.copy(landscape = on) }
-        send(id, NetMessages.orientationCmd(on))
+        sendControl(id, NetMessages.orientationCmd(on))
     }
 
-    fun setVolume(id: String, v: Int) { send(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
-    fun setBrightness(id: String, v: Int) { send(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }
-    fun screen(id: String, on: Boolean) { send(id, cmd("screen").put("on", on)); patch(id) { it.copy(screenOn = on) } }
+    fun setVolume(id: String, v: Int) { sendControl(id, cmd("volume").put("v", v)); patch(id) { it.copy(volume = v) } }
+    fun setBrightness(id: String, v: Int) { sendControl(id, cmd("brightness").put("v", v)); patch(id) { it.copy(brightness = v) } }
+    fun screen(id: String, on: Boolean) { sendControl(id, cmd("screen").put("on", on)); patch(id) { it.copy(screenOn = on) } }
     fun bedtime(id: String, minutes: Int) {
-        send(id, cmd("bedtime").put("minutes", minutes))
+        sendControl(id, cmd("bedtime").put("minutes", minutes))
         patch(id) { it.copy(bedtimeAt = if (minutes > 0) System.currentTimeMillis() + minutes * 60_000L else 0) }
     }
-    fun open(id: String, pkg: String) = send(id, cmd("open").put("pkg", pkg))
-    fun home(id: String) = send(id, cmd("home"))
+    fun open(id: String, pkg: String) = sendControl(id, cmd("open").put("pkg", pkg))
+    fun home(id: String) = sendControl(id, cmd("home"))
     fun allow(id: String, pkg: String, on: Boolean) {
-        send(id, cmd("allow").put("pkg", pkg).put("on", on))
+        sendControl(id, cmd("allow").put("pkg", pkg).put("on", on))
         patch(id) { it.copy(allowed = if (on) (it.allowed - pkg) + pkg else it.allowed - pkg) }
     }
-    fun lockToApp(id: String, pkg: String?) { send(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
+    fun lockToApp(id: String, pkg: String?) { sendControl(id, cmd("lockApp").put("pkg", pkg ?: "")); patch(id) { it.copy(lockedApp = pkg) } }
     /** A greyed Brightness or Off was tapped: make the Node pop up its own "Allow" card. An old Node ignores it. */
     fun askPermission(id: String): Boolean {
-        val sent = send(id, NetMessages.askPermissionCmd())
+        val sent = sendControl(id, NetMessages.askPermissionCmd())
         if (sent) _asked.update { it + (id to System.currentTimeMillis()) }
         return sent
     }
     fun requestApps(id: String) = send(id, cmd("apps"))
     /** The Node checks the update track itself and installs (silently when it has the kid lock). */
-    fun updateNode(id: String) = send(id, cmd("update"))
-    fun restartJellyfin(id: String) = send(id, cmd("restart"))
+    fun updateNode(id: String) = sendControl(id, cmd("update"))
+    fun restartJellyfin(id: String) = sendControl(id, cmd("restart"))
 
     /** Lock also pauses whatever is playing, so the show doesn't carry on behind the wall. */
     fun lock(id: String, on: Boolean) {
-        send(id, cmd("lock").put("on", on))
+        sendControl(id, cmd("lock").put("on", on))
         patch(id) { it.copy(lockedBy = if (on) displayName else null) }
         if (on) _playback.value[id]?.let { pb -> if (!pb.session.paused) control(id, "Pause") }
     }
 
     fun rename(id: String, name: String) {
-        send(id, cmd("rename").put("name", name))
+        sendControl(id, cmd("rename").put("name", name))
         store.updateNode(id) { it.copy(name = name) }
     }
 
@@ -752,7 +758,7 @@ class MasterRuntime(private val ctx: Context, private val store: Store) {
                 "Seek" -> if ((seekTicks ?: 0) < pb.positionTicks()) "rewind" else "forward"
                 else -> null
             }
-            if (key != null) send(id, this@MasterRuntime.cmd("media").put("key", key))
+            if (key != null) sendControl(id, this@MasterRuntime.cmd("media").put("key", key))
         }
         jf { it.playstate(pb.remoteSessionId, cmd, seekTicks) }
         // Reflect immediately; the next poll corrects it.

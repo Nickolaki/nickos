@@ -80,8 +80,8 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
     var pinFromAsk by remember { mutableStateOf(false) }
     // The parent window ran out while the setup was open on an existing Node: back to the card, watchdog on.
     LaunchedEffect(screen, existing) {
-        while (screen == NodeScreen.KIOSK) {
-            if (!KioskPolicy.setupMayStay(existing, rt.parentMode)) screen = NodeScreen.ASK
+        while (screen in setOf(NodeScreen.KIOSK, NodeScreen.MENU, NodeScreen.DRAWER, NodeScreen.PAIR)) {
+            if (!KioskPolicy.parentScreenMayStay(screen == NodeScreen.KIOSK, existing, rt.parentMode)) screen = NodeScreen.ASK
             kotlinx.coroutines.delay(1000)
         }
     }
@@ -128,7 +128,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
             null -> { walking = false; permTick++ }
         }
     }
-    onPermResult = { if (walking) nextPermScreen() }
+    onPermResult = { if (walking && windowOpen()) nextPermScreen() }
     val permWanted = remember(screen, permTick, masterAsked, walking, playing) {
         PermissionAsk.showCard(rt.device.isDeviceOwner, rt.device.brightnessOk, rt.device.screenOffOk, rt.permAsk.declined, playing, masterAsked, rt.device.notificationsOk)
     }
@@ -149,16 +149,16 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
                 },
             )
             NodeScreen.ASK -> AskGrownUpScreen(onPin = { pinFromAsk = true; screen = NodeScreen.PIN })
-            NodeScreen.DRAWER -> AppDrawer(onBack = { screen = NodeScreen.MENU }, onOpen = { rt.device.launch(it) })
+            NodeScreen.DRAWER -> AppDrawer(onBack = guarded { screen = NodeScreen.MENU }, onOpen = { if (windowOpen()) rt.device.launch(it) })
             NodeScreen.PAIR -> {
                 val code by rt.pairingCode.collectAsState()
                 val name by store.name.collectAsState()
                 val color by store.color.collectAsState()
                 val avatar by store.avatar.collectAsState()
-                LaunchedEffect(Unit) { rt.openPairing(); rt.paired.collect { screen = NodeScreen.HOME; onKidMode() } }
+                LaunchedEffect(Unit) { if (!windowOpen()) return@LaunchedEffect; rt.openPairing(); rt.paired.collect { screen = NodeScreen.HOME; onKidMode() } }
                 DisposableEffect(Unit) { onDispose { rt.closePairing() } } // Back or any exit must not leave the code live
                 Column(Modifier.fillMaxSize().background(C.bg)) {
-                    SetupHeader("Add a parent tablet", { rt.closePairing(); screen = NodeScreen.MENU })
+                    SetupHeader("Add a parent tablet", guarded { rt.closePairing(); screen = NodeScreen.MENU })
                     PairingCodeBody(name, color, avatar, code)
                 }
             }
@@ -226,7 +226,7 @@ fun NodeApp(onKidMode: () -> Unit, onParentMode: () -> Unit) {
         )
 
         if (showPermCard) PermissionCard(
-            onAllow = { rt.permAsk.begin(); tried.clear(); walking = true; nextPermScreen() },
+            onAllow = guarded { rt.permAsk.begin(); tried.clear(); walking = true; nextPermScreen() },
             onNotNow = { rt.permAsk.decline(); permTick++ },
         )
 
