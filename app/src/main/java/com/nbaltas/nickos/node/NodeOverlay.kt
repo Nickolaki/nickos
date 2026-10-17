@@ -90,6 +90,20 @@ class NodeOverlay(private val ctx: Context, private val store: Store, private va
         return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && talkOnScreen() } catch (e: InterruptedException) { false }
     }
 
+    /** Brings the overlay up to date on the main thread (and waits for it from another). True when "Parent is watching" really is on screen. */
+    fun refreshWatchAndWait(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) { update(); return watchOnScreen() }
+        val done = java.util.concurrent.CountDownLatch(1)
+        main.post { try { update() } catch (e: Exception) { android.util.Log.w("NickOS.Screen", "overlay", e) } finally { done.countDown() } }
+        return try { done.await(TALK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && watchOnScreen() } catch (e: InterruptedException) { false }
+    }
+
+    /** The pill was added without an exception and its window is attached (or at least has its parent). */
+    fun watchOnScreen(): Boolean {
+        val v = watchView ?: return false
+        return v.isAttachedToWindow || v.parent != null
+    }
+
     fun talkOnScreen(): Boolean {
         return talkView?.isAttachedToWindow == true
     }

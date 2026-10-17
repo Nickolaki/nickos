@@ -16,6 +16,8 @@ object RemoteMessages {
     const val NEEDS_CONSENT = "needs_consent"
     const val READY = "ready"
     const val LIVE = "live"
+    /** The kid tablet cannot show that a parent is watching (no overlay, no working notification), so it does not share. */
+    const val NEEDS_PERMISSION = "needs_permission"
 
     /** `status.control` and `screenState.control`. */
     const val CONTROL_OFF = "off"
@@ -24,7 +26,7 @@ object RemoteMessages {
     const val MIN_SWIPE_MS = 50L
     const val MAX_SWIPE_MS = 2000L
 
-    private val STATES = setOf(OFF, NEEDS_CONSENT, READY, LIVE)
+    private val STATES = setOf(OFF, NEEDS_CONSENT, READY, LIVE, NEEDS_PERMISSION)
 
     // ---- Master -> Node commands: {"t":"cmd","c":...} ----
 
@@ -35,6 +37,9 @@ object RemoteMessages {
         touch("swipe").put("x1", x1).put("y1", y1).put("x2", x2).put("y2", y2).put("ms", ms)
     fun cmdBack(): JSONObject = touch("back")
     fun cmdHome(): JSONObject = touch("home")
+
+    /** The commands that start, stop or steer the screen: a Node takes these only on a sealed link. */
+    fun isScreenCmd(c: String): Boolean = c == "screenStart" || c == "screenStop" || c == "touch"
 
     private fun cmd(name: String): JSONObject = JSONObject().put("t", "cmd").put("c", name)
     private fun touch(kind: String): JSONObject = cmd("touch").put("k", kind)

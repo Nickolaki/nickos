@@ -20,6 +20,7 @@ import com.nbaltas.nickos.link.NetMessages
 import com.nbaltas.nickos.link.NetWatch
 import com.nbaltas.nickos.link.Wire
 import com.nbaltas.nickos.remote.RemoteMessages
+import com.nbaltas.nickos.remote.ScreenGate
 import com.nbaltas.nickos.talk.TalkBannerPolicy
 import com.nbaltas.nickos.talk.TalkGate
 import com.nbaltas.nickos.talk.TalkIndicator
@@ -277,7 +278,11 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
 
     /** The screen, streamed to a parent that asks for it once a grown-up has allowed it on this tablet. */
     val screen = ScreenStreamer(ctx, this)
-    fun broadcastScreenState() = scope.launch { broadcast(screen.stateJson()); broadcast(status()) }
+    fun broadcastScreenState() = scope.launch {
+        // Each Master hears only its own key, and only on a sealed link.
+        sessions.forEach { (mid, c) -> c.send(screen.stateFor(mid, c.isSealed)) }
+        broadcast(status())
+    }
 
     @Synchronized
     fun start() {
@@ -387,10 +392,12 @@ class NodeRuntime(private val ctx: Context, private val store: Store) {
             _connected.value = sessions.map { it.first }.toSet()
             c.send(status())
             c.send(cam.stateJson()) // a Master that reconnects learns the camera is already on
-            c.send(screen.stateJson())
+            c.send(screen.stateFor(id, c.isSealed))
             while (true) {
                 val msg = c.read() ?: break
-                if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
+                // Screen start, stop and touch only on a sealed link, like talk: a legacy clear text session (v1) gets no key and no control.
+                if (msg.optString("t") == "cmd" && RemoteMessages.isScreenCmd(msg.optString("c")) && !ScreenGate.allows(c.isSealed)) Log.w(TAG, "screen command refused on an unsealed link")
+                else if (msg.optString("t") == "cmd") try { command(id, msg) } catch (e: Exception) { Log.w(TAG, "cmd ${msg.optString("c")} failed", e) }
                 // Audio only hands a frame over here; nothing on this thread waits for the speaker.
                 // And only on a sealed link: a legacy clear text session (v1) is refused talk.
                 else if (TalkMessages.isTalk(msg)) {

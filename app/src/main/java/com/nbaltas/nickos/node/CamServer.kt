@@ -36,8 +36,10 @@ class CamServer(
     /** A request must be complete this soon after connecting, however slowly its bytes trickle in. */
     private val headMs: Long = 5_000,
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
+    /** When set, any of these keys opens the stream (one per Master) and [key] is ignored. Read afresh for every request. */
+    private val keys: (() -> Collection<String>)? = null,
 ) {
-    private class Client(val socket: Socket) {
+    private class Client(val socket: Socket, val key: String) {
         /** When the write in progress began, 0 while waiting for a picture. */
         @Volatile var writeStart = 0L
         fun close() = try { socket.close() } catch (_: Exception) {}
@@ -62,6 +64,12 @@ class CamServer(
     val port: Int get() = server?.localPort ?: 0
 
     val clientCount: Int get() = clients.size
+
+    /** Closes every client that used [k] (its Master stopped watching or was unlinked). */
+    fun dropKey(k: String) { clients.filter { it.key == k }.forEach { it.close() } }
+
+    /** The keys that connected clients used. A key leaves this set when its client disconnects. */
+    fun connectedKeys(): Set<String> = clients.map { it.key }.toSet()
 
     @Synchronized
     fun start(): Boolean {
@@ -139,8 +147,13 @@ class CamServer(
         val parts = head.lineSequence().firstOrNull()?.trim()?.split(' ') ?: emptyList()
         if (parts.size < 2 || parts[0] != "GET" || parts[1].substringBefore('?') != "/cam") { refuse(s, "404 Not Found"); return null }
         val k = parts[1].substringAfter('?', "").split('&').firstOrNull { it.startsWith("k=") }?.substring(2) ?: ""
-        if (!MessageDigest.isEqual(k.toByteArray(Charsets.UTF_8), key.toByteArray(Charsets.UTF_8))) { refuse(s, "403 Forbidden"); return null }
-        val c = Client(s)
+        // Every key is compared, so the time taken does not tell which one matched.
+        var ok = false
+        for (good in keys?.invoke() ?: listOf(key)) {
+            if (MessageDigest.isEqual(k.toByteArray(Charsets.UTF_8), good.toByteArray(Charsets.UTF_8))) ok = true
+        }
+        if (!ok || k.isEmpty()) { refuse(s, "403 Forbidden"); return null }
+        val c = Client(s, k)
         val joined = synchronized(clients) {
             if (closed || clients.size >= MAX_CLIENTS) false
             else { clients += c; hadClient = true; emptySince = -1L; true }

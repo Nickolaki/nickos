@@ -43,6 +43,7 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.Title
 
+const val SCREEN_NEEDS_PERMISSION = "Can't share: allow notifications on this tablet"
 const val SCREEN_NEEDS_CONSENT = "Turn on screen sharing on the tablet (grown-up menu)"
 const val SCREEN_VIEW_ONLY = "View only. To touch the screen from here, turn on Let parents control this tablet in the grown-up menu."
 const val SCREEN_SECOND_PARENT = "To watch from a second parent tablet, add it with Pair another parent tablet in the grown-up menu."
@@ -116,6 +117,7 @@ internal fun ScreenViewer(
                     Muted("The picture stopped.", 20)
                     NickButton("Watch again", onWatchAgain, style = BtnStyle.PRIMARY)
                 }
+                state == RemoteMessages.NEEDS_PERMISSION -> Muted(SCREEN_NEEDS_PERMISSION, 20, Modifier.padding(32.dp), maxLines = 3)
                 state == RemoteMessages.NEEDS_CONSENT || state == RemoteMessages.OFF && frame == null -> Muted(SCREEN_NEEDS_CONSENT, 20, Modifier.padding(32.dp), maxLines = 3)
                 else -> Muted("Connecting", 20)
             }

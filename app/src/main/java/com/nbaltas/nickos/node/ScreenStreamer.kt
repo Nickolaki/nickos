@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -29,6 +30,9 @@ import com.nbaltas.nickos.data.Store
 import com.nbaltas.nickos.remote.FrameGate
 import com.nbaltas.nickos.remote.RemoteMessages
 import com.nbaltas.nickos.remote.ScreenConsent
+import com.nbaltas.nickos.remote.ScreenIndicator
+import com.nbaltas.nickos.remote.ScreenIndicatorPort
+import com.nbaltas.nickos.remote.ScreenKeys
 import com.nbaltas.nickos.remote.ScreenSize
 import com.nbaltas.nickos.remote.TouchLimiter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +77,21 @@ class ScreenStreamer(
     /** Masters that asked to watch and have not stopped. A touch is only taken from one of these, and only while live. */
     private val viewers = ConcurrentHashMap.newKeySet<String>()
 
+    /** One stream key per Master. A touch counts only while a stream client that used that Master's key is connected. */
+    private val keys = ScreenKeys { Store.randomHex(16) }
+
+    /** The pill over other apps, else a notification. Capture runs only while one of them is really showing. */
+    private val indicator = ScreenIndicator(object : ScreenIndicatorPort {
+        override fun canOverlay() = rt.device.canOverlay()
+        override fun showOverlay(): Boolean { _watching.value = true; return rt.overlay.refreshWatchAndWait() }
+        override fun overlayUp() = rt.overlay.watchOnScreen()
+        override fun hideOverlay() { if (_watching.value) { _watching.value = false; rt.overlay.refresh() } }
+        override fun noticeReady() = notice.ready()
+        override fun showNotice() = notice.show("Parent is watching")
+        override fun noticeUp() = notice.up()
+        override fun clearNotice() = notice.clear()
+    })
+
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
@@ -90,7 +109,6 @@ class ScreenStreamer(
 
     /** The state and the address told to the Masters. Read from socket threads. */
     @Volatile private var port = 0
-    @Volatile private var key: String? = null
     @Volatile private var wire = RemoteMessages.OFF
 
     private val _holding = MutableStateFlow(false)
@@ -107,7 +125,9 @@ class ScreenStreamer(
     /** The `control` field of the status. */
     fun controlWire(): String = if (RemoteInputService.running) RemoteMessages.CONTROL_READY else RemoteMessages.CONTROL_OFF
 
-    fun stateJson(): JSONObject = RemoteMessages.encodeState(RemoteMessages.State(wire, controlWire(), port, key))
+    /** What [masterId] is told. The port and that Master's own key go only to a sealed link, only while live. */
+    fun stateFor(masterId: String, sealed: Boolean): JSONObject =
+        RemoteMessages.encodeState(keys.stateFor(wire, controlWire(), port, masterId, sealed))
 
     private fun announce() { rt.broadcastScreenState() }
 
@@ -161,16 +181,25 @@ class ScreenStreamer(
     }
 
     /** Unlink, reset, or the grown-up menu: give the grant back. */
-    fun release() { main.post { consent.release(); viewers.clear(); drop(RemoteMessages.OFF) } }
+    fun release() { main.post { consent.release(); viewers.clear(); keys.clear(); drop(RemoteMessages.OFF) } }
 
     // ---- a parent asks ----
 
-    fun start(masterId: String) { main.post { viewers += masterId; startNow() } }
+    fun start(masterId: String) { main.post { viewers += masterId; keys.keyFor(masterId); startNow() } }
 
-    fun stop(masterId: String) { main.post { viewers -= masterId; if (viewers.isEmpty()) stopNow() } }
+    fun stop(masterId: String) { main.post { leave(masterId) } }
 
     /** A Master's link ended. */
-    fun masterGone(masterId: String) { main.post { viewers -= masterId; if (viewers.isEmpty()) stopNow() } }
+    fun masterGone(masterId: String) { main.post { leave(masterId) } }
+
+    /** The Master's key stops working at once, and a stream client that used it is cut off. */
+    private fun leave(masterId: String) {
+        val k = keys.get(masterId)
+        viewers -= masterId
+        keys.remove(masterId)
+        if (k != null) server?.dropKey(k)
+        if (viewers.isEmpty()) stopNow()
+    }
 
     private fun startNow() {
         val before = consent.state
@@ -194,12 +223,20 @@ class ScreenStreamer(
         val d = display
         val r = reader
         if (d == null || r == null) { consent.release(); setWire(RemoteMessages.OFF); return }
+        // The watching indicator first: no surface is attached and no viewer is let in until it is really showing.
+        if (!indicator.show()) {
+            Log.w(TAG, "no way to show that a parent is watching")
+            consent.stop()
+            setWire(RemoteMessages.NEEDS_PERMISSION)
+            return
+        }
         val run = ++gen
-        val k = Store.randomHex(16)
-        val s = CamServer(k, onIdle = { main.post { if (gen == run) { viewers.clear(); stopNow() } } }, preferredPort = PORT, clock = clock)
-        if (!s.start()) { consent.stop(); setWire(RemoteMessages.READY); return }
+        // Fresh keys for every stream, one for each Master that asked.
+        keys.clear()
+        viewers.forEach { keys.keyFor(it) }
+        val s = CamServer("", onIdle = { main.post { if (gen == run) { viewers.clear(); keys.clear(); stopNow() } } }, preferredPort = PORT, clock = clock, keys = { keys.all() })
+        if (!s.start()) { indicator.clear(); consent.stop(); setWire(RemoteMessages.READY); return }
         server = s
-        key = k
         port = s.port
         gate = FrameGate(clock = clock)
         sawFrame = false
@@ -207,7 +244,6 @@ class ScreenStreamer(
         holdAwake()
         try { d.setSurface(r.surface) } catch (e: Exception) { Log.w(TAG, "no surface", e) }
         setWire(RemoteMessages.LIVE)
-        setWatching(true)
         main.postDelayed(autoOff, CamMessages.MAX_MS)
         main.postDelayed(tick, TICK_MS)
     }
@@ -221,9 +257,9 @@ class ScreenStreamer(
         server?.stop()
         server = null
         port = 0
-        key = null
+        keys.clear()
         letSleep()
-        setWatching(false)
+        indicator.clear()
     }
 
     private val autoOff = Runnable { viewers.clear(); stopNow() }
@@ -232,6 +268,15 @@ class ScreenStreamer(
     private val tick = object : Runnable {
         override fun run() {
             val s = server ?: return
+            // Every second: still showing that a parent is watching? If not, the picture stops at once.
+            if (!indicator.maintain()) {
+                Log.w(TAG, "capture stopped: the watching indicator was lost")
+                viewers.clear()
+                stopNow()
+                setWire(RemoteMessages.NEEDS_PERMISSION)
+                announce()
+                return
+            }
             val n = s.clientCount
             if (n > kickedFor) kick()
             kickedFor = n
@@ -307,6 +352,9 @@ class ScreenStreamer(
      */
     fun touch(masterId: String, t: RemoteMessages.Touch) {
         if (wire != RemoteMessages.LIVE || masterId !in viewers) return
+        // This Master must be reading the picture itself: a client that used its own key is connected right now.
+        val s = server ?: return
+        if (!keys.mayControl(masterId, s.connectedKeys())) return
         if (!limiter.allow()) return
         when (t) {
             RemoteMessages.Touch.Home -> rt.device.goHome() // NickOS's home, not whatever launcher the system would pick
@@ -317,15 +365,6 @@ class ScreenStreamer(
     }
 
     // ---- the pill ----
-
-    private fun setWatching(on: Boolean) {
-        if (_watching.value == on) return
-        _watching.value = on
-        // The pill is a window over other apps. Without that permission a notification says the same.
-        if (rt.device.canOverlay()) { notice.clear(); rt.overlay.refresh() }
-        else if (on) notice.show("Parent is watching") else notice.clear()
-        if (!on) rt.overlay.refresh()
-    }
 
     // ---- bookkeeping ----
 
@@ -395,9 +434,23 @@ class ScreenStreamer(
 class ScreenNotice(private val ctx: Context) {
     private val nm = ctx.getSystemService(NotificationManager::class.java)
 
-    fun show(text: String) {
-        try {
-            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent watching", NotificationManager.IMPORTANCE_HIGH))
+    /** True when a notification posted now would really be seen: permission given (Android 13+), notifications on, channel not switched off. */
+    fun ready(): Boolean = try {
+        when {
+            Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> false
+            !nm.areNotificationsEnabled() -> false
+            Build.VERSION.SDK_INT >= 26 -> {
+                nm.createNotificationChannel(NotificationChannel(CHANNEL, "Parent watching", NotificationManager.IMPORTANCE_HIGH))
+                (nm.getNotificationChannel(CHANNEL)?.importance ?: NotificationManager.IMPORTANCE_NONE) != NotificationManager.IMPORTANCE_NONE
+            }
+            else -> true
+        }
+    } catch (e: Exception) { false }
+
+    /** True only when the notification was ready and Android took it without an exception. */
+    fun show(text: String): Boolean {
+        return try {
+            if (!ready()) return false
             nm.notify(ID, NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(text)
@@ -405,8 +458,12 @@ class ScreenNotice(private val ctx: Context) {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .build())
-        } catch (e: Exception) { Log.w("NickOS.Screen", "notice", e) }
+            true
+        } catch (e: Exception) { Log.w("NickOS.Screen", "notice", e); false }
     }
+
+    /** Still in the shade (the grown-up or kid may have swiped it away). */
+    fun up(): Boolean = try { nm.activeNotifications.any { it.id == ID } } catch (e: Exception) { false }
 
     fun clear() { try { nm.cancel(ID) } catch (_: Exception) {} }
 

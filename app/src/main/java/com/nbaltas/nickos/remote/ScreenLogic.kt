@@ -124,3 +124,91 @@ object TouchMap {
     fun toPixels(nx: Double, ny: Double, w: Int, h: Int): Pair<Float, Float> =
         (nx.coerceIn(0.0, 1.0) * (w - 1).coerceAtLeast(0)).toFloat() to (ny.coerceIn(0.0, 1.0) * (h - 1).coerceAtLeast(0)).toFloat()
 }
+
+/** Screen commands and the stream key travel only on a sealed link; a legacy clear text session (v1) gets neither. */
+object ScreenGate {
+    fun allows(sealed: Boolean) = sealed
+}
+
+/**
+ * One stream key per Master (128 bits each, made by [newKey]). A key is told only to the Master it belongs to, over its
+ * sealed link. Control belongs to a Master only while a stream client that used its key is connected.
+ */
+class ScreenKeys(private val newKey: () -> String) {
+    private val keys = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The key for [master], made on first use. */
+    fun keyFor(master: String): String = keys.computeIfAbsent(master) { newKey() }
+
+    fun get(master: String): String? = keys[master]
+
+    fun remove(master: String) { keys.remove(master) }
+    fun clear() = keys.clear()
+
+    /** Every key the stream accepts right now. */
+    fun all(): Collection<String> = keys.values.toList()
+
+    /** What [master] is told: the port and key only on a sealed link, while live, and only its own key. */
+    fun stateFor(wire: String, control: String, port: Int, master: String, sealed: Boolean): RemoteMessages.State {
+        val key = if (ScreenGate.allows(sealed) && wire == RemoteMessages.LIVE) keys[master] else null
+        return if (key == null) RemoteMessages.State(wire, control) else RemoteMessages.State(wire, control, port, key)
+    }
+
+    /** True only while a client that used this Master's key is among [connectedKeys]. */
+    fun mayControl(master: String, connectedKeys: Collection<String>): Boolean {
+        val k = keys[master] ?: return false
+        return k in connectedKeys
+    }
+}
+
+/** What the screen indicator needs from the tablet. Every `show` says whether the indicator really is up. */
+interface ScreenIndicatorPort {
+    fun canOverlay(): Boolean
+    /** Adds the "Parent is watching" pill; true only when it was added and is attached (or has a parent). */
+    fun showOverlay(): Boolean
+    fun overlayUp(): Boolean
+    fun hideOverlay()
+    /** Notifications allowed, enabled and the channel not blocked. */
+    fun noticeReady(): Boolean
+    /** Posts the notification; true only when it was posted. */
+    fun showNotice(): Boolean
+    fun noticeUp(): Boolean
+    fun clearNotice()
+}
+
+/**
+ * Keeps "a parent is watching" visible: the overlay pill, else a notification that will really be seen. Capture starts
+ * only when [show] says yes and goes on only while [maintain] does.
+ */
+class ScreenIndicator(private val port: ScreenIndicatorPort) {
+    enum class Way { NONE, OVERLAY, NOTICE }
+
+    var way = Way.NONE
+        private set
+
+    /** True when the indicator is up now. */
+    fun show(): Boolean {
+        if (port.canOverlay() && port.showOverlay()) { port.clearNotice(); way = Way.OVERLAY; return true }
+        if (port.noticeReady() && port.showNotice()) { port.hideOverlay(); way = Way.NOTICE; return true }
+        port.hideOverlay()
+        way = Way.NONE
+        return false
+    }
+
+    /** Every second while live. False means no indicator can be shown any more: stop capturing. */
+    fun maintain(): Boolean {
+        if (way == Way.OVERLAY && port.canOverlay() && port.overlayUp()) return true
+        if (way == Way.NOTICE && port.noticeReady() && port.noticeUp()) {
+            // The overlay may be back (permission given again): it is the better indicator.
+            if (port.canOverlay() && port.showOverlay()) { port.clearNotice(); way = Way.OVERLAY }
+            return true
+        }
+        return show()
+    }
+
+    fun clear() {
+        way = Way.NONE
+        port.hideOverlay()
+        port.clearNotice()
+    }
+}
