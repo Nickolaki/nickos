@@ -560,7 +560,7 @@ internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
                     val p = app.master.carNet.permissionToRequest()
                     if (p.isEmpty()) { app.master.carNet.recheck(); onNext() } else ask.launch(p.toTypedArray())
                 }, Modifier.widthIn(min = 160.dp), style = BtnStyle.PRIMARY)
-                NickButton("Not now", onNext, Modifier.widthIn(min = 160.dp), style = BtnStyle.GHOST)
+                NickButton("Not now", onNext, Modifier.widthIn(min = 160.dp).heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
             }
         }
     }
@@ -807,7 +807,7 @@ fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue:
                     horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
                 ) {
-                    NickButton("Add another tablet", onAnother, style = BtnStyle.GHOST, leading = Lucide.Plus)
+                    NickButton("Add another tablet", onAnother, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST, leading = Lucide.Plus)
                     NickButton(continueLabel, onContinue, Modifier.widthIn(min = 200.dp), BtnStyle.PRIMARY, trailing = Lucide.ChevronRight)
                 }
             }
@@ -934,7 +934,7 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
                     Column(m.widthIn(max = 520.dp)) {
                         JellyfinForm(onSaved = onDone, footer = { save, saving ->
                             FlowRow(Modifier.fillMaxWidth().padding(top = TabletParentMetrics.cardGap), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap, Alignment.End), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
-                                NickButton("Skip for now", onDone, style = BtnStyle.GHOST)
+                                NickButton("Skip for now", onDone, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
                                 NickButton(if (saving) "Saving…" else "Save & finish", save, style = BtnStyle.PRIMARY, enabled = !saving)
                             }
                         })

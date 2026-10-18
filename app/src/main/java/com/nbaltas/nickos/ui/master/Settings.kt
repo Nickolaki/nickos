@@ -327,7 +327,7 @@ private fun Modifier.panel(radius: Dp = 28.dp, h: Dp = 28.dp, v: Dp = 28.dp): Mo
 
 /** Phone buttons are full width and grow with the font; tablet buttons keep their fixed height. */
 @Composable
-private fun btnMod(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else if (LocalParentTablet.current) Modifier else Modifier.height(52.dp)
+private fun btnMod(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else if (LocalParentTablet.current) Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight) else Modifier.height(52.dp)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1033,7 +1033,7 @@ private fun <T> CamPrefRow(label: String, help: String, options: List<Pair<Strin
             }
         }
         val control: @Composable () -> Unit = {
-            Segmented(options.map { it.first to null }, selected, { onSelect(values[it]) })
+            Segmented(options.map { it.first to null }, selected, { onSelect(values[it]) }, labelSize = 14f, labelLine = 20f)
         }
         if (narrow) Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { text(Modifier.fillMaxWidth()); control() }
         else Row(verticalAlignment = Alignment.CenterVertically) { text(Modifier.weight(1f)); control() }

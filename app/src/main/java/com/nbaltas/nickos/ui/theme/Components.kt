@@ -657,6 +657,8 @@ fun Segmented(
     modifier: Modifier = Modifier,
     height: Dp = 56.dp,
     compact: Boolean = false,
+    labelSize: Float = 16f,
+    labelLine: Float = 20f,
 ) {
     val c = C
     if (LocalPhone.current) {
@@ -664,7 +666,7 @@ fun Segmented(
         return
     }
     if (LocalParentTablet.current) {
-        TabletSegmented(items, selected, onSelect, modifier, compact)
+        TabletSegmented(items, selected, onSelect, modifier, compact, labelSize, labelLine)
         return
     }
     Row(
@@ -722,7 +724,7 @@ private fun PhoneSegmented(items: List<Pair<String, ImageVector?>>, selected: In
  * More than 4 non-compact items scroll sideways instead of clipping. Colours fade over 120ms.
  */
 @Composable
-private fun TabletSegmented(items: List<Pair<String, ImageVector?>>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier, compact: Boolean) {
+private fun TabletSegmented(items: List<Pair<String, ImageVector?>>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier, compact: Boolean, labelSize: Float, labelLine: Float) {
     val c = C
     val scrolls = !compact && items.size > 4
     Row(
@@ -742,7 +744,7 @@ private fun TabletSegmented(items: List<Pair<String, ImageVector?>>, selected: I
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             ) {
                 if (icon != null) Icon(icon, if (compact) label else null, tint = col, modifier = Modifier.size(TabletParentMetrics.iconSize))
-                if (!compact || icon == null) Text(label, style = body(16.sp, 700, 1.25f), color = col, maxLines = if (scrolls) 1 else 2, textAlign = TextAlign.Center)
+                if (!compact || icon == null) Text(label, style = body(labelSize.sp, 700, labelLine / labelSize), color = col, maxLines = if (scrolls) 1 else 2, textAlign = TextAlign.Center)
             }
         }
     }

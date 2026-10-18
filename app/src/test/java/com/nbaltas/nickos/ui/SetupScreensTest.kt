@@ -76,6 +76,8 @@ class SetupScreensTest {
     @Config(sdk = [27]) @Test fun qrSetupWholeAtLandscape960() = assertQrWholeAndBigEnough(288)
     @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi") @Test fun qrSetupWholeAtLandscape1024() = assertQrWholeAndBigEnough(288)
     @Config(sdk = [27], qualifiers = "w600dp-h960dp-port-mdpi") @Test fun qrSetupWholeAtPortrait600() = assertQrWholeAndBigEnough(260)
+    // A short stacked window: the code card keeps its 292 minimum, so the code inside the padding stays 260 or more.
+    @Config(sdk = [27], qualifiers = "w700dp-h400dp-land-mdpi") @Test fun qrSetupBigEnoughInShortStackedWindow() = assertQrWholeAndBigEnough(260)
 
     @Test fun addTabletStillOffersQrSetupWhenWired() {
         rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { AddTabletScreen({}, "Master · Add tablet", onQr = {}) {} } } }

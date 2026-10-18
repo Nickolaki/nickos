@@ -823,7 +823,7 @@ private fun NothingPlaying(v: NodeView, phoneScroll: ScrollState, onFind: () -> 
                     )
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (st?.fg != null) NickButton("Bring back to home", { m.home(v.node.id) }, style = BtnStyle.GHOST, leading = Lucide.House)
+                        if (st?.fg != null) NickButton("Bring back to home", { m.home(v.node.id) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST, leading = Lucide.House)
                         NickButton("Find something to watch", onFind, style = BtnStyle.PRIMARY, leading = Lucide.Film)
                     }
                 }
@@ -997,7 +997,7 @@ private fun AppsTab(v: NodeView, phoneGrid: LazyGridState) {
             item(key = "actions", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NickButton("Bring back to home", { m.home(v.node.id) }, leading = Lucide.House)
+                    NickButton("Bring back to home", { m.home(v.node.id) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), leading = Lucide.House)
                     val locked = st?.lockedApp
                     when {
                         locked != null -> NickButton("Unlock ${apps?.firstOrNull { it.pkg == locked }?.label ?: "app"}", { m.lockToApp(v.node.id, null) }, style = BtnStyle.PRIMARY, leading = Lucide.LockOpen)
@@ -1535,7 +1535,7 @@ fun RenameDialog(current: String, title: String = "Rename tablet", onDone: (Stri
                 NickField(name, { name = it.take(28) })
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NickButton("Cancel", { onDone(null) }, style = BtnStyle.GHOST)
+                    NickButton("Cancel", { onDone(null) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
                     NickButton("Save", { onDone(name.trim()) }, style = BtnStyle.PRIMARY, enabled = name.isNotBlank())
                 }
             }

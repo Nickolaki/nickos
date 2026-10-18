@@ -85,10 +85,10 @@ fun QrSetupScreen(
         if (LocalParentTablet.current && !LocalPhone.current) {
             ParentContentCap(Modifier.weight(1f)) { i ->
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    // Steps beside a 320 code from 880 of content width; below it the code (at most 360, at least 260) comes first and the steps follow.
+                    // Steps beside a 320 code from 880 of content width; below it the code (at most 360, at least 292 so the code inside its padding is 260) comes first and the steps follow.
                     // The whole page scrolls, so the code, the checksum, the steps and both WiFi fields are always reachable.
                     val wide = i >= 880.dp
-                    val qrSize = if (wide) 320.dp else (maxHeight - 120.dp).coerceIn(260.dp, 360.dp).coerceAtMost(maxWidth)
+                    val qrSize = if (wide) 320.dp else (maxHeight - 120.dp).coerceIn(292.dp, 360.dp).coerceAtMost(maxWidth)
                     val steps: @Composable (Modifier) -> Unit = { mod ->
                         Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
                             Title("Set up a new kid tablet", 48)

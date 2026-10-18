@@ -147,6 +147,7 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.Segmented
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.dashed
@@ -858,7 +859,7 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                 NickButton("Save", save, act, style = BtnStyle.PRIMARY, enabled = canSave)
                 NickButton("Cancel", onDone, act, style = BtnStyle.GHOST)
             } else FlowRow(Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(12.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-                NickButton("Cancel", onDone, style = BtnStyle.GHOST)
+                NickButton("Cancel", onDone, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
                 NickButton("Save", save, style = BtnStyle.PRIMARY, enabled = canSave)
             }
         }
