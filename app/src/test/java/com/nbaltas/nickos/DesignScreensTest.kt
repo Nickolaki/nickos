@@ -1196,6 +1196,20 @@ class DesignScreensTest {
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun controlDeviceAllFeatures960() = deviceAllFeatures("960x600")
 
+    /** The same tablet at 1280x800 with the system font at 1.5 and 2.0 (JOB-0061): two columns, then one; the two-row header; 2x2 bedtime. */
+    private fun deviceAllFeaturesFont(name: String, scale: Float) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        tabletFont(name, scale) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280Font150() = deviceAllFeaturesFont("Control-Device-AllFeatures-1280x800-font150", 1.5f)
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280Font200() = deviceAllFeaturesFont("Control-Device-AllFeatures-1280x800-font200", 2f)
+
     /** The same page scrolled to the bottom: the last row of cards is complete, none is clipped inside. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
