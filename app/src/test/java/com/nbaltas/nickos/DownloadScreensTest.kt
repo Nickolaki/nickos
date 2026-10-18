@@ -17,6 +17,7 @@ import com.nbaltas.nickos.master.Progress
 import com.nbaltas.nickos.ui.master.SaveActions
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,8 +35,10 @@ class DownloadScreensTest {
     private fun shot(name: String, progress: Progress?, onTablet: Boolean = false) {
         rule.setContent {
             NickTheme {
-                Box(Modifier.fillMaxSize().background(C.bg).padding(40.dp)) {
-                    Box(Modifier.widthIn(max = 440.dp)) { SaveActions("Hailey's Tablet", progress, onTablet, {}, {}, {}, {}) }
+                ParentLayoutProvider {
+                    Box(Modifier.fillMaxSize().background(C.bg).padding(40.dp)) {
+                        Box(Modifier.widthIn(max = 400.dp)) { SaveActions("Hailey's Tablet", progress, onTablet, {}, {}, {}, {}) }
+                    }
                 }
             }
         }

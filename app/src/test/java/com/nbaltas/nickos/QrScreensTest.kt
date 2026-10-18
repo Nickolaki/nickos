@@ -14,6 +14,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import com.nbaltas.nickos.ui.master.QrSetupScreen
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -37,7 +38,7 @@ class QrScreensTest {
 
     private fun shot(name: String, sig: String?) {
         rule.setContent {
-            NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined, { sig }) } }
+            NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined, { sig }) } } }
         }
         rule.waitForIdle()
         rule.onRoot().captureRoboImage(
@@ -63,7 +64,7 @@ class QrScreensTest {
     @Test fun qr960() = shot("Master-QR-960", "x".repeat(43))
 
     @Test fun stepsUseTheNewCopy() {
-        rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined, { null }) } } }
+        rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { ParentLayoutProvider { QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined, { null }) } } } }
         rule.waitForIdle()
         rule.onNodeWithText("Start from a new or factory reset tablet", substring = true).assertExists()
         rule.onNodeWithText("A QR scanner opens.", substring = true).assertExists()

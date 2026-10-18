@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -138,6 +139,7 @@ import com.nbaltas.nickos.ui.theme.Chip
 import com.nbaltas.nickos.ui.theme.FieldLabel
 import com.nbaltas.nickos.ui.theme.IconCircle
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.tabletGutter
 import com.nbaltas.nickos.ui.theme.selfWords
 import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.disp
@@ -145,6 +147,7 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickButton
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.Segmented
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.dashed
@@ -373,22 +376,32 @@ fun CamerasScreen(
         }
     }
 
+    // Tablet parent chrome (JOB-0061 §2.7): 80 header, the page gutter, the mode control beside Add or, when it cannot fit, in its own row.
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    // The same 24dp edge as the stage, and the same centred 1536 inner bounds above that width, so chrome and tiles line up.
+    val chromeGutter = if (parentPhone) 16.dp else (24 + maxOf(0, (widthDp - 48 - 1536) / 2)).dp
+    val modeInHeader = widthDp >= 960 && LocalDensity.current.fontScale < 1.5f
+    val modeItems = listOf("Auto" to null, "Grid" to null, "Spotlight" to null)
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             if (parentPhone) PhoneHeader("Cameras", onBack) {
                 IconCircle(Lucide.Settings, { onSettings(2) }, size = 48.dp, label = "Settings")
                 IconCircle(Lucide.Plus, { openEditor(Camera(Store.randomHex(6), "")) }, size = 48.dp, bg = C.accent, tint = C.onAccent, label = "Add camera")
             } else Row(
-                Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 40.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 20.dp),
+                Modifier.fillMaxWidth().heightIn(min = 80.dp).padding(horizontal = chromeGutter),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 BackButton(onBack)
-                // Phone width: no room for a title (it truncated to "C..."), the tiles say what this is.
-                if (phone) Spacer(Modifier.weight(1f)) else Title("Cameras", 40, Modifier.weight(1f), maxLines = 1)
-                IconCircle(Lucide.Settings, { onSettings(2) }, size = if (phone) 48.dp else 60.dp)
-                if (roomy) Segmented(listOf("Auto" to null, "Grid" to null, "Spotlight" to null), override, { override = it })
-                // Phone width: "Add camera" leaves the title no room.
-                NickButton(if (phone) "Add" else "Add camera", { openEditor(Camera(Store.randomHex(6), "")) }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
+                Title("Cameras", 38, Modifier.weight(1f), maxLines = 1)
+                IconCircle(Lucide.Settings, { onSettings(2) }, label = "Settings")
+                if (modeInHeader) Segmented(modeItems, override, { override = it })
+                NickButton("Add camera", { openEditor(Camera(Store.randomHex(6), "")) }, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
+            }
+            // Below 960 (or at large text) the mode control gets its own row, scrolling sideways instead of clipping.
+            if (!parentPhone && !modeInHeader && (nodes.isNotEmpty() || cams.isNotEmpty())) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = chromeGutter).padding(bottom = 12.dp)) {
+                    Segmented(modeItems, override, { override = it })
+                }
             }
 
             if (nodes.isEmpty() && cams.isEmpty()) {
@@ -399,8 +412,8 @@ fun CamerasScreen(
             }
 
             LazyRow(
-                Modifier.fillMaxWidth().padding(bottom = if (parentPhone) 12.dp else 20.dp),
-                contentPadding = PaddingValues(horizontal = if (parentPhone) 16.dp else 40.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                Modifier.fillMaxWidth().padding(bottom = if (parentPhone) 12.dp else 16.dp),
+                contentPadding = PaddingValues(horizontal = chromeGutter), horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(tablets, key = { "t:${it.node.id}" }) { t ->
                     TabletChip(t) {
@@ -421,7 +434,7 @@ fun CamerasScreen(
             if (shownTargets.isNotEmpty()) TalkBarRow(
                 TalkBar.of(shownTargets, talkNow.takeIf { it.talking }?.names, talkNow.tryAgain),
                 onPress = { pressTalk("all", shownTargets) }, onRelease = { releaseTalk("all", it) },
-                modifier = Modifier.padding(start = if (parentPhone) 16.dp else 40.dp, end = if (parentPhone) 16.dp else 40.dp, bottom = if (parentPhone) 12.dp else 20.dp),
+                modifier = Modifier.padding(start = chromeGutter, end = chromeGutter, bottom = if (parentPhone) 12.dp else 16.dp),
             )
 
             if (roster.order.isEmpty()) {
@@ -429,7 +442,10 @@ fun CamerasScreen(
                 return@Column
             }
 
-            BoxWithConstraints(Modifier.fillMaxSize().padding(start = if (parentPhone) 16.dp else 40.dp, end = if (parentPhone) 16.dp else 40.dp, bottom = if (parentPhone) 16.dp else 40.dp)) {
+            // The stage: a 24dp gutter on a tablet (16 on a phone), at most 1536 wide, centred.
+            val stageGutter = if (parentPhone) 16.dp else 24.dp
+            Box(Modifier.fillMaxSize().padding(start = stageGutter, end = stageGutter, bottom = stageGutter), contentAlignment = Alignment.TopCenter) {
+            BoxWithConstraints(Modifier.widthIn(max = 1536.dp).fillMaxSize()) {
                 val density = LocalDensity.current
                 val w = constraints.maxWidth.toFloat()
                 val h = constraints.maxHeight.toFloat()
@@ -439,8 +455,9 @@ fun CamerasScreen(
                 val picked = visibleIds.indexOf(spotlight)
                 val mode = CamLayout.modeFor(n, CamLayout.Override.values()[override.coerceIn(0, 2)], picked >= 0)
                 val big = if (mode == CamLayout.Mode.SPOTLIGHT) picked.coerceAtLeast(0) else -1
-                val gap = with(density) { (if (parentPhone) 12.dp else 20.dp).toPx() }
-                val stripH = with(density) { CamLayout.stripHeight(wide, phone).dp.toPx() }
+                val gap = with(density) { (if (parentPhone) 12.dp else 16.dp).toPx() }
+                // The tablet spotlight strip is 128 in landscape and 112 in portrait; the phone keeps CamLayout's 100.
+                val stripH = with(density) { (if (parentPhone || phone) CamLayout.stripHeight(wide, phone) else if (wide) 128f else 112f).dp.toPx() }
                 val rects = CamLayout.rects(mode, n, w, h, gap, wide, picked.coerceAtLeast(0), stripH, if (phone) 2 else Int.MAX_VALUE, stackThree = parentPhone)
                 // Six or more sources: the strip runs off to the right and is dragged sideways. The spotlight never shrinks.
                 val overflow = if (mode == CamLayout.Mode.SPOTLIGHT) CamLayout.stripOverflow(n, w, gap, stripH) else 0f
@@ -489,7 +506,7 @@ fun CamerasScreen(
                                     // connection per camera, as before. The other tiles stay connected behind the
                                     // full screen view (simpler, and the small extra cost is theirs to keep).
                                     is RtspSource -> CamTile(
-                                        src, TileDisplay.LIVE, null, src.camera.rotation, prefs, live = live && full != id, compact = compact, leaving = leaving,
+                                        src, TileDisplay.LIVE, null, src.camera.rotation, prefs, live = live && full != id, compact = compact, editWhenShort = !(big >= 0 && i != big), leaving = leaving,
                                         onTap = onTap, onMaximize = { full = id }, onEdit = { openEditor(src.camera) },
                                         preset = says[src.camera.id] ?: rtspPreset[src.camera.id],
                                         onNews = { n -> onRtspNews(src.camera, n) },
@@ -499,6 +516,7 @@ fun CamerasScreen(
                         }
                     }
                 }
+            }
             }
         }
 
@@ -567,15 +585,16 @@ private fun CenterMessage(icon: androidx.compose.ui.graphics.vector.ImageVector,
         }
         return
     }
-    Column(
-        Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, bottom = 80.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
-    ) {
-        Box(Modifier.size(150.dp, 110.dp).dashed(C.line, 22.dp), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = C.muted, modifier = Modifier.size(38.dp))
+    // Tablet: one centred group (64 icon, 28 heading, 16 helper, at most 560 wide) that scrolls when the window is short.
+    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Icon(icon, null, tint = C.muted, modifier = Modifier.size(64.dp))
+            Text(title, style = disp(28.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center)
+            Text(text, style = body(16.sp, 500, 23f / 16), color = C.muted, textAlign = TextAlign.Center)
         }
-        Title(title, 44)
-        Muted(text, 20, Modifier.widthIn(max = 640.dp), maxLines = 6)
     }
 }
 
@@ -586,23 +605,16 @@ private fun TabletChip(t: TabletCam, onTap: () -> Unit) {
     val word = CamText.chip(t.armed, t.online, t.supportsCam, t.cam, t.display)
     val phone = LocalPhone.current
     // Phone: a 56dp pill capped at 200dp, so one long status cannot push its peers off screen. The tile holds the full reason.
+    // Tablet: a 56 high pill with a 32 avatar, the name at 15 over the status at 14, capped like the phone so one long status cannot push its peers away.
     Chip(
-        Modifier.alpha(if (t.online) 1f else 0.5f).then(if (phone) Modifier.widthIn(max = 200.dp) else Modifier).clip(RoundedCornerShape(if (phone) 28.dp else 22.dp)).tap(onTap),
-        height = if (phone) 56.dp else 44.dp,
-        bg = if (lit) C.accent else C.surface2, padding = PaddingValues(start = 8.dp, end = 18.dp),
+        Modifier.alpha(if (t.online) 1f else 0.5f).widthIn(max = 200.dp).clip(RoundedCornerShape(28.dp)).tap(onTap),
+        height = 56.dp,
+        bg = if (lit) C.accent else C.surface2, padding = PaddingValues(start = 8.dp, end = if (phone) 18.dp else 16.dp),
     ) {
-        Avatar(t.node.name, t.node.color, t.node.avatar, 28.dp)
-        if (phone) {
-            Column(Modifier.weight(1f, fill = false)) {
-                Text(kidName(t.node.name), style = body(16.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (word.isNotEmpty()) Text(word, style = body(14.sp, 500), color = if (lit) C.onAccent.copy(alpha = 0.8f) else C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        } else {
-            Text(kidName(t.node.name), style = body(17.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1)
-            if (word.isNotEmpty()) {
-                if (lit) Text(word, style = body(14.sp, 500), color = C.onAccent.copy(alpha = 0.8f), maxLines = 1)
-                else Muted(word, 14, maxLines = 1)
-            }
+        Avatar(t.node.name, t.node.color, t.node.avatar, if (phone) 28.dp else 32.dp)
+        Column(Modifier.weight(1f, fill = false)) {
+            Text(kidName(t.node.name), style = body(if (phone) 16.sp else 15.sp, 700), color = if (lit) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (word.isNotEmpty()) Text(word, style = body(14.sp, 500), color = if (lit) C.onAccent.copy(alpha = 0.8f) else C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -612,12 +624,11 @@ private fun TabletChip(t: TabletCam, onTap: () -> Unit) {
 private fun RtspChip(c: Camera, shown: Boolean, onTap: () -> Unit) {
     val phone = LocalPhone.current
     Chip(
-        Modifier.then(if (phone) Modifier.widthIn(max = 200.dp) else Modifier).clip(RoundedCornerShape(if (phone) 28.dp else 22.dp)).tap(onTap),
-        height = if (phone) 56.dp else 44.dp, bg = if (shown) C.accent else C.surface2,
+        Modifier.widthIn(max = 200.dp).clip(RoundedCornerShape(28.dp)).tap(onTap),
+        height = 56.dp, bg = if (shown) C.accent else C.surface2,
     ) {
-        Icon(Lucide.Cctv, null, tint = if (shown) C.onAccent else C.muted, modifier = Modifier.size(22.dp))
-        if (phone) Text(c.name, style = body(16.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        else Text(c.name, style = body(17.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1)
+        Icon(Lucide.Cctv, null, tint = if (shown) C.onAccent else C.muted, modifier = Modifier.size(if (phone) 22.dp else 20.dp))
+        Text(c.name, style = body(if (phone) 16.sp else 15.sp, 700), color = if (shown) C.onAccent else C.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
     }
 }
 
@@ -678,7 +689,7 @@ private fun TabletTile(
     // The tablet's "try again at" is on its own clock; retryAtLocal has already moved it onto this one.
     val retryIn = if (display == TileDisplay.TOO_HOT) cam?.retryAtLocal?.let { it - now } else null
     CamTile(
-        src, display, frame, rotation, prefs, live, compact, leaving, retryIn, cam?.minutes ?: prefs.maxMin,
+        src, display, frame, rotation, prefs, live, compact, leaving = leaving, retryInMs = retryIn, minutes = cam?.minutes ?: prefs.maxMin,
         onTap = onTap, onMaximize = onMaximize, onEdit = onRotate, onAction = onAction, talk = talk,
     )
 }
@@ -688,9 +699,11 @@ private fun TabletTile(
 private fun FullScreen(name: String, warm: Boolean, onBack: () -> Unit, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black).tap {}) {
         content()
-        Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Tablet: 16 inset, a 48 Back and an 18 name; the video behind it keeps its geometry. The phone keeps its own.
+        val phone = LocalPhone.current
+        Row(Modifier.padding(if (phone) 24.dp else 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 12.dp)) {
             BackButton(onBack)
-            Text(name, style = body(22.sp, 800), color = Color.White)
+            Text(name, style = body(if (phone) 22.sp else 18.sp, 800), color = Color.White)
             if (warm) WarmBadge(compact = false)
         }
     }
@@ -719,6 +732,7 @@ const val EDITOR_URL_HINT = "RTSP (go2rtc, another brand) or an HLS/HTTP video l
  * Tapo support opens in. The stream address built from the Tapo fields is never shown here.
  * [live] false is for screenshot tests: no search, [foundPreset] stands in for what it would find.
  */
+@kotlin.OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: List<String>, onSaved: () -> Unit, onDone: () -> Unit) {
     val app = App.get(LocalContext.current)
@@ -759,10 +773,12 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
     val tapoOk = LanAddress.octets(chosen) != null && user.isNotBlank() && pass.isNotBlank() && !colon
     val canSave = name.isNotBlank() && (if (useUrl) url.length > 8 else tapoOk)
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onDone).then(if (ph) Modifier.imePadding().navigationBarsPadding() else Modifier), contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(if (ph) 16.dp else 24.dp).clip(RoundedCornerShape(if (ph) 24.dp else 30.dp)).background(C.surface).tap {}) {
+    // Tablet: a panel of at most 560 (radius 24, padding 24) whose body scrolls on its own; the footer sits outside it and rises above the keyboard.
+    val help = if (ph) 16 else 14
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onDone).imePadding().navigationBarsPadding(), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = if (ph) 640.dp else 560.dp).fillMaxWidth().padding(if (ph) 16.dp else 24.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).tap {}) {
             Column(
-                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = if (ph) 16.dp else 32.dp, end = if (ph) 16.dp else 32.dp, top = if (ph) 20.dp else 28.dp),
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = if (ph) 16.dp else 24.dp, end = if (ph) 16.dp else 24.dp, top = if (ph) 20.dp else 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Title(if (isNew) "Add camera" else "Edit camera", 36)
@@ -770,7 +786,7 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
 
                 if (useUrl) {
                     Column { FieldLabel("Stream address"); NickField(url, { url = it.trim() }, keyboard = KeyboardType.Uri) }
-                    Muted(EDITOR_URL_HINT, 16)
+                    Muted(EDITOR_URL_HINT, help)
                 } else {
                     val chips = found.toList() + listOfNotNull(host.takeIf { !typing && it.isNotEmpty() && it !in found })
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -779,23 +795,24 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                             chips.forEach { h ->
                                 val sel = !typing && h == host
                                 Chip(Modifier.clip(RoundedCornerShape(22.dp)).tap { typing = false; host = h }, bg = if (sel) C.accent else C.surface2) {
-                                    Icon(Lucide.Cctv, null, tint = if (sel) C.onAccent else C.muted, modifier = Modifier.size(22.dp))
-                                    Text(EDITOR_FOUND_AT + h, style = body(17.sp, 700), color = if (sel) C.onAccent else C.text, maxLines = 1)
+                                    Icon(Lucide.Cctv, null, tint = if (sel) C.onAccent else C.muted, modifier = Modifier.size(if (ph) 22.dp else 20.dp))
+                                    Text(EDITOR_FOUND_AT + h, style = body(if (ph) 17.sp else 14.sp, 700), color = if (sel) C.onAccent else C.text, maxLines = 1)
                                 }
                             }
                         }
                         when {
-                            noNetwork -> Muted(EDITOR_NO_NETWORK.selfWords(LocalPhone.current), 16)
+                            noNetwork -> Muted(EDITOR_NO_NETWORK.selfWords(LocalPhone.current), help)
                             scanning -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PulseDot(live); Muted(EDITOR_LOOKING, 16)
+                                PulseDot(live); Muted(EDITOR_LOOKING, help)
                             }
-                            found.isEmpty() -> Muted(EDITOR_NOT_FOUND, 16, maxLines = if (ph) Int.MAX_VALUE else 6)
+                            found.isEmpty() -> Muted(EDITOR_NOT_FOUND, help, maxLines = if (ph) Int.MAX_VALUE else 8)
                         }
                         if (!scanning && found.isEmpty()) {
                             val again: @Composable () -> Unit = { NickButton("Look again", { typing = false; scanKey++ }, act, style = BtnStyle.GHOST) }
                             val type: @Composable () -> Unit = { if (!typing) NickButton("Type the address", { typing = true }, act, style = BtnStyle.GHOST) }
                             if (ph) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { again(); type() }
-                            else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { again(); type() }
+                            // The two actions wrap onto a second line when the panel is narrow.
+                            else FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { again(); type() }
                         }
                         if (typing) NickField(typed, { typed = it.trim() }, keyboard = KeyboardType.Uri, placeholder = "192.168.49.23")
                     }
@@ -805,23 +822,26 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
                     val password: @Composable (Modifier) -> Unit = { m ->
                         Column(m) { FieldLabel("Password"); NickField(pass, { pass = it }, password = true) }
                     }
+                    // Side by side only when the panel's inner width is 480 or more; otherwise they stack.
                     if (phone) { account(Modifier); password(Modifier) }
-                    else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { account(Modifier.weight(1f)); password(Modifier.weight(1f)) }
-                    if (colon) Muted(EDITOR_COLON, 16, maxLines = if (ph) Int.MAX_VALUE else 4)
-                    Muted(EDITOR_ACCOUNT_HINT, 16, maxLines = if (ph) Int.MAX_VALUE else 4)
+                    else BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        if (maxWidth >= 480.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { account(Modifier.weight(1f)); password(Modifier.weight(1f)) }
+                        else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { account(Modifier); password(Modifier) }
+                    }
+                    if (colon) Muted(EDITOR_COLON, help, maxLines = if (ph) Int.MAX_VALUE else 4)
+                    Muted(EDITOR_ACCOUNT_HINT, help, maxLines = if (ph) Int.MAX_VALUE else 4)
                     Column {
                         FieldLabel("Picture")
                         Segmented(listOf("Standard" to null, "High" to null), if (hd) 1 else 0, { hd = it == 1 })
                     }
-                    Muted(EDITOR_PICTURE_HINT, 16)
+                    Muted(EDITOR_PICTURE_HINT, help)
                 }
 
                 if (ph) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, act, leading = Lucide.RotateCwSquare)
                     if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, act, style = BtnStyle.DANGER, leading = Lucide.Trash2)
-                } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                } else FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                     NickButton("Rotate: ${rotation}°", { rotation = (rotation + 90) % 360 }, leading = Lucide.RotateCwSquare)
-                    Spacer(Modifier.weight(1f))
                     if (!isNew) NickButton("Remove", { store.removeCamera(c.id); onDone() }, style = BtnStyle.DANGER, leading = Lucide.Trash2)
                 }
                 NickButton(if (useUrl) "Use camera details instead" else "Use a stream address instead", { useUrl = !useUrl }, act, style = BtnStyle.GHOST)
@@ -838,8 +858,8 @@ private fun CameraEditor(c: Camera, isNew: Boolean, live: Boolean, foundPreset: 
             if (ph) Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 NickButton("Save", save, act, style = BtnStyle.PRIMARY, enabled = canSave)
                 NickButton("Cancel", onDone, act, style = BtnStyle.GHOST)
-            } else Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)) {
-                NickButton("Cancel", onDone, style = BtnStyle.GHOST)
+            } else FlowRow(Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(12.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                NickButton("Cancel", onDone, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
                 NickButton("Save", save, style = BtnStyle.PRIMARY, enabled = canSave)
             }
         }

@@ -110,6 +110,16 @@ import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalDensity
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.CompositionLocalProvider
@@ -155,6 +165,10 @@ fun SettingsScreen(section: Int?, onSection: (Int) -> Unit, onBack: () -> Unit, 
         return
     }
     val current = section ?: 0
+    if (LocalParentTablet.current) {
+        TabletSettings(current, onSection, onBack, onAdd)
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val panelW = if (maxWidth < 1000.dp) 250.dp else 320.dp
         Row(Modifier.fillMaxSize()) {
@@ -178,6 +192,75 @@ fun SettingsScreen(section: Int?, onSection: (Int) -> Unit, onBack: () -> Unit, 
                 Text("NickOS ${BuildConfig.VERSION_NAME}", style = body(15.sp), color = C.muted, modifier = Modifier.padding(horizontal = 18.dp))
             }
             Box(Modifier.weight(1f).fillMaxHeight()) { sectionPage(current, onAdd)() }
+        }
+    }
+}
+
+/** The category strip replaces the rail below 840 of width and whenever the font is 1.5 or larger. */
+internal fun settingsUsesStrip(widthDp: Float, fontScale: Float): Boolean = widthDp < 840f || fontScale >= 1.5f
+
+private val SETTINGS_MAIN_MAX = 864.dp
+
+/** The parent tablet shell (design §2.6): a 208 / 176 rail, or a category strip below 840 and at font 1.5+. The section is the caller's, so it survives the switch. */
+@Composable
+private fun TabletSettings(current: Int, onSection: (Int) -> Unit, onBack: () -> Unit, onAdd: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val strip = settingsUsesStrip(maxWidth.value, LocalDensity.current.fontScale)
+        // The page puts itself in the 24 inset and the 864 cap, so a scrim a page draws still covers the whole pane.
+        val main: @Composable () -> Unit = { Box(Modifier.fillMaxSize()) { sectionPage(current, onAdd)() } }
+        if (strip) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    BackButton(onBack)
+                    Title("Settings", 34, maxLines = 1)
+                }
+                val requesters = remember { List(sections.size) { BringIntoViewRequester() } }
+                LaunchedEffect(current) { requesters[current].bringIntoView() }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    sections.forEachIndexed { i, (label, icon) ->
+                        val on = i == current
+                        Row(
+                            Modifier.bringIntoViewRequester(requesters[i]).heightIn(min = TabletParentMetrics.minTarget).clip(RoundedCornerShape(TabletParentMetrics.buttonRadius))
+                                .background(if (on) C.surface2 else Color.Transparent)
+                                .selectable(selected = on, role = androidx.compose.ui.semantics.Role.Tab) { onSection(i) }.padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(icon, null, tint = if (on) C.accent else C.muted, modifier = Modifier.size(TabletParentMetrics.iconSize).then(if (i == 0) Modifier.rotate90() else Modifier))
+                            Text(label, style = body(16.sp, 700, 1.25f), color = if (on) C.text else C.muted, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.weight(1f).fillMaxWidth()) { main() }
+            }
+        } else {
+            val wide = maxWidth.value >= 960f
+            val labelSp = if (wide) 16.sp else 15.sp
+            Row(Modifier.fillMaxSize()) {
+                Column(Modifier.width(if (wide) 208.dp else 176.dp).fillMaxHeight().background(C.panel).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BackButton(onBack)
+                        Title("Settings", 34, maxLines = 1)
+                    }
+                    Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sections.forEachIndexed { i, (label, icon) ->
+                            val on = i == current
+                            Row(
+                                Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.minTarget).clip(RoundedCornerShape(TabletParentMetrics.buttonRadius))
+                                    .background(if (on) C.surface2 else Color.Transparent)
+                                    .selectable(selected = on, role = androidx.compose.ui.semantics.Role.Tab) { onSection(i) }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(icon, null, tint = if (on) C.accent else C.muted, modifier = Modifier.size(TabletParentMetrics.iconSize).then(if (i == 0) Modifier.rotate90() else Modifier))
+                                Text(label, style = body(labelSp, 700, 1.25f), color = if (on) C.text else C.muted, maxLines = 2)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("NickOS ${BuildConfig.VERSION_NAME}", style = body(14.sp, 500, 20f / 14), color = C.muted, modifier = Modifier.padding(horizontal = 10.dp))
+                }
+                Box(Modifier.weight(1f).fillMaxHeight()) { main() }
+            }
         }
     }
 }
@@ -239,12 +322,14 @@ private fun PhoneSettings(direct: Int?, onBack: () -> Unit, onAdd: () -> Unit) {
 @Composable
 private fun Modifier.panel(radius: Dp = 28.dp, h: Dp = 28.dp, v: Dp = 28.dp): Modifier =
     if (LocalPhone.current) clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+    else if (LocalParentTablet.current) clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(TabletParentMetrics.cardPadding)
     else clip(RoundedCornerShape(radius)).background(C.surface).padding(horizontal = h, vertical = v)
 
 /** Phone buttons are full width and grow with the font; tablet buttons keep their fixed height. */
 @Composable
-private fun btnMod(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else Modifier.height(52.dp)
+private fun btnMod(): Modifier = if (LocalPhone.current) Modifier.fillMaxWidth() else if (LocalParentTablet.current) Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight) else Modifier.height(52.dp)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SectionPage(title: String, action: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
     if (LocalPhone.current) {
@@ -255,6 +340,27 @@ private fun SectionPage(title: String, action: @Composable () -> Unit = {}, cont
                 verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardPadding),
             ) {
                 action()
+                content()
+            }
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // Heading 30 and the action (52) in one wrapping row, 16 between panels; the whole page scrolls above the keyboard.
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Column(
+                Modifier.fillMaxHeight().widthIn(max = SETTINGS_MAIN_MAX + 48.dp).fillMaxWidth().verticalScroll(rememberScrollState()).imePadding()
+                    .padding(start = 24.dp, end = 24.dp, top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            ) {
+                FlowRow(
+                    Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.primaryButtonHeight),
+                    horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Title(title, 46, Modifier.weight(1f, fill = false), maxLines = 2)
+                    action()
+                }
                 content()
             }
         }
@@ -281,22 +387,24 @@ private fun TabletsSection(onAdd: () -> Unit) {
     var renaming by remember { mutableStateOf<String?>(null) } // node id, or "" for this tablet
     var confirmUnlink by remember { mutableStateOf<String?>(null) }
     val phone = LocalPhone.current
+    val tab = !phone && LocalParentTablet.current
     SectionPage("Linked tablets", { NickButton("Add tablet", onAdd, if (phone) Modifier.fillMaxWidth() else Modifier, style = BtnStyle.PRIMARY, leading = Lucide.Plus) }) {
         Column(
             if (phone) Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(PhoneMetrics.cardRadius)).padding(PhoneMetrics.cardPadding)
+            else if (tab) Modifier.fillMaxWidth().border(1.dp, C.line, RoundedCornerShape(TabletParentMetrics.cardRadius)).padding(TabletParentMetrics.cardPadding)
             else Modifier.fillMaxWidth().border(2.dp, C.line, RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp)) {
-                Box(Modifier.size(if (phone) 32.dp else 60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
-                    Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(if (phone) 18.dp else 26.dp).rotate90())
+                Box(Modifier.size(if (phone) 32.dp else if (tab) 44.dp else 60.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Tablet, null, tint = C.onAccent, modifier = Modifier.size(if (phone) 18.dp else if (tab) 22.dp else 26.dp).rotate90())
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(name.ifBlank { "Parent's Tablet" }, style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.2f else 1.3f), color = C.text)
-                    Muted(if (phone) "This ${selfNoun(phone)} · Parent" else "This tablet · Master", 16)
+                    Text(name.ifBlank { "Parent's Tablet" }, style = body(if (phone || tab) 18.sp else 20.sp, 800, if (phone) 1.2f else 1.3f), color = C.text)
+                    Muted(if (phone) "This ${selfNoun(phone)} · Parent" else "This tablet · Master", if (tab) 14 else 16)
                 }
                 if (phone) IconCircle(Lucide.Pencil, { renaming = "" }, label = "Rename this ${selfNoun(phone)}")
-                else NickButton("Rename", { renaming = "" }, Modifier.height(52.dp), leading = Lucide.Pencil)
+                else NickButton("Rename", { renaming = "" }, if (tab) Modifier else Modifier.height(52.dp), leading = Lucide.Pencil)
             }
             val ctx = LocalContext.current
             val wake by app.store.powerWakeOnCharge.collectAsState()
@@ -315,21 +423,25 @@ private fun TabletsSection(onAdd: () -> Unit) {
                 owner.lifecycle.addObserver(obs)
                 onDispose { owner.lifecycle.removeObserver(obs) }
             }
-            PowerControls(wake, offMin, if (offMin > 0 && !canWrite) PowerPolicy.NEEDS_PERMISSION else null, { w, m ->
-                // Only picking a time opens the permission page, never the wake switch.
-                if (m > 0 && m != offMin && !canWrite) {
-                    try {
-                        ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } catch (_: Exception) {}
-                }
-                app.master.setOwnPower(w, m)
-            })
+            val power: @Composable (Float) -> Unit = { innerWidth ->
+                PowerControls(wake, offMin, if (offMin > 0 && !canWrite) PowerPolicy.NEEDS_PERMISSION else null, { w, m ->
+                    // Only picking a time opens the permission page, never the wake switch.
+                    if (m > 0 && m != offMin && !canWrite) {
+                        try {
+                            ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) {}
+                    }
+                    app.master.setOwnPower(w, m)
+                }, innerWidthDp = innerWidth)
+            }
+            // The tablet card measures its inner width (after the card padding) so the time choices can go six across; the phone keeps its own layout.
+            if (phone) power(0f) else BoxWithConstraints(Modifier.fillMaxWidth()) { power(maxWidth.value) }
         }
         CarNetCard()
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             views.forEach { v ->
                 val buttons: @Composable RowScope.() -> Unit = {
-                    val bm = if (phone) Modifier.weight(1f) else Modifier.height(52.dp)
+                    val bm = if (phone) Modifier.weight(1f) else if (tab) Modifier else Modifier.height(52.dp)
                     NickButton("Rename", { renaming = v.node.id }, bm, leading = Lucide.Pencil)
                     NickButton(if (confirmUnlink == v.node.id) "Sure?" else "Unlink", {
                         if (confirmUnlink == v.node.id) { app.master.unlink(v.node.id); confirmUnlink = null } else confirmUnlink = v.node.id
@@ -337,21 +449,24 @@ private fun TabletsSection(onAdd: () -> Unit) {
                 }
                 // Portrait tablets/phones: the buttons go on their own line, or they squeeze the name to nothing.
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val narrow = maxWidth < 680.dp
+                    // Parent tablet: the actions drop under the identity when the row is under 640 inside its padding, or at a large font.
+                    val narrow = if (tab) maxWidth < 680.dp || LocalDensity.current.fontScale >= 1.5f else maxWidth < 680.dp
                     Column(
                         // Design: min-height 96 on the content box, plus 16 padding top and bottom.
                         if (phone) Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+                        else if (tab) Modifier.fillMaxWidth().heightIn(min = 104.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(TabletParentMetrics.cardPadding)
                         else Modifier.fillMaxWidth().heightIn(min = 128.dp).clip(RoundedCornerShape(24.dp)).background(C.surface).padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 14.dp, Alignment.CenterVertically),
+                        verticalArrangement = Arrangement.spacedBy(if (phone) 12.dp else if (tab) TabletParentMetrics.relatedGap else 14.dp, Alignment.CenterVertically),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 18.dp)) {
-                            Avatar(v.node.name, v.node.color, v.node.avatar, if (phone) 40.dp else 60.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone || tab) 12.dp else 18.dp)) {
+                            Avatar(v.node.name, v.node.color, v.node.avatar, if (phone || tab) 40.dp else 60.dp)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(v.node.name, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.2f else 1.3f), color = C.text, maxLines = if (phone) 2 else 1)
-                                StatusLine(v, if (phone) 14 else 16, 10.dp, if (v.online) "Online" else statusText(v))
+                                Text(v.node.name, style = body(if (phone || tab) 18.sp else 22.sp, 800, if (phone) 1.2f else 1.3f), color = C.text, maxLines = if (phone || tab) 2 else 1)
+                                StatusLine(v, if (phone) 14 else if (tab) 14 else 16, 10.dp, if (v.online) "Online" else statusText(v))
                                 Muted(tabletNetLine(v.online, net[v.node.id], v.node.wifiSaved, hotspot), 15)
                             }
                             if (phone) Text(v.battery?.let { "$it%" } ?: "", style = body(14.sp, 700), color = if (v.online) C.text else C.muted, maxLines = 1, softWrap = false)
+                            else if (tab) Text(v.battery?.let { "$it%" } ?: "", style = disp(24.sp), color = if (v.online) C.text else C.muted, maxLines = 1, softWrap = false)
                             else Text(v.battery?.let { "$it%" } ?: "", style = disp(28.sp), color = if (v.online) C.text else C.muted, modifier = Modifier.width(90.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                             if (!narrow) buttons()
                         }
@@ -464,6 +579,7 @@ internal fun offlineTips(reason: Reason?, manualSsid: String?): List<Pair<TipIco
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CarNetCard() {
     val ctx = LocalContext.current
@@ -496,30 +612,31 @@ private fun CarNetCard() {
     }
     val up = state is CarNetState.On
     val phone = LocalPhone.current
+    val tab = !phone && LocalParentTablet.current
     Column(
         Modifier.fillMaxWidth().panel(24.dp, 22.dp, 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.heightIn(min = if (phone) 52.dp else 0.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.heightIn(min = if (phone) 52.dp else if (tab) TabletParentMetrics.primaryButtonHeight else 0.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("Car network", style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
+                Text("Car network", style = body(if (phone || tab) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
                 Muted(CARNET_SWITCH_HELP, 15)
             }
             NickSwitch(switchedOn) { app.store.setCarNetOn(it) }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 14.dp)) {
-            Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(if (phone) 22.dp else 26.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone || tab) 12.dp else 14.dp)) {
+            Icon(if (up) Lucide.Wifi else Lucide.WifiOff, null, tint = if (up) C.online else C.muted, modifier = Modifier.size(if (phone || tab) 22.dp else 26.dp))
             // The network name is one long token: on a phone it stays on one line and loses its middle rather than splitting mid-token (the full name is under Show).
             if (phone && state is CarNetState.On) Text(copy.title, style = body(18.sp, 800, 1.25f), color = C.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f))
-            else Text(copy.title, style = body(if (phone) 18.sp else 22.sp, 800, if (phone) 1.25f else 1.3f), color = C.text, maxLines = if (phone) Int.MAX_VALUE else 2, modifier = Modifier.weight(1f))
-            if (!phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
+            else Text(copy.title, style = body(if (phone || tab) 18.sp else 22.sp, 800, if (phone || tab) 1.25f else 1.3f), color = C.text, maxLines = if (phone) Int.MAX_VALUE else 2, modifier = Modifier.weight(1f))
+            if (!phone && !tab && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.height(52.dp))
         }
-        if (phone && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, Modifier.fillMaxWidth())
+        if ((phone || tab) && showSecret && state is CarNetState.On) NickButton(CARNET_HIDE, { showSecret = false }, if (phone) Modifier.fillMaxWidth() else Modifier)
         (state as? CarNetState.On)?.let { on ->
             // The password: this tablet's own record of it, never logged and never part of the state's toString.
             if (showSecret) CarNetSecret(on.ssid, on.pass ?: hotspot?.takeIf { it.direct && it.ssid == on.ssid }?.pass ?: app.store.carNetPass())
         }
-        copy.line?.let { Muted(it, 16) }
+        copy.line?.let { if (tab) Text(it, style = body(14.sp, 500, 20f / 14), color = C.muted) else Muted(it, 16) }
         val buttons: @Composable () -> Unit = {
             copy.primary?.let { b -> NickButton(b.label, { act(b.action) }, btnMod(), BtnStyle.PRIMARY) }
             if (up && !showSecret) NickButton(CARNET_SHOW, { showSecret = true }, btnMod(), BtnStyle.PRIMARY)
@@ -528,11 +645,17 @@ private fun CarNetCard() {
         if (copy.primary != null || copy.ghost != null || (up && !showSecret)) {
             // Phone: the actions stack, each the full width and at least 48dp; tablets keep one row.
             if (phone) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { buttons() }
+            else if (tab) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
             else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
         }
         if (copy.fields || reveal) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column { FieldLabel("Hotspot name"); NickField(name, { name = it }, Modifier.widthIn(max = 460.dp), placeholder = "e.g. Dad's phone") }
-            Column { FieldLabel("Password"); NickField(pass, { pass = it }, Modifier.widthIn(max = 460.dp), placeholder = "8 to 63 characters") }
+            val nameField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Hotspot name"); NickField(name, { name = it }, Modifier.widthIn(max = 460.dp), placeholder = "e.g. Dad's phone") } }
+            val passField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Password"); NickField(pass, { pass = it }, Modifier.widthIn(max = 460.dp), placeholder = "8 to 63 characters") } }
+            // Parent tablet: side by side from 600 of inner width, stacked below it.
+            if (tab) BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 600.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { nameField(Modifier.weight(1f)); passField(Modifier.weight(1f)) }
+                else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { nameField(Modifier); passField(Modifier) }
+            } else { nameField(Modifier); passField(Modifier) }
             NickButton("Save", {
                 app.store.setHotspot(Hotspot(name.trim(), pass, direct = false)); reveal = false
             }, btnMod(), BtnStyle.PRIMARY, enabled = hotspotFieldsOk(name.trim(), pass))
@@ -567,6 +690,30 @@ private fun CarNetSecret(ssid: String, pass: String) {
         }
         return
     }
+    if (LocalParentTablet.current) {
+        // Name / password at 18 on 25, labels 14, the 144 code on white with 12 quiet padding. Side by side only from 600 of inner width.
+        val text: @Composable (Modifier) -> Unit = { m ->
+            Column(m, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SelectionContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column { FieldLabel("Network name"); Text(ssid, style = body(18.sp, 800, 25f / 18), color = C.text) }
+                        Column { FieldLabel("Password"); Text(pass, style = body(18.sp, 800, 25f / 18), color = C.text) }
+                    }
+                }
+                Text(CARNET_SHARE_HELP, style = body(14.sp, 500, 20f / 14), color = C.muted)
+            }
+        }
+        val code: @Composable () -> Unit = {
+            Box(Modifier.size(168.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(Color.White).padding(12.dp), contentAlignment = Alignment.Center) {
+                Image(qr.asImageBitmap(), "Car network QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None)
+            }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth >= 600.dp) Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) { text(Modifier.weight(1f)); code() }
+            else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { text(Modifier.fillMaxWidth()); code() }
+        }
+        return
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SelectionContainer {
@@ -593,11 +740,12 @@ private fun JellyfinSection() {
     var picking by remember { mutableStateOf<LinkedNode?>(null) }
     var formKey by remember { mutableStateOf(0) }
     val phone = LocalPhone.current
+    val tab = !phone && LocalParentTablet.current
     SectionPage("Jellyfin", {
         if (account != null) NickButton("Disconnect", { app.store.setJellyfin(null); formKey++ }, if (phone) Modifier.fillMaxWidth() else Modifier, style = BtnStyle.DANGER)
     }) {
         Muted("Optional. The NickOS library works without it.", 15)
-        Column(Modifier.fillMaxWidth().panel(28.dp, 28.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp)) {
+        Column(Modifier.fillMaxWidth().panel(28.dp, 28.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(if (phone || tab) 16.dp else 22.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Dot(if (account != null) C.online else C.offline)
                 Text(if (account != null) "Connected" else "Not connected", style = body(18.sp, 700), color = if (account != null) C.online else C.muted)
@@ -612,7 +760,7 @@ private fun JellyfinSection() {
         }
         if (account != null && nodes.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().panel(28.dp, 28.dp, 28.dp)) {
-                Text("Whose library each tablet shows", style = body(if (phone) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
+                Text("Whose library each tablet shows", style = body(if (phone || tab) 18.sp else 20.sp, 800, if (phone) 1.25f else 1.3f), color = C.text)
                 Muted("Watch browses this Jellyfin user's library on each tablet.", 16)
                 Spacer(Modifier.height(10.dp))
                 nodes.forEach { n ->
@@ -625,6 +773,13 @@ private fun JellyfinSection() {
                         // The choice is its own 48dp action under the name.
                         Chip(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).clickable { picking = n }, height = 48.dp) {
                             Text("Jellyfin user: ${n.jfUserName ?: "Choose"}", style = body(14.sp, 700), color = C.text, modifier = Modifier.weight(1f))
+                            Icon(Lucide.ChevronRight, null, tint = C.text, modifier = Modifier.size(18.dp))
+                        }
+                    } else if (tab) Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Avatar(n.name, n.color, n.avatar, 40.dp)
+                        Text(n.name, style = body(18.sp, 700, 1.25f), color = C.text, modifier = Modifier.weight(1f), maxLines = 2)
+                        Chip(Modifier.clip(RoundedCornerShape(26.dp)).clickable(role = androidx.compose.ui.semantics.Role.Button) { picking = n }, height = 48.dp) {
+                            Text("Jellyfin user: ${n.jfUserName ?: "Choose"}", style = body(15.sp, 700, 1.3f), color = C.text, maxLines = 2)
                             Icon(Lucide.ChevronRight, null, tint = C.text, modifier = Modifier.size(18.dp))
                         }
                     } else Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -644,7 +799,7 @@ private fun JellyfinSection() {
         val users by produceState<List<JfUser>?>(null, jf) { value = try { jf?.users() } catch (e: Exception) { emptyList() } }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap { picking = null }, contentAlignment = Alignment.Center) {
             Column(
-                Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(if (phone) 16.dp else 24.dp).clip(RoundedCornerShape(if (phone) 20.dp else 30.dp)).background(C.surface).tap {}.padding(if (phone) 16.dp else 28.dp),
+                Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(if (phone) 16.dp else 24.dp).clip(RoundedCornerShape(if (phone) 20.dp else if (tab) TabletParentMetrics.dialogRadius else 30.dp)).background(C.surface).tap {}.padding(if (phone) 16.dp else if (tab) TabletParentMetrics.cardPadding else 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Title("${n.name} shows…", 32)
@@ -682,10 +837,19 @@ private fun PinSection() {
     val currentPin by app.store.pin.collectAsState()
     SectionPage("Parent PIN") {
         BoxWithConstraints {
-            val narrow = maxWidth < 800.dp
             val phone = LocalPhone.current
+            val tab = !phone && LocalParentTablet.current
+            // Parent tablet: the 400 PIN panel sits beside the words from 740 of inner width, under them below it.
+            val narrow = if (tab) maxWidth < 740.dp else maxWidth < 800.dp
             val text: @Composable (Modifier) -> Unit = { mod ->
                 Column(mod, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (tab) {
+                        Text("Used to leave kid mode on every Node tablet.", style = body(16.sp, 500, 22f / 16), color = C.text)
+                        Text("Changing it here updates all linked tablets.", style = body(14.sp, 500, 20f / 14), color = C.muted)
+                        if (com.nbaltas.nickos.node.PinPolicy.isWeak(currentPin)) Text("This is still the starting PIN. Anyone who knows NickOS knows it.", style = body(14.sp, 700, 20f / 14), color = C.danger)
+                        message?.let { (ok, m) -> Text(m, style = body(14.sp, 700, 20f / 14), color = if (ok) C.online else C.danger) }
+                        return@Column
+                    }
                     Text("Used to leave kid mode on every Node tablet.", style = body(if (phone) 16.sp else 21.sp, 500, 1.45f), color = C.text)
                     Muted("Changing it here updates all linked tablets.", 17)
                     if (com.nbaltas.nickos.node.PinPolicy.isWeak(currentPin)) Text("This is still the starting PIN. Anyone who knows NickOS knows it.", style = body(if (phone) 16.sp else 18.sp, 700, if (phone) 1.35f else 1.3f), color = C.danger)
@@ -695,10 +859,12 @@ private fun PinSection() {
             val pad: @Composable () -> Unit = {
                 Column(
                     (if (phone) Modifier.fillMaxWidth().clip(RoundedCornerShape(PhoneMetrics.cardRadius)).background(C.surface).padding(PhoneMetrics.cardPadding)
+                    else if (tab) Modifier.widthIn(max = 400.dp).fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(TabletParentMetrics.cardPadding)
                     else Modifier.widthIn(max = 484.dp).fillMaxWidth().clip(RoundedCornerShape(36.dp)).background(C.surface).padding(horizontal = 32.dp, vertical = 30.dp)),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (phone || tab) 16.dp else 22.dp),
                 ) {
-                    Text(if (first == null) "Enter a new 4-digit PIN" else "Enter it again", style = body(if (phone) 18.sp else 20.sp, 700), color = C.text)
+                    if (tab) Title(if (first == null) "Enter a new 4-digit PIN" else "Enter it again", 36, maxLines = 2)
+                    else Text(if (first == null) "Enter a new 4-digit PIN" else "Enter it again", style = body(if (phone) 18.sp else 20.sp, 700), color = C.text)
                     PinDots(entered.length)
                     Keypad(
                         onDigit = { d ->
@@ -712,19 +878,21 @@ private fun PinSection() {
                             }
                         },
                         onDelete = { entered = entered.dropLast(1) },
-                        modifier = if (phone) Modifier.fillMaxWidth() else Modifier.width(356.dp),
-                        keyHeight = 72.dp,
+                        modifier = if (phone || tab) Modifier.fillMaxWidth() else Modifier.width(356.dp),
+                        keyHeight = if (tab) 64.dp else 72.dp,
+                        gap = if (tab) 10.dp else 14.dp,
                     )
                 }
             }
-            if (narrow) Column(verticalArrangement = Arrangement.spacedBy(28.dp)) { text(Modifier.fillMaxWidth()); pad() }
-            else Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) { text(Modifier.weight(1f)); pad() }
+            if (narrow) Column(verticalArrangement = Arrangement.spacedBy(if (tab) 16.dp else 28.dp)) { text(Modifier.fillMaxWidth()); pad() }
+            else Row(horizontalArrangement = Arrangement.spacedBy(if (tab) 32.dp else 48.dp)) { text(Modifier.weight(1f)); pad() }
         }
     }
 }
 
 // ---------------- Theme ----------------
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ThemeSection() {
     val app = App.get(LocalContext.current)
@@ -746,6 +914,29 @@ private fun ThemeSection() {
                         if (on) Box(Modifier.size(28.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
                             Icon(Lucide.Check, null, tint = C.onAccent, modifier = Modifier.size(16.dp))
                         } else Box(Modifier.size(28.dp).border(3.dp, C.line, CircleShape))
+                    }
+                }
+            }
+        } else if (LocalParentTablet.current) BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Previews are 160x120 at least and 220x150 at most; the cards wrap onto a second row below a 480-wide pane.
+            val w = ((maxWidth - 32.dp) / 3 - 24.dp).coerceIn(160.dp, 220.dp)
+            val h = (w * 150f / 220f).coerceIn(120.dp, 150.dp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                listOf("DARK" to "Dark", "LIGHT" to "Light", "SYSTEM" to "Match system").forEach { (key, label) ->
+                    val on = theme == key
+                    val shape = RoundedCornerShape(TabletParentMetrics.cardRadius)
+                    Column(
+                        Modifier.clip(shape).background(C.surface).border(if (on) 3.dp else 1.dp, if (on) C.accent else C.line, shape)
+                            .selectable(selected = on, role = androidx.compose.ui.semantics.Role.RadioButton) { app.store.setTheme(key) }.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ThemePreview(key, Modifier.size(w, h))
+                        Row(Modifier.width(w).heightIn(min = 32.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(label, style = body(16.sp, 800, 1.25f), color = C.text, modifier = Modifier.weight(1f), maxLines = 2)
+                            if (on) Box(Modifier.size(24.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                                Icon(Lucide.Check, null, tint = C.onAccent, modifier = Modifier.size(14.dp))
+                            } else Box(Modifier.size(24.dp).border(2.dp, C.line, CircleShape))
+                        }
                     }
                 }
             }
@@ -773,7 +964,7 @@ private fun ThemeSection() {
 
 @Composable
 private fun ThemePreview(key: String, modifier: Modifier = Modifier.fillMaxWidth().height(180.dp)) {
-    val small = LocalPhone.current
+    val small = LocalPhone.current || LocalParentTablet.current
     Box(modifier.clip(RoundedCornerShape(if (small) 12.dp else 18.dp))) {
         Row(Modifier.fillMaxSize()) {
             if (key != "LIGHT") Box(Modifier.weight(1f).fillMaxHeight().background(DarkColors.bg))
@@ -833,15 +1024,16 @@ private fun <T> CamPrefRow(label: String, help: String, options: List<Pair<Strin
     val values = options.map { it.second }
     val selected = values.indexOf(current).coerceAtLeast(0)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow = maxWidth < 760.dp
+        val tab = !LocalPhone.current && LocalParentTablet.current
+        val narrow = maxWidth < (if (tab) 640.dp else 760.dp)
         val text: @Composable (Modifier) -> Unit = { mod ->
             Column(mod, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(label, style = body(if (LocalPhone.current) 18.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
+                Text(label, style = body(if (LocalPhone.current || tab) 18.sp else 19.sp, 700, if (LocalPhone.current || tab) 1.25f else 1.3f), color = C.text)
                 Muted(help, 15)
             }
         }
         val control: @Composable () -> Unit = {
-            Segmented(options.map { it.first to null }, selected, { onSelect(values[it]) })
+            Segmented(options.map { it.first to null }, selected, { onSelect(values[it]) }, labelSize = 14f, labelLine = 20f)
         }
         if (narrow) Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { text(Modifier.fillMaxWidth()); control() }
         else Row(verticalAlignment = Alignment.CenterVertically) { text(Modifier.weight(1f)); control() }
@@ -861,6 +1053,7 @@ private fun AboutSection() {
     val views = rememberNodeViews()
     var confirmReset by remember { mutableStateOf(false) }
     val phone = LocalPhone.current
+    val tab = !phone && LocalParentTablet.current
     SectionPage("About") {
         // Phone: the app summary is a column (mark, name, version, status, then the action on its own row).
         val summary: @Composable (@Composable () -> Unit, @Composable () -> Unit) -> Unit = { info, act ->
@@ -872,9 +1065,9 @@ private fun AboutSection() {
                 act()
             } else Row(
                 Modifier.fillMaxWidth().panel(28.dp, 32.dp, 32.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (tab) 16.dp else 24.dp),
             ) {
-                NickLogo(96.dp)
+                NickLogo(if (tab) 64.dp else 96.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) { info() }
                 act()
             }
@@ -899,7 +1092,7 @@ private fun AboutSection() {
         })
         if (views.isNotEmpty()) {
             val latest = (update as? UpdateState.Available)?.info?.versionName ?: if (update == UpdateState.UpToDate) BuildConfig.VERSION_NAME else null
-            Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 12.dp))) {
+            Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else if (tab) Modifier.clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(horizontal = TabletParentMetrics.cardPadding, vertical = 8.dp) else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 12.dp))) {
                 views.forEachIndexed { i, v ->
                     if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
                     val behind = v.status?.version != null && latest != null && v.status.version != latest
@@ -917,6 +1110,13 @@ private fun AboutSection() {
                         }
                         // The update action is its own row under the tablet.
                         updateButton(Modifier.fillMaxWidth())
+                    } else if (tab) Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Avatar(v.node.name, v.node.color, v.node.avatar, 40.dp)
+                        Column(Modifier.weight(1f)) {
+                            Text(v.node.name, style = body(18.sp, 700, 1.25f), color = C.text, maxLines = 2)
+                            Muted(v.status?.version?.let { "Version $it" } ?: if (v.online) "Version unknown" else statusText(v), 15)
+                        }
+                        updateButton(Modifier)
                     } else Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Avatar(v.node.name, v.node.color, v.node.avatar, 44.dp)
                         Column(Modifier.weight(1f)) {
@@ -928,7 +1128,7 @@ private fun AboutSection() {
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp))) {
+        Column(Modifier.fillMaxWidth().then(if (phone) Modifier.panel() else if (tab) Modifier.clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(horizontal = TabletParentMetrics.cardPadding, vertical = 4.dp) else Modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(horizontal = 28.dp, vertical = 8.dp))) {
             InfoRow("This ${selfNoun()}", "${name.ifBlank { "Parent's Tablet" }} · ${if (phone) "Parent" else "Master"}")
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
             InfoRow("Linked tablets", nodes.size.toString())
@@ -982,7 +1182,8 @@ private fun HomeScreenRow() {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Use NickOS as this ${selfNoun()}'s home screen", style = body(if (LocalPhone.current) 16.sp else 19.sp, 700, if (LocalPhone.current) 1.25f else 1.3f), color = C.text)
+            val compact = LocalPhone.current || LocalParentTablet.current
+            Text("Use NickOS as this ${selfNoun()}'s home screen", style = body(if (compact) 16.sp else 19.sp, 700, if (compact) 1.25f else 1.3f), color = C.text)
             Muted(homeStateLine(isHome), 15)
         }
         NickSwitch(optIn) { on ->
@@ -1009,6 +1210,14 @@ private fun InfoRow(k: String, v: String, h: Dp = 64.dp) {
         Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(k, style = body(14.sp, 500, 1.3f), color = C.muted)
             Text(v, style = body(16.sp, 700, 1.3f), color = C.text)
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // At least 48 high: label 14, value 15, and a long value wraps instead of pushing the label out.
+        Row(Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.minTarget).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(k, style = body(14.sp, 500, 20f / 14), color = C.muted, modifier = Modifier.weight(1f))
+            Text(v, style = body(15.sp, 700, 22f / 15), color = C.text, modifier = Modifier.weight(1.4f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
         }
         return
     }

@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -115,6 +119,8 @@ import org.robolectric.annotation.GraphicsMode
 class DesignScreensTest {
     private val app get() = ApplicationProvider.getApplicationContext<App>()
 
+    init { com.nbaltas.nickos.ui.theme.strictSizes = true }
+
     companion object {
         /** Mon 12 Oct 2026, 12:00 in Sydney (AEDT, UTC+11). */
         val FIXED_NOW: Long = java.time.ZonedDateTime.of(2026, 10, 12, 12, 0, 0, 0, java.time.ZoneId.of("Australia/Sydney")).toInstant().toEpochMilli()
@@ -150,22 +156,32 @@ class DesignScreensTest {
     private var sweepSuffix = ""
 
     private fun shot(name: String, content: @Composable () -> Unit) {
+        // A tablet mismatch must not hide the phone picture: the phone is checked either way, and its failure is the one reported.
+        var tabletFailure: AssertionError? = null
         try {
             captureRoboImage(
                 if (sweepSuffix.isEmpty()) "../design/screens/$name.png" else "../design/screens/sweep/$name$sweepSuffix.png",
                 roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
             ) {
-                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
+                // Parent screens are rendered inside the real provider, as in the app: a fixture that skipped it would test the wrong
+                // (non-tablet) branch. Kid (Node-*) screens never get it.
+                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { if (name.startsWith("Node-")) content() else ParentLayoutProvider { content() } } }
             }
         } catch (e: AssertionError) {
-            throw AssertionError(
+            tabletFailure = AssertionError(
                 "Screen \"$name\" no longer matches design/screens/$name.png. If the change is on purpose, " +
                     "re-record with: .\\gradlew.bat :app:recordRoborazziDebug  and commit design/screens. " +
                     "A side-by-side of what changed is in app/build/outputs/roborazzi. (${e.message})",
                 e,
             )
         }
-        phoneShot(name, content)
+        try {
+            phoneShot(name, content)
+        } catch (e: AssertionError) {
+            tabletFailure?.let { e.addSuppressed(it) }
+            throw e
+        }
+        tabletFailure?.let { throw it }
     }
 
     /**
@@ -276,6 +292,93 @@ class DesignScreensTest {
             }
         }
     }
+    /** The tablet Home (1280x800) with the system font at [scale]: the cards go to one column below 1000 of content width and nothing is cut off. */
+    private fun tabletFont(name: String, scale: Float, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) {
+            NickTheme {
+                Box(Modifier.fillMaxSize().background(C.bg)) {
+                    val d = androidx.compose.ui.platform.LocalDensity.current
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
+                        ParentLayoutProvider { content() }
+                    }
+                }
+            }
+        }
+    }
+    @Test fun masterHomeFont150() = tabletFont("Master-Home-font150", 1.5f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    @Test fun masterHomeFont200() = tabletFont("Master-Home-font200", 2f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+
+    /** Everything that competes for room in the top bar at once: an update, a pinned app, the paused state, a Together session, a long parent name. */
+    private fun seedHomeStress() {
+        set(com.nbaltas.nickos.update.Updater, "_state", com.nbaltas.nickos.update.UpdateState.Available(com.nbaltas.nickos.update.UpdateInfo(9999, "9.9", null, "https://example.invalid/nickos.apk", null)))
+        app.store.setQuickApps(listOf(app.packageName))
+        app.store.setPausedMsg("Time to eat")
+        app.store.setName("Alexandria-Bartholomew's Family Tablet")
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(app.master.sync, "_session", SyncSession("jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true, "http://jf.local/x"))
+    }
+
+    private fun homeStress(w: Int, h: Int, scale: Float) {
+        seedHomeStress()
+        org.robolectric.RuntimeEnvironment.setQualifiers("w${w}dp-h${h}dp-${if (w > h) "land" else "port"}-mdpi")
+        val tag = if (scale == 1.5f) "-font150" else if (scale == 2f) "-font200" else ""
+        tabletFont("Master-Home-Stress-${w}x$h$tag", scale) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    }
+    @Test fun masterHomeStress600x960() = homeStress(600, 960, 1f)
+    @Test fun masterHomeStress600x960Font150() = homeStress(600, 960, 1.5f)
+    @Test fun masterHomeStress960x600() = homeStress(960, 600, 1f)
+    @Test fun masterHomeStress960x600Font150() = homeStress(960, 600, 1.5f)
+    @Test fun masterHomeStress1024x768() = homeStress(1024, 768, 1f)
+    @Test fun masterHomeStress1024x768Font150() = homeStress(1024, 768, 1.5f)
+    @Test fun masterHomeStress1024x768Font200() = homeStress(1024, 768, 2f)
+
+    /** At 960x600 and font 1.5 every top-bar action is there by its accessibility name and can be brought into view. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Test fun masterHomeTopBarActionsReachableAt960x600Font150() {
+        seedHomeStress()
+        org.robolectric.RuntimeEnvironment.setQualifiers("w960dp-h600dp-land-mdpi")
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent {
+                NickTheme {
+                    Box(Modifier.fillMaxSize().background(C.bg)) {
+                        val d = androidx.compose.ui.platform.LocalDensity.current
+                        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 1.5f)) {
+                            ParentLayoutProvider { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+                        }
+                    }
+                }
+            }
+            for (name in listOf("All apps", "Settings", "Update", "Resume everyone", "Cameras", "Watching together")) {
+                val node = onNode(androidx.compose.ui.test.hasContentDescription(name) or androidx.compose.ui.test.hasText(name, substring = true), useUnmergedTree = true)
+                node.assertExists("$name is missing from the top bar")
+                runCatching { node.performScrollTo() }
+                node.assertIsDisplayed()
+            }
+        }
+    }
+
+    /**
+     * The phone Source menu OPEN (the dark-on-light defect fixed in JOB-0061): Together's library with the chip tapped. The menu is a popup
+     * window, so this uses the whole-screen capture rather than the root of the compose tree.
+     */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherSourceOpenPhone() {
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("sh", "Star Harbour"), video("cc", "Captain Comet")))))
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { TogetherScreen({}, {}) } } } }
+            onNodeWithTag("source-chip").performClick()
+            waitForIdle()
+            com.github.takahirom.roborazzi.captureScreenRoboImage(
+                "../design/screens/phone/Together-Source-Open.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            )
+        }
+    }
+
     /** A phone picture with the system font at 2.0, written to design/screens/phone/<name>.png. Phone only, so no tablet picture. */
     private fun phoneFont200(name: String, content: @Composable () -> Unit) {
         captureRoboImage(
@@ -317,6 +420,7 @@ class DesignScreensTest {
     @Config(qualifiers = "w800dp-h1280dp-port-mdpi")
     @Test fun masterHomePortrait() = shot("Master-Home-Portrait") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     @Test fun controlNowPlaying() = shot("Control-NowPlaying") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
+    @Test fun controlNowPlayingFont150() = tabletFont("Control-NowPlaying-font150", 1.5f) { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     @Test fun controlNothingPlaying() = shot("Control-NothingPlaying") { ControlScreen("bbbbbbbbbbbb", TAB_NOW, {}, {}, {}) }
     @Test fun controlOffline() = shot("Control-Offline") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
     @Test fun controlApps() = shot("Control-Apps") { ControlScreen("aaaaaaaaaaaa", TAB_APPS, {}, {}, {}) }
@@ -411,13 +515,24 @@ class DesignScreensTest {
         shot("Cameras-Pair") { CamerasScreen({}, {}, live = false) }
     }
 
-    @Test fun camerasGrid() {
+    private fun seedCamerasGrid() {
         seedCams()
         cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(NodeCam.LEVEL_HOT), CM to NodeCam(NodeCam.WARMING, port = 47472, key = "k", receivedAt = camNow())))
         camPicture(CH, camBlue.first, camBlue.second)
         camPicture(CL, camGreen.first, camGreen.second)
         camRtsp("front", "Front door")
+    }
+
+    @Test fun camerasGrid() {
+        seedCamerasGrid()
         shot("Cameras-Grid") { CamerasScreen({}, {}, live = false) }
+    }
+
+    /** The same four feeds at 960x600 (JOB-0061): the mode control moves to its own row, the stage gutter is 24 and the gap 16. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasGrid960() {
+        seedCamerasGrid()
+        shot("Cameras-Grid-960x600") { CamerasScreen({}, {}, live = false) }
     }
 
     @Test fun camerasSpotlight() {
@@ -593,6 +708,20 @@ class DesignScreensTest {
         addStatus("cccccccccccc", 23)
         set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
         jellyfinShot("Together-Jellyfin-Browse", null, "Continue Watching", together = true)
+    }
+
+    /** Tablet-only: the Jellyfin browse with the source control and the category group at 960x600 (search below the categories). */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun togetherJellyfinBrowse960x600() {
+        addStatus("cccccccccccc", 23)
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
+        jellyfinShotOnce("Together-Jellyfin-Browse-960x600", null, "Continue Watching", together = true, phone = false)
+    }
+
+    /** Tablet-only: the Together pick panel with the system font at 1.5 (art stacks over the title, rows keep 72 high). */
+    @Test fun togetherPickFont150() {
+        val item = seedTogetherPick()
+        tabletFont("Together-Pick-font150", 1.5f) { TogetherPickContent(item) }
     }
 
     @Test fun togetherJellyfinPick() {
@@ -884,14 +1013,19 @@ class DesignScreensTest {
                                 if (together) TogetherScreen({}, {}, initialSegment = 2)
                                 else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
                             }
-                            if (phone) ParentLayoutProvider(screen) else screen()
+                            ParentLayoutProvider(screen)
                         }
                     }
                 }
                 if (!together) {
-                    // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
-                    if (phone) onNodeWithTag("source-chip").performClick()
-                    onNodeWithTag("jellyfin-library").performClick()
+                    if (phone) {
+                        // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
+                        onNodeWithTag("source-chip").performClick()
+                        onNodeWithTag("jellyfin-library").performClick()
+                    } else {
+                        // Tablet: the two-choice source control; Jellyfin is its second choice.
+                        onNode(hasText("Jellyfin") and hasAnyAncestor(hasTestTag("tablet-source"))).performClick()
+                    }
                 }
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
@@ -911,6 +1045,22 @@ class DesignScreensTest {
     @Test fun controlWatch() = jellyfinShot("Control-Watch", null, "Continue Watching")
     @Test fun controlMovie() = jellyfinShot("Control-Movie", "Captain Comet", "Play from start")
     @Test fun controlSeries() = jellyfinShot("Control-Series", "Star Harbour", "Fog Horn")
+    /** Jellyfin in Together needs no local-video access: with it denied, the Jellyfin browser shows, not the permission prompt. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Test fun togetherJellyfinWithoutVideoPermission() {
+        val server = fakeJellyfin()
+        try {
+            app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
+            Shadows.shadowOf(app).denyPermissions(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_EXTERNAL_STORAGE)
+            androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+                setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { TogetherScreen({}, {}, initialSegment = 2) } } } }
+                fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
+                waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
+                org.junit.Assert.assertFalse(has("Let NickOS see your videos"))
+            }
+        } finally { server.close() }
+    }
+
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
 
     // ---- car network (F2B revised) ----
@@ -953,7 +1103,7 @@ class DesignScreensTest {
     }
 
     @Test fun controlOfflineNoDetails() {
-        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = false))
+        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", wifiSaved = false))
         shot("Control-Offline-NoDetails") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
     }
 
@@ -998,7 +1148,7 @@ class DesignScreensTest {
         return "${c.screenWidthDp}x${c.screenHeightDp}"
     }
 
-    private fun nodeCodeAt() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
+    private fun nodeCodeAt() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916", address = "192.168.1.20") } }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun nodeCode960() = nodeCodeAt()
@@ -1062,7 +1212,7 @@ class DesignScreensTest {
     private fun nodeCodeBigFont(scale: Float) { nodeSeed(); shot("Node-Code-${sizeTag()}-font${(scale * 100).toInt()}") {
         val d = androidx.compose.ui.platform.LocalDensity.current
         androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
-            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916")
+            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916", address = "192.168.1.20")
         }
     } }
 
@@ -1148,6 +1298,20 @@ class DesignScreensTest {
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun controlDeviceAllFeatures960() = deviceAllFeatures("960x600")
 
+    /** The same tablet at 1280x800 with the system font at 1.5 and 2.0 (JOB-0061): two columns, then one; the two-row header; 2x2 bedtime. */
+    private fun deviceAllFeaturesFont(name: String, scale: Float) {
+        val s = status(82, fg = "org.jellyfin.mobile", fgLabel = "Jellyfin", caps = listOf("sync1", "ring1", "pause1", "screen1", "touch1"))
+            .copy(landscape = landscapeOn, touch = com.nbaltas.nickos.link.NetMessages.TouchStatus(true, "on"),
+                power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
+        set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
+        tabletFont(name, scale) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) }
+    }
+
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280Font150() = deviceAllFeaturesFont("Control-Device-AllFeatures-1280x800-font150", 1.5f)
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    @Test fun controlDeviceAllFeatures1280Font200() = deviceAllFeaturesFont("Control-Device-AllFeatures-1280x800-font200", 2f)
+
     /** The same page scrolled to the bottom: the last row of cards is complete, none is clipped inside. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
@@ -1157,7 +1321,7 @@ class DesignScreensTest {
                 power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
         set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
         androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
-            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } }
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } } }
             waitForIdle()
             repeat(3) { onRoot().performTouchInput { swipeUp() } }
             waitForIdle()
@@ -1240,6 +1404,22 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun camerasTapoStates1024() = camerasTapoStates()
 
+    /** The same two failure tiles at 960x600 with the system font at 1.5: the short tiles show the whole recovery text. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasTapoStates960Font150() {
+        seedCams()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        tapo("baby", "Baby cam", "192.168.49.23")
+        tapo("nursery", "Nursery", "192.168.49.24")
+        tabletFont("Cameras-Tapo-States-960x600-font150", 1.5f) {
+            CamerasScreen(
+                {}, {}, live = false,
+                rtspPreset = mapOf("baby" to com.nbaltas.nickos.cam.RtspNews.UNREACHABLE, "nursery" to com.nbaltas.nickos.cam.RtspNews.WRONG_PASSWORD),
+            )
+        }
+    }
+
     private fun camerasAdd() {
         seedCams()
         shot("Cameras-Add-${sizeTag()}") {
@@ -1249,6 +1429,15 @@ class DesignScreensTest {
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun camerasAdd960() = camerasAdd()
+
+    /** The editor at 960x600 with the system font at 1.5: the body scrolls, Cancel and Save stay reachable under it. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasAdd960Font150() {
+        seedCams()
+        tabletFont("Cameras-Add-960x600-font150", 1.5f) {
+            CamerasScreen({}, {}, live = false, startEditor = Camera(com.nbaltas.nickos.data.Store.randomHex(6), ""), foundPreset = listOf("192.168.49.23"))
+        }
+    }
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun camerasAdd1024() = camerasAdd()
 
@@ -1297,6 +1486,21 @@ class DesignScreensTest {
         } finally {
             com.nbaltas.nickos.ui.master.carNetStartRevealed = false
         }
+    }
+
+    /** 700x1000 is under 840 of width, so Settings shows the category strip instead of the rail (JOB-0061 §2.6). */
+    @Config(qualifiers = "w700dp-h1000dp-port-mdpi")
+    @Test fun settingsTablets700() = shot("Settings-Tablets-${sizeTag()}") { SettingsScreen(0, {}, {}, {}) }
+
+    /** At font 1.5 the strip is used even on the 1280x800 tablet and nothing is cut off. */
+    @Test fun settingsTabletsFont150() = tabletFont("Settings-Tablets-font150", 1.5f) { SettingsScreen(0, {}, {}, {}) }
+
+    /** The QR setup at 960x600 with the system font at 1.5: the page scrolls and the code, the steps and both fields stay reachable. */
+    @Config(sdk = [27], qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterQrSetup960Font150() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.robolectric.Shadows.shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).signatures = arrayOf(android.content.pm.Signature("0102030405"))
+        tabletFont("Master-QrSetup-960x600-font150", 1.5f) { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) }
     }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")

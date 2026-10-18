@@ -47,6 +47,9 @@ import com.nbaltas.nickos.ui.theme.Muted
 import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.SetupHeader
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.ParentContentCap
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import androidx.compose.foundation.layout.imePadding
 import com.nbaltas.nickos.ui.theme.Title
@@ -79,6 +82,54 @@ fun QrSetupScreen(
     }
     Column(Modifier.fillMaxSize()) {
         SetupHeader("Master · New kid tablet", onBack)
+        if (LocalParentTablet.current && !LocalPhone.current) {
+            ParentContentCap(Modifier.weight(1f)) { i ->
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    // Steps beside a 320 code from 880 of content width; below it the code (at most 360, at least 292 so the code inside its padding is 260) comes first and the steps follow.
+                    // The whole page scrolls, so the code, the checksum, the steps and both WiFi fields are always reachable.
+                    val wide = i >= 880.dp
+                    val qrSize = if (wide) 320.dp else (maxHeight - 120.dp).coerceIn(292.dp, 360.dp).coerceAtMost(maxWidth)
+                    val steps: @Composable (Modifier) -> Unit = { mod ->
+                        Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                            Title("Set up a new kid tablet", 48)
+                            Text("No cables or computer needed. The kid lock is switched on from the start.", style = body(16.sp, 500, 23f / 16), color = C.muted)
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Step(1, "Start from a new or factory reset tablet. Settings, System, Reset options, Erase all data.")
+                                Step(2, "On its first Welcome screen, tap the same empty spot 6 times. A QR scanner opens.")
+                                Step(3, "Point it at this code. It joins the WiFi below, or asks you to pick one.")
+                                Step(4, "It downloads NickOS and switches the kid lock on. When it finishes, NickOS opens. Name the tablet and enter its 6 digit code on this tablet.")
+                            }
+                            Text("Put your home WiFi here and the tablet joins it by itself during setup.", style = body(16.sp, 500, 23f / 16), color = C.muted)
+                            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                                // The two fields share a row only when the steps pane is 480 wide or more.
+                                if (maxWidth >= 480.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    Column(Modifier.weight(1f)) { FieldLabel("WiFi name"); NickField(ssid, { ssid = it }) }
+                                    Column(Modifier.weight(1f)) { FieldLabel("WiFi password"); NickField(pass, { pass = it }, password = true) }
+                                } else Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+                                    Column { FieldLabel("WiFi name"); NickField(ssid, { ssid = it }) }
+                                    Column { FieldLabel("WiFi password"); NickField(pass, { pass = it }, password = true) }
+                                }
+                            }
+                        }
+                    }
+                    val code: @Composable () -> Unit = {
+                        Column(Modifier.width(qrSize), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.size(qrSize).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(Color.White).padding(16.dp), contentAlignment = Alignment.Center) {
+                                qr?.let { Image(it.asImageBitmap(), "Setup QR code", Modifier.fillMaxSize(), filterQuality = FilterQuality.None) }
+                            }
+                            Text(checksumLine(fromServer != null), style = body(14.sp, 500, 20f / 14), color = C.muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom)) {
+                        if (wide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) { steps(Modifier.weight(1f)); code() }
+                        else Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                            code(); steps(Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+            return@Column
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // Landscape tablets (Orbic 960x600, Galaxy Tab S2 1024x768): code beside the steps, code sized to the height.
             val landscape = maxWidth > maxHeight && maxWidth >= 700.dp
@@ -136,6 +187,16 @@ internal fun checksumLine(fromServer: Boolean) =
 @Composable
 private fun Step(n: Int, text: String) {
     val phone = LocalPhone.current
+    if (LocalParentTablet.current) {
+        // A 28 disk with a 14sp number, top-aligned to the first line of 16 on 22 text; 12 apart.
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(28.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                Text("$n", style = disp(14.sp), color = C.onAccent)
+            }
+            Text(text, style = body(16.sp, 600, 22f / 16), color = C.text, modifier = Modifier.weight(1f).padding(top = 3.dp))
+        }
+        return
+    }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 16.dp)) {
         Box(Modifier.size(if (phone) 32.dp else 40.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
             Text("$n", style = disp(20.sp), color = C.onAccent)

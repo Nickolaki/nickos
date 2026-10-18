@@ -2,6 +2,7 @@ package com.nbaltas.nickos.ui.master
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import com.nbaltas.nickos.master.Reason
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -110,8 +111,15 @@ import com.nbaltas.nickos.ui.theme.dashed
 import com.nbaltas.nickos.ui.theme.disp
 import com.nbaltas.nickos.ui.theme.tap
 import com.nbaltas.nickos.ui.theme.Dot
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.ParentContentCap
 import com.nbaltas.nickos.ui.theme.LocalPhone
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import com.nbaltas.nickos.ui.theme.tabletContentWidth
+import com.nbaltas.nickos.ui.theme.tabletGutter
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
 import com.composables.icons.lucide.Clock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -132,6 +140,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -154,6 +163,30 @@ internal object BedtimeCommands {
     /** Cancel sends 0 minutes. */
     fun cancel(send: (Int) -> Unit) = send(0)
 }
+
+/** Device grid columns for content width I (design §1.4): 3 from 1080, 2 from 720, else 1; at font scale 1.5 at most 2 (1 under 960); at 2.0 one. */
+internal fun deviceColumns(contentWidthDp: Float, fontScale: Float): Int = when {
+    fontScale >= 2f -> 1
+    fontScale >= 1.5f -> if (contentWidthDp < 960f) 1 else 2
+    contentWidthDp >= 1080f -> 3
+    contentWidthDp >= 720f -> 2
+    else -> 1
+}
+
+/** A Device card's inner width: equal columns with a 16 gap, minus the 20 padding on both sides. */
+internal fun deviceCardInnerWidth(contentWidthDp: Float, columns: Int): Float = (contentWidthDp - 16f * (columns - 1)) / columns - 40f
+
+/** Bedtime: one row of four blocks only when the inner width is at least 280 and the font scale under 1.5; else a 2x2 grid. */
+internal fun bedtimeOneRow(innerWidthDp: Float, fontScale: Float): Boolean = innerWidthDp >= 280f && fontScale < 1.5f
+
+/** The active bedtime timer's Cancel goes full width below the remaining time when the inner width is under 320. */
+internal fun bedtimeCancelBelow(innerWidthDp: Float): Boolean = innerWidthDp < 320f
+
+/** The Control header may be one row at 1180 wide or more and font scale under 1.5 (it still needs to measurably fit). */
+internal fun controlHeaderOneRowAllowed(widthDp: Float, fontScale: Float): Boolean = widthDp >= 1180f && fontScale < 1.5f
+
+/** Now Playing and the remote: two panes (right one 288) from I = 960 at normal font scale; else they stack. */
+internal fun controlTwoPane(contentWidthDp: Float, fontScale: Float): Boolean = contentWidthDp >= 960f && fontScale < 1.5f
 
 const val TAB_NOW = 0
 const val TAB_WATCH = 1
@@ -301,46 +334,93 @@ private fun PhoneControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBa
 @Composable
 private fun ControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBack: () -> Unit) {
     if (LocalPhone.current) { PhoneControlHeader(v, tab, onTab, onBack); return }
-    val phone = LocalConfiguration.current.screenWidthDp < 600
-    val tabs = listOf<Pair<String, ImageVector?>>("Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet, "Screen" to Lucide.Monitor)
-    BoxWithConstraints(Modifier.fillMaxWidth().background(C.bg)) {
-        val narrow = maxWidth < 1100.dp
-        val who: @Composable (Modifier) -> Unit = { modifier ->
-            Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 16.dp)) {
-                BackButton(onBack)
-                Avatar(v.node.name, v.node.color, v.node.avatar, 52.dp)
-                Column(if (phone) Modifier.weight(1f) else Modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Title(v.node.name, 25, maxLines = 1)
-                    StatusLine(v, 15, 10.dp)
-                }
+    TabletControlHeader(v, tab, onTab, onBack)
+}
+
+private val controlTabs = listOf<Pair<String, ImageVector?>>(
+    "Now Playing" to Solid.Play, "Watch" to Lucide.Film, "Apps" to Lucide.LayoutGrid, "Device" to Lucide.Tablet, "Screen" to Lucide.Monitor,
+)
+
+/**
+ * The five Control tabs: radius 16 group with 4 padding and gap, items at least 48 high with 12 side padding, 15/20 labels and 18 glyphs.
+ * [scrolls] puts the group in a horizontal scroll (second header row) and brings the selected tab into view.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ControlTabs(tab: Int, onTab: (Int) -> Unit, scrolls: Boolean, modifier: Modifier = Modifier) {
+    val requesters = remember { List(controlTabs.size) { BringIntoViewRequester() } }
+    if (scrolls) LaunchedEffect(tab) { requesters[tab].bringIntoView() }
+    Row(
+        modifier.clip(RoundedCornerShape(TabletParentMetrics.segmentedRadius)).background(C.surface).padding(4.dp)
+            .then(if (scrolls) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        controlTabs.forEachIndexed { i, (label, icon) ->
+            val on = i == tab
+            val bg by animateColorAsState(if (on) C.accent else Color.Transparent, tween(120), label = "ctrlTabBg")
+            val fg by animateColorAsState(if (on) C.onAccent else C.muted, tween(120), label = "ctrlTabFg")
+            Row(
+                Modifier.heightIn(min = TabletParentMetrics.minTarget).clip(RoundedCornerShape(TabletParentMetrics.segmentedSelectedRadius)).background(bg)
+                    .then(if (scrolls) Modifier.bringIntoViewRequester(requesters[i]) else Modifier)
+                    .selectable(selected = on, role = Role.Tab) { onTab(i) }.padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (icon != null) Icon(icon, null, tint = fg, modifier = Modifier.size(18.dp))
+                Text(label, style = body(15.sp, 700, 20f / 15), color = fg, maxLines = 1, softWrap = false)
             }
         }
-        val battery: @Composable () -> Unit = {
-            Battery(v.battery, v.status?.charging == true && v.online, if (phone) 24 else 38, if (phone) 24.dp else 30.dp)
+    }
+}
+
+/**
+ * Tablet Control header: one row (back, avatar, name and status, tabs, battery) when the width allows AND the row measurably fits the
+ * content width; else the identity row (72) over the scrolling tab row, so nothing is ever clipped. The divider is full width.
+ */
+@Composable
+private fun TabletControlHeader(v: NodeView, tab: Int, onTab: (Int) -> Unit, onBack: () -> Unit) {
+    val fontScale = LocalDensity.current.fontScale
+    val identity: @Composable RowScope.(Boolean) -> Unit = { weighted ->
+        BackButton(onBack)
+        Avatar(v.node.name, v.node.color, v.node.avatar, 40.dp)
+        Column(if (weighted) Modifier.weight(1f) else Modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Title(v.node.name, 25, maxLines = if (weighted) 2 else 1)
+            StatusLine(v, 14, 8.dp)
         }
-        Column {
-            if (narrow) {
-                Row(Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 32.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (phone) { who(Modifier.weight(1f)); Spacer(Modifier.width(8.dp)) }
-                    else { who(Modifier); Spacer(Modifier.weight(1f)) }
-                    battery()
+    }
+    val battery: @Composable () -> Unit = { Battery(v.battery, v.status?.charging == true && v.online, 24, 24.dp) }
+    val oneRow: @Composable (Modifier) -> Unit = { mod ->
+        Row(mod, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            identity(false)
+            Spacer(Modifier.width(12.dp))
+            ControlTabs(tab, onTab, scrolls = false, modifier = Modifier.widthIn(max = 600.dp))
+            Spacer(Modifier.weight(1f))
+            battery()
+        }
+    }
+    SubcomposeLayout(Modifier.fillMaxWidth().background(C.bg)) { c ->
+        val widthDp = c.maxWidth / density
+        val contentPx = (tabletContentWidth(widthDp) * density).roundToInt().coerceAtLeast(0)
+        // The probe is the bare row: its natural width is asked for, it is never placed.
+        val fits = controlHeaderOneRowAllowed(widthDp, fontScale) &&
+            subcompose("probe") { oneRow(Modifier) }.firstOrNull()?.maxIntrinsicWidth(80.dp.roundToPx())?.let { it <= contentPx } == true
+        val shown = subcompose(if (fits) "one" else "two") {
+            Column(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                    if (fits) oneRow(Modifier.width(contentPx.toDp()).heightIn(min = TabletParentMetrics.headerHeight))
+                    else Column(Modifier.width(contentPx.toDp())) {
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 72.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) { identity(true); battery() }
+                        Spacer(Modifier.height(8.dp))
+                        ControlTabs(tab, onTab, scrolls = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
-                Row(Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, bottom = 16.dp)) {
-                    Segmented(tabs, tab, onTab, modifier = if (phone) Modifier.fillMaxWidth() else Modifier, compact = phone)
-                }
-            } else {
-                Row(
-                    Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 32.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp),
-                ) {
-                    who(Modifier)
-                    Segmented(tabs, tab, onTab)
-                    Spacer(Modifier.weight(1f))
-                    battery()
-                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
-        }
+        }.first().measure(Constraints(minWidth = c.maxWidth, maxWidth = c.maxWidth))
+        layout(shown.width, shown.height) { shown.place(0, 0) }
     }
 }
 
@@ -366,89 +446,110 @@ private fun NowPlaying(v: NodeView, phoneScroll: ScrollState) {
         PhoneNowPlaying(v, pb, item, jf, pos, next, scrub, { scrub = it }, phoneScroll)
         return
     }
+    TabletNowPlaying(v, pb, item, jf, pos, next, scrub) { scrub = it }
+}
+
+/**
+ * Tablet Now Playing (design §2.3): content capped at 1152; the primary pane (art, title, seek, transport, Next/Stop) and the
+ * 288 side pane (volume, brightness, up next) sit side by side from I = 960, else they stack. Both stay reachable by scrolling.
+ */
+@Composable
+private fun TabletNowPlaying(
+    v: NodeView, pb: com.nbaltas.nickos.master.Playback, item: JfItem, jf: com.nbaltas.nickos.jellyfin.Jellyfin?, pos: Long, next: JfItem?,
+    scrub: Float?, onScrub: (Float?) -> Unit,
+) {
+    val m = App.get(LocalContext.current).master
+    val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Backdrop at 35%, fading into the page towards the right-hand column.
         jf?.backdrop(item)?.let { AsyncImage(it, null, Modifier.fillMaxSize().alpha(0.35f), contentScale = ContentScale.Crop) }
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to C.bg.copy(alpha = 0.55f), 0.62f to C.bg.copy(alpha = 0.92f), 0.78f to C.bg)))
-        val narrow = maxWidth < 1000.dp
+        val i = tabletContentWidth(maxWidth.value)
+        val twoPane = controlTwoPane(i, fontScale)
         val side: @Composable (Modifier) -> Unit = { mod ->
-            Column(mod, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
                 EyebrowText("On ${v.node.name}")
                 DeviceSliders(v)
                 next?.let { n ->
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(C.surface)
-                            .clickable { m.playOn(v.node.id, n.id, 0, n.displayTitle) }.padding(18.dp),
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface)
+                            .clickable { m.playOn(v.node.id, n.id, 0, n.displayTitle) }.padding(TabletParentMetrics.cardPadding),
                         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Artwork(jf?.landscape(n, 300), "", Modifier.size(128.dp, 72.dp), radius = 12.dp, showTitle = false)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Artwork(jf?.landscape(n, 300), "", Modifier.size(128.dp, 72.dp), radius = TabletParentMetrics.nestedRadius, showTitle = false)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             EyebrowText("Up next")
-                            Text("E${n.index ?: ""} · ${n.name}", style = body(18.sp, 700), color = C.text, maxLines = 2)
+                            Text("E${n.index ?: ""} · ${n.name}", style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2)
                         }
                     }
                 }
             }
         }
-        val nextAndStop: @Composable () -> Unit = {
-            next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, Modifier.height(68.dp), leading = Solid.Next) }
-            NickButton("Stop", { m.control(v.node.id, "Stop") }, Modifier.height(68.dp), leading = Solid.Stop)
-        }
         val main: @Composable (Modifier) -> Unit = { mod ->
-            Column(mod, verticalArrangement = Arrangement.spacedBy(28.dp)) {
-                // No weight when narrow: inside the scrolling column it would collapse the poster and title to nothing.
-                Row(if (narrow) Modifier else Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(if (narrow) 20.dp else 32.dp)) {
-                    val h = if (narrow) 210.dp else 375.dp
-                    Artwork(jf?.poster(item, 600), item.displayTitle, Modifier.size(h * 2 / 3, h), radius = 20.dp, titleSize = 35)
-                    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.sectionGap)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Artwork(jf?.poster(item, 400), item.displayTitle, Modifier.size(128.dp, 192.dp), radius = TabletParentMetrics.mediaRadius, titleSize = 18)
+                    Column(Modifier.weight(1f).padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
                             EyebrowText(if (pb.session.paused) "Paused" else "Playing now", C.accent)
                         }
-                        Title(item.displayTitle, if (narrow) 40 else 64, lineHeight = 0.98f, maxLines = 3)
+                        Title(item.displayTitle, 64, maxLines = 3)
                         if (item.isEpisode) {
-                            if (item.season != null && item.index != null) Text("Season ${item.season} · Episode ${item.index}", style = body(24.sp, 700), color = C.text)
-                            Muted(item.name, 22, maxLines = 2)
-                        } else Muted(episodeLine(item), 22)
+                            if (item.season != null && item.index != null) Text("Season ${item.season} · Episode ${item.index}", style = body(16.sp, 700, 22f / 16), color = C.text)
+                            Text(item.name, style = body(16.sp, 500, 22f / 16), color = C.muted)
+                        } else Text(episodeLine(item), style = body(16.sp, 500, 22f / 16), color = C.muted)
                     }
                 }
                 // Jellyfin's integrated player only takes media keys (back 10 s, forward 30 s), so it
                 // can't be scrubbed: show progress only. The Web player setting gives a real scrub bar.
                 val integrated = !pb.session.remote
                 val fwdSecs = if (integrated) 30 else 10
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val frac = scrub ?: if (item.runTicks > 0) pos.toFloat() / item.runTicks else 0f
-                    if (integrated) ProgressBar(frac, Modifier.padding(vertical = 12.dp), height = 14.dp, track = C.line)
+                    if (integrated) Box(Modifier.fillMaxWidth().height(TabletParentMetrics.minTarget), contentAlignment = Alignment.Center) { ProgressBar(frac, height = 6.dp, track = C.line) }
                     else NickSlider(
                         value = frac,
-                        onChange = { scrub = it },
-                        onCommit = { f -> scrub = null; m.control(v.node.id, "Seek", (f * item.runTicks).toLong()) },
+                        onChange = { onScrub(it) },
+                        onCommit = { f -> onScrub(null); m.control(v.node.id, "Seek", (f * item.runTicks).toLong()) },
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(fmtTicks((frac * item.runTicks).toLong()), style = body(18.sp, 700).copy(fontFeatureSettings = "tnum"), color = C.text)
-                        Text(fmtTicks(item.runTicks), style = body(18.sp, 700).copy(fontFeatureSettings = "tnum"), color = C.muted)
+                        Text(fmtTicks((frac * item.runTicks).toLong()), style = body(14.sp, 700, 20f / 14).copy(fontFeatureSettings = "tnum"), color = C.text)
+                        Text(fmtTicks(item.runTicks), style = body(14.sp, 700, 20f / 14).copy(fontFeatureSettings = "tnum"), color = C.muted)
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    SkipButton(back = true) { m.control(v.node.id, "Seek", (pos - 10 * JfItem.TICKS_PER_SEC).coerceAtLeast(0)) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    TabletSkip(true, 10) { m.control(v.node.id, "Seek", (pos - 10 * JfItem.TICKS_PER_SEC).coerceAtLeast(0)) }
                     Box(
-                        Modifier.size(104.dp).clip(CircleShape).background(C.accent)
-                            .clickable { m.control(v.node.id, if (pb.session.paused) "Unpause" else "Pause") },
+                        Modifier.size(64.dp).clip(CircleShape).background(C.accent)
+                            .clickable(role = Role.Button) { m.control(v.node.id, if (pb.session.paused) "Unpause" else "Pause") },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(if (pb.session.paused) Solid.Play else Solid.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(44.dp)) }
-                    SkipButton(back = false, secs = fwdSecs) { m.control(v.node.id, "Seek", (pos + fwdSecs * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
-                    if (!narrow) { Spacer(Modifier.weight(1f)); nextAndStop() }
+                    ) { Icon(if (pb.session.paused) Solid.Play else Solid.Pause, if (pb.session.paused) "Play" else "Pause", tint = C.onAccent, modifier = Modifier.size(28.dp)) }
+                    TabletSkip(false, fwdSecs) { m.control(v.node.id, "Seek", (pos + fwdSecs * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
                 }
-                if (narrow) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { nextAndStop() }
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, leading = Solid.Next) }
+                    NickButton("Stop", { m.control(v.node.id, "Stop") }, leading = Solid.Stop)
+                }
             }
         }
-        if (narrow) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp), verticalArrangement = Arrangement.spacedBy(32.dp)) {
-                main(Modifier.fillMaxWidth()); side(Modifier.fillMaxWidth())
-            }
-        } else {
-            Row(Modifier.fillMaxSize().padding(start = 40.dp, end = 32.dp, top = 32.dp, bottom = 32.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                main(Modifier.weight(1f).fillMaxHeight()); side(Modifier.width(360.dp).verticalScroll(rememberScrollState()))
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.width(i.dp).fillMaxHeight()) {
+                if (twoPane) {
+                    Row(
+                        Modifier.fillMaxSize().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    ) {
+                        main(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
+                        side(Modifier.width(288.dp).fillMaxHeight().verticalScroll(rememberScrollState()))
+                    }
+                } else {
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
+                    ) { main(Modifier.fillMaxWidth()); side(Modifier.fillMaxWidth()) }
+                }
             }
         }
     }
@@ -562,10 +663,29 @@ private fun PhoneNowPlaying(
 }
 
 @Composable
-private fun SkipButton(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
-    Box(Modifier.size(76.dp).clip(CircleShape).background(C.surface2).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(34.dp))
-        Text("$secs", style = body(10.sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
+internal fun TabletSkip(back: Boolean, secs: Int, onClick: () -> Unit) {
+    Box(Modifier.size(TabletParentMetrics.minTarget).clip(CircleShape).background(C.surface2).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
+        // A 36dp open ring with an arrowhead leaves the middle clear, so the scaled seconds never overprint the arrow.
+        val tint = C.text
+        val label = if (back) "Back $secs seconds" else "Forward $secs seconds"
+        androidx.compose.foundation.Canvas(Modifier.size(36.dp).semantics { contentDescription = label }) {
+            val w = 2.dp.toPx()
+            val r = (size.minDimension - w) / 2
+            val cap = androidx.compose.ui.graphics.StrokeCap.Round
+            // Drawn clockwise for Forward and mirrored for Back: 300 degrees from just right of the top round to the upper left.
+            scale(if (back) -1f else 1f, 1f, pivot = center) {
+                drawArc(tint, startAngle = -80f, sweepAngle = 300f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(center.x - r, center.y - r), size = androidx.compose.ui.geometry.Size(2 * r, 2 * r), style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = cap))
+                val end = Math.toRadians(220.0)
+                val tip = androidx.compose.ui.geometry.Offset(center.x + r * Math.cos(end).toFloat(), center.y + r * Math.sin(end).toFloat())
+                val back0 = Math.atan2(-Math.cos(end), Math.sin(end)) // direction pointing back along the arc
+                val h = 6.dp.toPx()
+                for (d in listOf(-0.6, 0.6)) {
+                    val a = back0 + d
+                    drawLine(tint, tip, androidx.compose.ui.geometry.Offset(tip.x + h * Math.cos(a).toFloat(), tip.y + h * Math.sin(a).toFloat()), w, cap)
+                }
+            }
+        }
+        Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text)
     }
 }
 
@@ -616,26 +736,26 @@ private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolea
         }
         return
     }
+    // Tablet: a Device card (big) shows a 40 hero under an 18 heading; the Now Playing side card shows a 28 value on its heading row.
+    // The slider's own 48dp box is the only air under it. A greyed control keeps its tap-to-ask card.
     Column(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(if (big) 28.dp else 26.dp)).background(C.surface)
+        modifier.fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface)
             .then(if (unavailable != null && onAsk != null) Modifier.clickable(onClick = onAsk) else Modifier)
-            .padding(horizontal = if (big) 24.dp else 24.dp, vertical = if (big) 24.dp else 22.dp),
-        verticalArrangement = Arrangement.spacedBy(if (big) 18.dp else 20.dp),
+            .padding(TabletParentMetrics.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp))
-            Text(label, style = body(if (big) 20.sp else 19.sp, if (big) 800 else 700), color = C.text, modifier = Modifier.weight(1f))
-            if (!big && unavailable == null) Text("${(shown * 100).roundToInt()}%", style = disp(34.sp), color = C.text)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(icon, null, tint = C.text, modifier = Modifier.size(TabletParentMetrics.iconSize))
+            Text(label, style = if (big) body(18.sp, 800, 24f / 18) else body(16.sp, 700, 22f / 16), color = C.text, modifier = Modifier.weight(1f))
+            if (!big && unavailable == null) Text("${(shown * 100).roundToInt()}%", style = disp(28.sp, 800, 1.15f).copy(fontFeatureSettings = "tnum"), color = C.text)
         }
         if (unavailable != null) {
-            Muted(unavailable, if (big) 17 else 16)
-            if (askedLine != null) Text(askedLine, style = body(if (big) 17.sp else 16.sp, 700), color = C.accent)
-        }
-        else {
-            if (big) Text("${(shown * 100).roundToInt()}%", style = disp(56.sp, 800, 1f), color = C.text)
-            Box(Modifier.padding(vertical = 12.dp)) {
-                NickSlider(shown, onChange = { dragging = it }, onCommit = { dragging = null; onCommit((it * 100).roundToInt()) })
-            }
+            Text(unavailable, style = body(14.sp, 500, 20f / 14), color = C.muted)
+            if (askedLine != null) Text(askedLine, style = body(14.sp, 700, 20f / 14), color = C.accent)
+            if (onAsk != null) StartButton(Lucide.Settings, "Ask for permission", height = TabletParentMetrics.minTarget, onClick = onAsk)
+        } else {
+            if (big) Text("${(shown * 100).roundToInt()}%", style = disp(40.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = C.text)
+            NickSlider(shown, onChange = { dragging = it }, onCommit = { dragging = null; onCommit((it * 100).roundToInt()) })
         }
     }
 }
@@ -676,45 +796,60 @@ private fun NothingPlaying(v: NodeView, phoneScroll: ScrollState, onFind: () -> 
         }
         return
     }
+    val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val narrow = maxWidth < 1000.dp
-        val box: @Composable (Modifier) -> Unit = { mod ->
-            Column(
-                mod.dashed(C.line, 30.dp).padding(40.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterVertically),
-            ) {
-                val st = v.status
-                AppTileIcon(v.fgApp, if (st?.fg == null) Lucide.House else Lucide.LayoutGrid, 112.dp, 31.dp, v.node.color)
-                Title("Nothing playing", 44, lineHeight = 1.05f)
-                Text(
-                    buildAnnotatedString {
-                        append(kidName(v.node.name))
-                        if (st?.fg != null) {
-                            append(" is using ")
-                            withStyle(SpanStyle(color = C.text, fontWeight = FontWeight.Bold)) { append(st.fgLabel ?: "an app") }
-                            append(".")
-                        } else append(" is on the home screen.")
-                    },
-                    style = body(21.sp), color = C.muted,
-                )
-                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    if (st?.fg != null) NickButton("Bring back to home", { m.home(v.node.id) }, style = BtnStyle.GHOST, big = true, leading = Lucide.House)
-                    NickButton("Find something to watch", onFind, style = BtnStyle.PRIMARY, big = true, leading = Lucide.Film)
+        val i = tabletContentWidth(maxWidth.value)
+        val twoPane = controlTwoPane(i, fontScale)
+        val st = v.status
+        // The group is at most 560 wide and centred in its pane; the page scrolls when it is taller than the window.
+        val group: @Composable (Modifier) -> Unit = { mod ->
+            Box(mod, contentAlignment = Alignment.Center) {
+                Column(
+                    Modifier.widthIn(max = 560.dp).fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+                ) {
+                    AppTileIcon(v.fgApp, if (st?.fg == null) Lucide.House else Lucide.LayoutGrid, 64.dp, 18.dp, v.node.color)
+                    Title("Nothing playing", 40, maxLines = 2)
+                    Text(
+                        buildAnnotatedString {
+                            append(kidName(v.node.name))
+                            if (st?.fg != null) {
+                                append(" is using ")
+                                withStyle(SpanStyle(color = C.text, fontWeight = FontWeight.Bold)) { append(st.fgLabel ?: "an app") }
+                                append(".")
+                            } else append(" is on the home screen.")
+                        },
+                        style = body(16.sp, 500, 23f / 16), color = C.muted, textAlign = TextAlign.Center,
+                    )
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (st?.fg != null) NickButton("Bring back to home", { m.home(v.node.id) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST, leading = Lucide.House)
+                        NickButton("Find something to watch", onFind, style = BtnStyle.PRIMARY, leading = Lucide.Film)
+                    }
                 }
             }
         }
-        if (narrow) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                box(Modifier.fillMaxWidth().heightIn(min = 420.dp))
+        val sliders: @Composable (Modifier) -> Unit = { mod ->
+            Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
                 EyebrowText("On ${v.node.name}")
                 DeviceSliders(v)
             }
-        } else {
-            Row(Modifier.fillMaxSize().padding(start = 40.dp, end = 32.dp, top = 32.dp, bottom = 32.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                box(Modifier.weight(1f).fillMaxHeight())
-                Column(Modifier.width(360.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                    EyebrowText("On ${v.node.name}")
-                    DeviceSliders(v)
+        }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.width(i.dp).fillMaxHeight()) {
+                if (twoPane) {
+                    Row(
+                        Modifier.fillMaxSize().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    ) {
+                        Box(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) { group(Modifier.fillMaxWidth()) }
+                        sliders(Modifier.width(288.dp).fillMaxHeight().verticalScroll(rememberScrollState()))
+                    }
+                } else {
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
+                    ) { group(Modifier.fillMaxWidth()); sliders(Modifier.fillMaxWidth()) }
                 }
             }
         }
@@ -762,31 +897,46 @@ private fun OfflineBody(v: NodeView, onAll: () -> Unit, phoneScroll: ScrollState
         }
         return
     }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 80.dp, end = 80.dp, top = 40.dp, bottom = 72.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterVertically),
-    ) {
-        Box(Modifier.size(136.dp).clip(CircleShape).background(C.surface), contentAlignment = Alignment.Center) {
-            Icon(Lucide.WifiOff, null, tint = C.muted, modifier = Modifier.size(56.dp))
-        }
-        Title("${v.node.name} is offline", 52, lineHeight = 1.05f)
-        val seen = seenAgo(v.node.lastSeen).replaceFirstChar { it.uppercase() }.replace("Seen", "Last seen")
-        Muted(listOfNotNull(seen.ifEmpty { null }, v.node.lastBattery?.let { "battery was $it%" }).joinToString(" · "), 20)
-        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            tips.forEach { (icon, text) ->
-                Tip(when (icon) { TipIcon.WIFI_OFF -> Lucide.WifiOff; TipIcon.WIFI -> Lucide.Wifi; TipIcon.POWER -> Lucide.Power }, text)
+    // Tablet: one centred group, at most 560 wide; it scrolls when the window is shorter than the group.
+    var confirmUnlink by remember { mutableStateOf(false) }
+    val seen = seenAgo(v.node.lastSeen).replaceFirstChar { it.uppercase() }.replace("Seen", "Last seen")
+    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = TabletParentMetrics.contentBottom, vertical = TabletParentMetrics.contentBottom), contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+        ) {
+            Box(Modifier.size(64.dp).clip(CircleShape).background(C.surface), contentAlignment = Alignment.Center) {
+                Icon(Lucide.WifiOff, null, tint = C.muted, modifier = Modifier.size(28.dp))
             }
+            Title("${v.node.name} is offline", 44, maxLines = 4)
+            Text(
+                listOfNotNull(seen.ifEmpty { null }, v.node.lastBattery?.let { "battery was $it%" }).joinToString(" · "),
+                style = body(14.sp, 500, 20f / 14), color = C.muted, textAlign = TextAlign.Center,
+            )
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                tips.forEach { (icon, text) ->
+                    val glyph = when (icon) { TipIcon.WIFI_OFF -> Lucide.WifiOff; TipIcon.WIFI -> Lucide.Wifi; TipIcon.POWER -> Lucide.Power }
+                    if (reason is Reason.CarNetDown) {
+                        // The same compact warning card as the Home banner: min 48, radius 12, padding 12, 14/20 text.
+                        val warnShape = RoundedCornerShape(TabletParentMetrics.nestedRadius)
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(warnShape).background(C.surface).border(1.dp, C.dangerLine, warnShape).padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(glyph, null, tint = C.danger, modifier = Modifier.size(TabletParentMetrics.iconSize))
+                            Text(text, style = body(14.sp, 700, 20f / 14), color = C.text, modifier = Modifier.weight(1f))
+                        }
+                    } else Tip(glyph, text)
+                }
+            }
+            NickButton("Try again", { m.reconnect(v.node.id) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Lucide.RefreshCw)
+            NickButton("All tablets", onAll, Modifier.fillMaxWidth(), style = BtnStyle.GHOST)
+            // A tablet reset while this one was away never said goodbye: let the parent forget it here.
+            Text("Reset or gave it away? Unlink it so it stops showing here.", style = body(14.sp, 500, 20f / 14), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            NickButton(if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", {
+                if (confirmUnlink) { m.unlink(v.node.id); onAll() } else confirmUnlink = true
+            }, Modifier.fillMaxWidth(), style = BtnStyle.DANGER, leading = Lucide.Unlink)
         }
-        Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            NickButton("Try again", { m.reconnect(v.node.id) }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
-            NickButton("All tablets", onAll, style = BtnStyle.GHOST, big = true)
-        }
-        // A tablet reset while this one was away never said goodbye: let the parent forget it here.
-        var confirmUnlink by remember { mutableStateOf(false) }
-        Muted("Reset or gave it away? Unlink it so it stops showing here.", 17, Modifier.padding(top = 10.dp))
-        NickButton(if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", {
-            if (confirmUnlink) { m.unlink(v.node.id); onAll() } else confirmUnlink = true
-        }, style = BtnStyle.DANGER, leading = Lucide.Unlink)
     }
 }
 
@@ -799,9 +949,10 @@ private fun Tip(icon: ImageVector, text: String) {
         }
         return
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp))
-        Text(text, style = body(20.sp, 600), color = C.text)
+    // Tablet: 20 glyph, 15/22 text that wraps beside it.
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Icon(icon, null, tint = C.text, modifier = Modifier.padding(top = 1.dp).size(TabletParentMetrics.iconSize))
+        Text(text, style = body(15.sp, 600, 22f / 15), color = C.text, modifier = Modifier.weight(1f))
     }
 }
 
@@ -819,74 +970,64 @@ private fun AppsTab(v: NodeView, phoneGrid: LazyGridState) {
         PhoneAppsTab(v, phoneGrid)
         return
     }
-    Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 26.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        val intro: @Composable (Modifier) -> Unit = { mod ->
-            Column(mod, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Tap an app to open it on ${v.node.name} now.", style = body(20.sp, 700), color = C.text)
-                Text(
-                    buildAnnotatedString {
-                        append("Switch on ")
-                        withStyle(SpanStyle(color = C.text, fontWeight = FontWeight.Bold)) { append("Home") }
-                        append(" to show it on the home screen")
-                        if (apps != null) append(" · ${allowed.count { a -> apps.any { it.pkg == a } }} of ${apps.size} shown")
-                    },
-                    style = body(17.sp), color = C.muted,
-                )
-            }
-        }
-        val buttons: @Composable () -> Unit = {
-            NickButton("Bring back to home", { m.home(v.node.id) }, leading = Lucide.House)
-            val locked = st?.lockedApp
-            when {
-                locked != null -> NickButton("Unlock ${apps?.firstOrNull { it.pkg == locked }?.label ?: "app"}", { m.lockToApp(v.node.id, null) }, style = BtnStyle.PRIMARY, leading = Lucide.LockOpen)
-                open != null -> NickButton("Lock to ${st.fgLabel ?: "this app"}", { m.lockToApp(v.node.id, open) }, style = BtnStyle.PRIMARY, leading = Lucide.Lock)
-            }
-        }
-        // Phone-width Master: text above the buttons instead of squeezed beside them.
-        if (LocalConfiguration.current.screenWidthDp < 600) {
-            intro(Modifier.fillMaxWidth())
-            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
-        } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            intro(Modifier.weight(1f))
-            buttons()
-        }
-        if (apps == null) {
-            Muted("Getting the app list from ${v.node.name}…", 19)
-            return@Column
-        }
+    // Tablet: the content cap, 16 gaps and adaptive cells of at least 128, all in one scrolling grid.
+    val gridState = phoneGrid
+    ParentContentCap {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(150.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 32.dp),
+            columns = GridCells.Adaptive(128.dp), state = gridState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            contentPadding = PaddingValues(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
         ) {
+            item(key = "intro", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Tap an app to open it on ${v.node.name} now.", style = body(16.sp, 700, 22f / 16), color = C.text)
+                    Text(
+                        buildAnnotatedString {
+                            append("Switch on ")
+                            withStyle(SpanStyle(color = C.text, fontWeight = FontWeight.Bold)) { append("Home") }
+                            append(" to show it on the home screen")
+                            if (apps != null) append(" · ${allowed.count { a -> apps.any { it.pkg == a } }} of ${apps.size} shown")
+                        },
+                        style = body(14.sp, 500, 20f / 14), color = C.muted,
+                    )
+                }
+            }
+            item(key = "actions", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NickButton("Bring back to home", { m.home(v.node.id) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), leading = Lucide.House)
+                    val locked = st?.lockedApp
+                    when {
+                        locked != null -> NickButton("Unlock ${apps?.firstOrNull { it.pkg == locked }?.label ?: "app"}", { m.lockToApp(v.node.id, null) }, style = BtnStyle.PRIMARY, leading = Lucide.LockOpen)
+                        open != null -> NickButton("Lock to ${st.fgLabel ?: "this app"}", { m.lockToApp(v.node.id, open) }, style = BtnStyle.PRIMARY, leading = Lucide.Lock)
+                    }
+                }
+            }
+            if (apps == null) {
+                item(key = "loading", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) { Muted("Getting the app list from ${v.node.name}…", 16) }
+                return@LazyVerticalGrid
+            }
             items(apps, key = { it.pkg }) { a ->
                 val isOpen = a.pkg == open
-                val shape = RoundedCornerShape(24.dp)
-                Box(Modifier.clip(shape).background(C.surface).border(3.dp, if (isOpen) C.accent else Color.Transparent, shape)) {
+                val shape = RoundedCornerShape(TabletParentMetrics.mediaRadius)
+                Box(Modifier.clip(shape).background(C.surface).border(2.dp, if (isOpen) C.accent else Color.Transparent, shape)) {
                     Column {
                         Column(
-                            Modifier.fillMaxWidth().clickable { m.open(v.node.id, a.pkg) }.padding(top = 20.dp, bottom = 10.dp, start = 8.dp, end = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
+                            Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.minTarget).clickable(role = Role.Button) { m.open(v.node.id, a.pkg) }
+                                .padding(start = 8.dp, end = 8.dp, top = 16.dp, bottom = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            AppTileIcon(a, Lucide.LayoutGrid, 76.dp, 21.dp, v.node.color)
-                            Text(a.label, style = body(17.sp, 700), color = C.text, maxLines = 1)
+                            AppTileIcon(a, Lucide.LayoutGrid, 56.dp, 16.dp, v.node.color)
+                            Text(a.label, style = body(15.sp, 700, 20f / 15), color = C.text, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                         }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
-                        Row(
-                            // The whole row is the target, not just the switch: a reach from the driver's seat must not open the app by mistake.
-                            Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                                .toggleable(a.pkg in allowed, role = androidx.compose.ui.semantics.Role.Switch) { m.allow(v.node.id, a.pkg, it) }
-                                .padding(start = 14.dp, end = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text("Home", style = body(14.sp, 600), color = C.muted)
-                            NickSwitch(a.pkg in allowed) { m.allow(v.node.id, a.pkg, it) }
-                        }
+                        // The whole row is the target, not just the switch: a reach from the driver's seat must not open the app by mistake.
+                        SwitchRow("Home", a.pkg in allowed, Modifier.padding(start = 12.dp, end = 8.dp), body(14.sp, 600, 20f / 14), C.muted) { m.allow(v.node.id, a.pkg, it) }
                     }
                     if (isOpen) Box(
-                        Modifier.align(Alignment.TopEnd).padding(10.dp).height(24.dp).clip(RoundedCornerShape(12.dp)).background(C.accent).padding(horizontal = 9.dp),
+                        Modifier.align(Alignment.TopEnd).padding(8.dp).height(28.dp).clip(RoundedCornerShape(8.dp)).background(C.accent).padding(horizontal = 9.dp),
                         contentAlignment = Alignment.Center,
                     ) { Text("OPEN", style = body(12.sp, 800), color = C.onAccent) }
                 }
@@ -989,20 +1130,24 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
     var confirmUnlink by remember { mutableStateOf(false) }
     val now = rememberNow(1000)
     val ownScroll = rememberScrollState()
+    val fontScale = LocalDensity.current.fontScale
+    // 14/20 notes on a tablet; the phone keeps its 1.3.
+    val noteLine = if (phone) 1.3f else 20f / 14
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val cols = if (maxWidth < 1000.dp) 1 else 3
-        val gap = 20.dp
-        val cardH: Dp = if (cols == 3) (maxHeight - 26.dp - 32.dp - gap) / 2 else 300.dp
+        // Tablet: the columns follow the capped content width; a card's inner width follows the columns (no measuring inside the rows).
+        val contentI = tabletContentWidth(maxWidth.value)
+        val cols = deviceColumns(contentI, fontScale)
+        val innerWidth = deviceCardInnerWidth(contentI, cols)
         val cards: List<@Composable (Modifier) -> Unit> = listOf(
             { mod ->
                 DeviceCard(mod, Lucide.Tablet, "Screen", rotateIcon = true) {
                     val segmented: @Composable () -> Unit = {
                         Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 22.dp)).background(C.surface2).padding(if (phone) 4.dp else 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (phone) 4.dp else 6.dp),
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else TabletParentMetrics.segmentedRadius)).background(C.surface2).padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             val on = st?.screenOn != false
-                            val segH = if (phone) PhoneMetrics.minTarget else 68.dp
+                            val segH = PhoneMetrics.minTarget
                             SegBtn(Lucide.MonitorOff, "Off", !on, Modifier.weight(1f), dim = st?.screenOffOk == false, height = segH) {
                                 if (st?.screenOffOk == false) m.askPermission(v.node.id) else m.screen(v.node.id, false)
                             }
@@ -1010,8 +1155,8 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
                         }
                     }
                     val lockBtn: @Composable () -> Unit = {
-                        if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, big = !phone, leading = Lucide.LockOpen)
-                        else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.buttonHeight) else Modifier), big = !phone, leading = Lucide.Lock)
+                        if (st?.lockedBy != null) NickButton("Unlock tablet", { m.lock(v.node.id, false) }, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, leading = Lucide.LockOpen)
+                        else NickButton("Lock tablet now", { m.lock(v.node.id, true) }, Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.buttonHeight), leading = Lucide.Lock)
                     }
                     // Hidden when the Node does not have the touch1 capability.
                     val touchRow: @Composable () -> Unit = { if (st?.supportsTouch == true) TouchSwitchRow(v, st.touch, st.overlay, m) }
@@ -1021,7 +1166,7 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
                     val offHint: @Composable () -> Unit = {
                         if (st?.screenOffOk == false) {
                             val asked = askedLine(v)
-                            if (asked != null) Text(asked, style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
+                            if (asked != null) Text(asked, style = body(14.sp, 700, noteLine), color = C.accent)
                             else Muted(ControlAccess.SCREEN_OFF_SHORT, 14)
                         }
                     }
@@ -1029,29 +1174,26 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
                     // which some updates turn off; open that setting on the tablet in one tap (a 90 s window the parent can end).
                     val remote: @Composable () -> Unit = {
                         if (st?.supportsScreen == true) {
-                            if (st.screen == RemoteMessages.NEEDS_CONSENT) Text("Screen: tap Allow on ${v.node.name}", style = body(14.sp, 700), color = C.accent, maxLines = if (phone) Int.MAX_VALUE else 2)
+                            if (st.screen == RemoteMessages.NEEDS_CONSENT) Text("Screen: tap Allow on ${v.node.name}", style = body(14.sp, 700, noteLine), color = C.accent)
                             if (st.maintenance) {
-                                Text("Settings open on ${v.node.name}", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
+                                Text("Settings open on ${v.node.name}", style = body(14.sp, 700, noteLine), color = C.danger)
                                 NickButton("Lock now", { m.home(v.node.id) }, Modifier.fillMaxWidth(), BtnStyle.DANGER)
                             } else if (st.control != RemoteMessages.CONTROL_READY) {
-                                Text("Touch control: off", style = body(14.sp, 700), color = C.danger, maxLines = if (phone) Int.MAX_VALUE else 2)
+                                Text("Touch control: off", style = body(14.sp, 700, noteLine), color = C.danger)
                                 NickButton("Open setting on tablet", { m.askControl(v.node.id) }, Modifier.fillMaxWidth())
                             }
                         }
                     }
-                    if (phone) {
-                        // The hint explains the On/Off switch, so it sits right under it. Touch is its own group below a divider.
-                        Column(verticalArrangement = Arrangement.spacedBy(PhoneMetrics.cardGap)) { segmented(); offHint() }
-                        lockBtn()
-                        ringBtn()
-                        // remote() draws nothing when the screen is allowed and touch control is ready, so match that here.
-                        val remoteShows = st?.supportsScreen == true && (st.screen == RemoteMessages.NEEDS_CONSENT || st.maintenance || st.control != RemoteMessages.CONTROL_READY)
-                        if (st?.supportsTouch == true || remoteShows) Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
-                        touchRow()
-                        remote()
-                    } else {
-                        segmented(); lockBtn(); touchRow(); ringBtn(); offHint(); remote()
-                    }
+                    // The hint explains the On/Off switch, so it sits right under it. Touch is its own group below a divider
+                    // (a phone and a tablet share this order; the tablet's gaps are the 12 of its card content).
+                    Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) { segmented(); offHint() }
+                    lockBtn()
+                    ringBtn()
+                    // remote() draws nothing when the screen is allowed and touch control is ready, so match that here.
+                    val remoteShows = st?.supportsScreen == true && (st.screen == RemoteMessages.NEEDS_CONSENT || st.maintenance || st.control != RemoteMessages.CONTROL_READY)
+                    if (st?.supportsTouch == true || remoteShows) Box(Modifier.fillMaxWidth().height(1.dp).background(C.surface2))
+                    touchRow()
+                    remote()
                 }
             },
             { mod ->
@@ -1093,28 +1235,43 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
                         } else Muted("Pick a time. The tablet warns 5 minutes before, then turns its screen off.", 14)
                         return@DeviceCard
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(15, 30, 45, 60).forEach { min ->
-                            val sel = at > 0 && chosen == min
-                            Box(
-                                Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(if (sel) C.accent else C.surface2)
-                                    .clickable { chosen = min; m.bedtime(v.node.id, min) },
-                                contentAlignment = Alignment.Center,
-                            ) { Text("$min min", style = body(18.sp, 600), color = if (sel) C.onAccent else C.text) }
+                    // Four equal rounded blocks (radius 12, gap 8, at least 64 high): number over "min". One row at 280+ of inner
+                    // width and font scale under 1.5, else 2x2. Tapping sends at once, as before.
+                    val pick: @Composable RowScope.(Int) -> Unit = { min ->
+                        val sel = at > 0 && chosen == min
+                        val bg by animateColorAsState(if (sel) C.accent else C.surface2, tween(120), label = "bedtimeBg")
+                        val fg = if (sel) C.onAccent else C.text
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight().heightIn(min = TabletParentMetrics.subButtonHeight).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).background(bg)
+                                .selectable(selected = sel, role = Role.RadioButton) { chosen = BedtimeCommands.pick(min) { m.bedtime(v.node.id, it) } }
+                                .semantics { contentDescription = "$min minutes" }.padding(vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                        ) {
+                            Text("$min", style = body(20.sp, 700, 22f / 20).copy(fontFeatureSettings = "tnum"), color = fg)
+                            Text("min", style = body(12.sp, 600, 16f / 12), color = fg.copy(alpha = 0.8f))
                         }
                     }
+                    if (bedtimeOneRow(innerWidth, fontScale)) {
+                        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) { BedtimeCommands.choices.forEach { pick(it) } }
+                    } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BedtimeCommands.choices.chunked(2).forEach { pair -> Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) { pair.forEach { pick(it) } } }
+                    }
                     if (at > 0) {
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(C.surface2).padding(horizontal = 18.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("SCREEN TURNS OFF IN", style = body(14.sp, 700), color = C.muted)
-                                Text("$left min", style = disp(34.sp), color = C.text)
+                        val cancel: @Composable (Modifier) -> Unit = { mod -> NickButton("Cancel", { chosen = null; BedtimeCommands.cancel { m.bedtime(v.node.id, it) } }, mod, BtnStyle.GHOST) }
+                        val remaining: @Composable (Modifier) -> Unit = { mod ->
+                            Column(mod) {
+                                Text("SCREEN TURNS OFF IN", style = body(12.sp, 700, 16f / 12), color = C.muted)
+                                Text("$left min", style = body(24.sp, 800, 28f / 24).copy(fontFeatureSettings = "tnum"), color = C.text)
                             }
-                            NickButton("Cancel", { chosen = null; m.bedtime(v.node.id, 0) }, Modifier.height(52.dp), BtnStyle.GHOST)
                         }
-                    } else Muted("Pick a time. The tablet warns 5 minutes before, then turns its screen off.", 16)
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).background(C.surface2).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (bedtimeCancelBelow(innerWidth)) { remaining(Modifier.fillMaxWidth()); cancel(Modifier.fillMaxWidth()) }
+                            else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { remaining(Modifier.weight(1f)); cancel(Modifier) }
+                        }
+                    } else Text("Pick a time. The tablet warns 5 minutes before, then turns its screen off.", style = body(14.sp, 500, 20f / 14), color = C.muted)
                 }
             },
             { mod ->
@@ -1126,29 +1283,23 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
             { mod -> SliderCard(Lucide.Sun, "Brightness", st?.brightness ?: 0, big = true, modifier = mod, unavailable = brightnessReason(v), askedLine = askedLine(v), onAsk = { m.askPermission(v.node.id) }) { m.setBrightness(v.node.id, it) } },
             { mod ->
                 DeviceCard(mod, Lucide.Settings, "Tablet", trailing = {
-                    if (st != null && !st.owner) Chip(height = 30.dp, bg = C.dangerLine) { Text("Kid lock off", style = body(13.sp, 700), color = C.danger) }
+                    // A passive badge: 28 high, 12sp.
+                    if (st != null && !st.owner) Chip(height = if (phone) 30.dp else 28.dp, bg = C.dangerLine) { Text("Kid lock off", style = body(if (phone) 13.sp else 12.sp, 700), color = C.danger) }
                 }) {
                     val unlink: @Composable (Dp) -> Unit = { h ->
                         StartButton(Lucide.Unlink, if (confirmUnlink) "Tap again to unlink" else "Unlink tablet", danger = true, height = h) {
                             if (confirmUnlink) { m.unlink(v.node.id); onUnlinked() } else confirmUnlink = true
                         }
                     }
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 8.dp)) {
                         StartButton(Lucide.RefreshCw, "Restart Jellyfin") { m.restartJellyfin(v.node.id) }
                         StartButton(Lucide.Pencil, "Rename tablet") { renaming = true }
-                        unlink(if (phone) PhoneMetrics.minTarget else 60.dp)
+                        unlink(PhoneMetrics.minTarget)
                         // An old Node does not report it, so there is nothing to switch.
                         st?.landscape?.let { l ->
-                            if (phone) SwitchRow("Lock to landscape", l.lock) { m.setLandscape(v.node.id, it) }
-                            else Row(
-                                Modifier.fillMaxWidth().toggleable(l.lock, role = androidx.compose.ui.semantics.Role.Switch) { m.setLandscape(v.node.id, it) },
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
-                                Text("Lock to landscape", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
-                                NickSwitch(l.lock) { m.setLandscape(v.node.id, it) }
-                            }
-                            if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700), color = C.danger)
-                            if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700), color = C.danger)
+                            SwitchRow("Lock to landscape", l.lock) { m.setLandscape(v.node.id, it) }
+                            if (l.lock && l.needsPermission) Text(LandscapePolicy.NEEDS_PERMISSION, style = body(14.sp, 700, noteLine), color = C.danger)
+                            if (l.pending) Text(if (l.lock) LandscapePolicy.PENDING_ON else LandscapePolicy.PENDING_OFF, style = body(14.sp, 700, noteLine), color = C.danger)
                         }
                     }
                 }
@@ -1162,14 +1313,23 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
             ) { cards.forEach { it(Modifier.fillMaxWidth()) } }
             return@BoxWithConstraints
         }
+        // Tablet: masonry. One scrolling page holding equal-width independent columns (16 apart, 16 between cards), each card as tall as
+        // its own content: no row minimum, no stretching. Cards are Screen 0, Bedtime 1, Battery 2, Volume 3, Brightness 4, Tablet 5.
+        val columns: List<List<Int>> = when (cols) {
+            3 -> listOf(listOf(0, 3), listOf(1, 4), listOf(2, 5))
+            2 -> listOf(listOf(0, 2, 4), listOf(1, 3, 5))
+            else -> listOf(listOf(0, 1, 2, 3, 4, 5))
+        }
         Column(
-            Modifier.fillMaxSize().verticalScroll(ownScroll)
-                .padding(start = 40.dp, end = 40.dp, top = 26.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(gap),
+            Modifier.fillMaxSize().verticalScroll(scroll ?: ownScroll).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            cards.chunked(cols).forEach { row ->
-                // A row is as tall as its tallest card (never below cardH); a tall row just makes the page scroll.
-                Row(Modifier.height(IntrinsicSize.Min).heightIn(min = cardH), horizontalArrangement = Arrangement.spacedBy(gap)) { row.forEach { it(Modifier.weight(1f).fillMaxHeight()) } }
+            Row(Modifier.width(contentI.dp), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                columns.forEach { idx ->
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                        idx.forEach { cards[it](Modifier.fillMaxWidth()) }
+                    }
+                }
             }
         }
     }
@@ -1197,17 +1357,12 @@ private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlay
         }
         return
     }
-    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 4.dp)) {
-        Row(
-            Modifier.fillMaxWidth().toggleable(on, role = androidx.compose.ui.semantics.Role.Switch) { change(it) },
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("Touch", style = body(if (compact) 16.sp else 17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
-            NickSwitch(on) { change(it) }
-        }
+    // Tablet: the row is at least 48 (label 16), its 14/20 helper sits right under it, the Allow action is 48.
+    Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.labelGap)) {
+        SwitchRow("Touch", on) { change(it) }
         val status = TouchText.status(touch, v.node.name)
-        Text(status ?: TouchText.HINT, style = body(if (compact) 13.sp else 14.sp, 700), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
-        if (TouchText.offerAllow(touch)) StartButton(Lucide.Settings, "Allow on ${v.node.name}", height = 40.dp) { m.askPermission(v.node.id) }
+        Text(status ?: TouchText.HINT, style = body(14.sp, 700, 20f / 14), color = if (status != null && status != TouchText.IS_OFF) C.danger else C.muted)
+        if (TouchText.offerAllow(touch)) StartButton(Lucide.Settings, "Allow on ${v.node.name}", height = PhoneMetrics.minTarget) { m.askPermission(v.node.id) }
     }
 }
 
@@ -1219,10 +1374,29 @@ private fun TouchSwitchRow(v: NodeView, touch: NetMessages.TouchStatus?, overlay
 internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.PowerStatus?, onPower: (Boolean, Int) -> Unit) {
     val low = battery < 25
     val phone = LocalPhone.current
-    if (power == null && !phone) {
-        Text("$battery%", style = disp(88.sp, 800, 1f), color = if (low) C.danger else C.text)
-        ProgressBar(battery / 100f, height = 14.dp, fill = if (low) C.danger else C.online)
-        Muted(if (charging) "Charging" else "Not charging", 17, weight = 600)
+    if (!phone) {
+        // Tablet: without power controls a 48 hero, a 6-high track 12 below and the 14 charging line 8 below; with them a 36 hero beside the
+        // flexible progress and status column, then 16 before the wake row. Every line wraps, nothing is cut.
+        val track = if (low) C.danger else C.online
+        val status = if (charging) "Charging" else "Not charging"
+        if (power == null) {
+            Column {
+                Text("$battery%", style = disp(48.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
+                Spacer(Modifier.height(12.dp))
+                ProgressBar(battery / 100f, height = 6.dp, fill = track)
+                Spacer(Modifier.height(8.dp))
+                Text(status, style = body(14.sp, 600, 20f / 14), color = C.muted)
+            }
+        } else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("$battery%", style = disp(36.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProgressBar(battery / 100f, height = 6.dp, fill = track)
+                    Text(status, style = body(14.sp, 600, 20f / 14), color = C.muted)
+                }
+            }
+            PowerControls(power.wake, power.offMin, if (power.needsPermission) PowerPolicy.NEEDS_PERMISSION_TABLET else null, onPower)
+        }
     } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("$battery%", style = disp(40.sp, 800, 1f), color = if (low) C.danger else C.text)
@@ -1256,10 +1430,21 @@ private fun DeviceCard(
         }
         return
     }
-    Column(modifier.clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(icon, null, tint = C.text, modifier = Modifier.size(22.dp).then(if (rotateIcon) Modifier.rotate90() else Modifier))
-            Text(title, style = body(20.sp, 800), color = C.text, modifier = Modifier.weight(1f))
+    // Tablet: radius 20, padding 20, content 12 apart; the card grows with its content. The heading row wraps a trailing badge onto its own line.
+    Column(
+        modifier.clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface)
+            .then(if (animateSize) Modifier.animateContentSize(tween(180)) else Modifier).padding(TabletParentMetrics.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+    ) {
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(
+            Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(icon, null, tint = C.text, modifier = Modifier.size(TabletParentMetrics.iconSize).then(if (rotateIcon) Modifier.rotate90() else Modifier))
+                Text(title, style = body(18.sp, 800, 24f / 18), color = C.text)
+            }
             trailing()
         }
         content()
@@ -1281,14 +1466,16 @@ private fun SegBtn(icon: ImageVector, label: String, on: Boolean, modifier: Modi
         }
         return
     }
+    // Tablet: a segment is at least 48 high with radius 12, a 20 glyph and a 16 label; colours fade over 120ms.
+    val bg by animateColorAsState(if (on) C.accent else Color.Transparent, tween(120), label = "segBtnBg")
+    val col by animateColorAsState(if (on) C.onAccent else C.muted, tween(120), label = "segBtnFg")
     Row(
-        modifier.height(height).clip(RoundedCornerShape(17.dp)).background(if (on) C.accent else Color.Transparent)
-            .alpha(if (enabled && !dim) 1f else 0.4f).clickable(enabled = enabled, onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+        modifier.heightIn(min = height).clip(RoundedCornerShape(TabletParentMetrics.segmentedSelectedRadius)).background(bg)
+            .alpha(if (enabled && !dim) 1f else 0.4f).selectable(selected = on, enabled = enabled, role = Role.RadioButton, onClick = onClick).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
-        val col = if (on) C.onAccent else C.muted
-        Icon(icon, null, tint = col, modifier = Modifier.size(22.dp))
-        Text(label, style = body(20.sp, 800), color = col)
+        Icon(icon, null, tint = col, modifier = Modifier.size(TabletParentMetrics.iconSize))
+        Text(label, style = body(16.sp, 700, 1.25f), color = col)
     }
 }
 
@@ -1310,16 +1497,17 @@ private fun StartButton(icon: ImageVector, label: String, modifier: Modifier = M
         }
         return
     }
+    // Tablet: at least 48 high (grows for a long label), radius 14, a 20 glyph, a 16 label; danger is a 1dp outline.
+    val tShape = RoundedCornerShape(TabletParentMetrics.buttonRadius)
+    val col = if (danger) C.danger else C.text
     Row(
-        modifier.fillMaxWidth().height(height).clip(shape)
-            .then(if (danger) Modifier.border(2.dp, C.dangerLine, shape) else Modifier.background(C.surface2))
-            .clickable(onClick = onClick).padding(horizontal = if (height < 56.dp) 8.dp else 28.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (height < 56.dp) Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally) else Arrangement.spacedBy(12.dp),
+        modifier.fillMaxWidth().heightIn(min = if (height == 60.dp) TabletParentMetrics.minTarget else maxOf(height, TabletParentMetrics.minTarget)).clip(tShape)
+            .then(if (danger) Modifier.border(1.dp, C.dangerLine, tShape) else Modifier.background(C.surface2))
+            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
-        val col = if (danger) C.danger else C.text
-        Icon(icon, null, tint = col, modifier = Modifier.size(if (height < 56.dp) 18.dp else 20.dp))
-        Text(label, style = body(if (height < 56.dp) 16.sp else 19.sp, 700), color = col, maxLines = 1)
+        Icon(icon, null, tint = col, modifier = Modifier.size(TabletParentMetrics.iconSize))
+        Text(label, style = body(16.sp, 700, 1.25f), color = col, modifier = Modifier.weight(1f, fill = false), textAlign = TextAlign.Center)
     }
 }
 
@@ -1336,6 +1524,23 @@ internal fun tabletCompact(cardHeight: Dp) = cardHeight < 300.dp
 fun RenameDialog(current: String, title: String = "Rename tablet", onDone: (String?) -> Unit) {
     var name by remember { mutableStateOf(current) }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap { onDone(null) }, contentAlignment = Alignment.Center) {
+        if (LocalParentTablet.current && !LocalPhone.current) {
+            // Tablet: at most 480 wide with 24 clear all round, padding 24, radius 24; scrolls on a short window and wraps its actions.
+            Column(
+                Modifier.widthIn(max = 480.dp + 48.dp).fillMaxWidth().padding(24.dp).heightIn(max = 560.dp).clip(RoundedCornerShape(TabletParentMetrics.dialogRadius)).background(C.surface).tap {}
+                    .verticalScroll(rememberScrollState()).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.sectionGap),
+            ) {
+                Title(title, 36)
+                NickField(name, { name = it.take(28) })
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NickButton("Cancel", { onDone(null) }, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
+                    NickButton("Save", { onDone(name.trim()) }, style = BtnStyle.PRIMARY, enabled = name.isNotBlank())
+                }
+            }
+            return@Box
+        }
         Column(
             Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}.padding(32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),

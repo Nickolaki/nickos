@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -108,6 +113,8 @@ fun CamTile(
     prefs: CamPrefs,
     live: Boolean = true,
     compact: Boolean = false,
+    /** A short regular tile (not a spotlight thumbnail) still gets the pencil when its RTSP camera has failed, because the words tell the parent to tap it. */
+    editWhenShort: Boolean = false,
     leaving: Boolean = false,
     retryInMs: Long? = null,
     minutes: Int = prefs.maxMin,
@@ -128,10 +135,14 @@ fun CamTile(
     var news by remember(source.id, live) { mutableStateOf(if (live) RtspNews.CONNECTING else preset ?: RtspNews.CONNECTING) }
     // Looking and Moved are the screen's own words about this camera and win over what the player last said.
     val shown = if (preset == RtspNews.LOOKING || preset == RtspNews.MOVED) preset else news
+    val shortEdit = compact && editWhenShort && tablet == null && !leaving && shown.isFailure()
     val picture = if (tablet != null) (frame != null && display.showsVideo) || (leaving && last[0] != null) else shown == RtspNews.LIVE
 
-    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(if (LocalPhone.current) 20.dp else 22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
-        Placeholder(source, display, shown, preset != null || live, compact, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
+    val phone = LocalPhone.current
+    // Tablet parent tiles: radius 16, overlay controls 48 inset 8 with 4 between, passive labels 28 high at 14sp.
+    val tab = LocalParentTablet.current
+    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(if (phone) 20.dp else if (tab) 16.dp else 22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
+        Placeholder(source, display, shown, preset != null || live, compact, shortEdit, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
 
         if (tablet != null) {
             AnimatedVisibility(visible = picture, enter = fadeIn(tween(prefs.fadeMs)), exit = fadeOut(tween(prefs.fadeMs))) {
@@ -152,20 +163,32 @@ fun CamTile(
             }
         }
 
-        Chip(Modifier.align(Alignment.BottomStart).padding(12.dp), height = 36.dp, bg = Color.Black.copy(alpha = 0.45f), padding = PaddingValues(horizontal = 12.dp)) {
+        val inset = if (tab) 8.dp else 12.dp
+        val badgeH = if (tab) 28.dp else 36.dp
+        Chip(Modifier.align(Alignment.BottomStart).padding(inset), height = badgeH, bg = Color.Black.copy(alpha = 0.45f), padding = PaddingValues(horizontal = if (tab) 10.dp else 12.dp)) {
             Dot(if (picture && !leaving) C.online else C.offline, 10.dp)
-            Text(source.name, style = body(15.sp, 700), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(source.name, style = body(if (tab) 14.sp else 15.sp, 700), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         // This tablet refuses talk audio until notifications are allowed on it: say so where the parent is looking.
         talk?.note?.let { note ->
-            if (!compact && !leaving) Chip(Modifier.align(Alignment.BottomEnd).padding(12.dp), height = 36.dp, bg = Color.Black.copy(alpha = 0.45f), padding = PaddingValues(horizontal = 12.dp)) {
+            if (!compact && !leaving) Chip(Modifier.align(Alignment.BottomEnd).padding(inset), height = badgeH, bg = Color.Black.copy(alpha = 0.45f), padding = PaddingValues(horizontal = if (tab) 10.dp else 12.dp)) {
                 Text(note, style = body(14.sp, 700), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
+        if (shortEdit) Box(Modifier.align(Alignment.TopEnd).padding(if (tab) 8.dp else 12.dp)) { SmallIcon(Lucide.Pencil, onEdit) }
+
         if (!compact && !leaving) {
-            Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (tab) {
+                // One row of 48 targets with 4 between; it wraps to a second row only if the tile is too narrow, never smaller targets.
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (talk != null) TileMic(talk)
+                    SmallIcon(Lucide.Maximize, onMaximize)
+                    SmallIcon(if (tablet != null) Lucide.RotateCwSquare else Lucide.Pencil, onEdit)
+                }
+            } else Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (talk != null) TileMic(talk)
                 SmallIcon(Lucide.Maximize, onMaximize)
                 SmallIcon(if (tablet != null) Lucide.RotateCwSquare else Lucide.Pencil, onEdit)
@@ -174,8 +197,9 @@ fun CamTile(
 
         if (tablet != null && display == TileDisplay.HOT && !leaving) WarmBadge(
             compact,
-            // Below the corner buttons (48dp tall, 12dp from the top) so the chip never covers them; a compact tile has none.
-            Modifier.align(Alignment.TopStart).padding(start = 12.dp, end = 12.dp, top = if (compact) 12.dp else 68.dp, bottom = 12.dp),
+            // Below the corner buttons (48dp tall, inset from the top) so the chip never covers them; a compact tile has none.
+            if (tab) Modifier.align(Alignment.TopStart).padding(start = 8.dp, end = 8.dp, top = if (compact) 8.dp else 64.dp, bottom = 8.dp)
+            else Modifier.align(Alignment.TopStart).padding(start = 12.dp, end = 12.dp, top = if (compact) 12.dp else 68.dp, bottom = 12.dp),
         )
     }
 }
@@ -188,6 +212,7 @@ private fun Placeholder(
     news: RtspNews,
     words: Boolean,
     compact: Boolean,
+    clearOfEdit: Boolean,
     live: Boolean,
     retryInMs: Long?,
     minutes: Int,
@@ -195,13 +220,19 @@ private fun Placeholder(
     modifier: Modifier,
 ) {
     val tablet = (source as? TabletSource)?.node
+    val tab = LocalParentTablet.current
+    // A tablet tile with a button (update, turn on again) may be taller than a small tile: only that placeholder scrolls inside itself.
+    val actionable = tablet != null && !compact && display in setOf(TileDisplay.UPDATE_NEEDED, TileDisplay.AUTO_OFF, TileDisplay.TOO_HOT)
     Column(
         // A strip tile is short: keep clear of the name label along its bottom edge.
-        modifier.padding(start = 16.dp, end = 16.dp, top = if (compact) 8.dp else 16.dp, bottom = if (compact) 44.dp else 16.dp).widthIn(max = 360.dp),
+        modifier.padding(start = 16.dp, end = 16.dp, top = if (clearOfEdit) 60.dp else if (compact) 8.dp else 16.dp, bottom = if (compact) 44.dp else 16.dp).widthIn(max = 360.dp)
+            .then(if (tab && (actionable || clearOfEdit)) Modifier.verticalScroll(rememberScrollState()) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp),
     ) {
-        if (tablet != null) Avatar(tablet.name, tablet.color, tablet.avatar, if (compact) 40.dp else 72.dp)
-        else Icon(if (news.isFailure()) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (compact) 28.dp else 44.dp))
+        // Tablet parent: a 40 avatar or glyph in every size.
+        if (tablet != null) Avatar(tablet.name, tablet.color, tablet.avatar, if (compact || tab) 40.dp else 72.dp)
+        // A short failure tile with the pencil: the words get the room, so no glyph (name label and pencil stay).
+        else if (!(tab && clearOfEdit)) Icon(if (news.isFailure()) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (tab) 40.dp else if (compact) 28.dp else 44.dp))
 
         val text = when {
             tablet != null -> CamText.tile(display, tablet.name, minutes)
@@ -217,17 +248,19 @@ private fun Placeholder(
                     if (phone) Box(Modifier.padding(top = 4.dp)) { PulseDot(live) } else PulseDot(live)
                 }
                 if (phone) Box(Modifier.weight(1f, fill = false)) { Words(text, 14, 4) }
+                else if (tab && clearOfEdit) Words(text, 14, Int.MAX_VALUE, 20f / 14)
                 else Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
             }
         }
         if (tablet == null || compact) return@Column
-        CamText.hint(display, tablet.name)?.let { if (LocalPhone.current) Words(it, 14, 4) else Words(it, 15, 3) }
+        // Tablet parent: the helper is 14/20 and may take as many lines as it needs (the placeholder scrolls if it must).
+        CamText.hint(display, tablet.name)?.let { if (LocalPhone.current) Words(it, 14, 4) else if (tab) Words(it, 14, Int.MAX_VALUE, 20f / 14) else Words(it, 15, 3) }
         when (display) {
             TileDisplay.UPDATE_NEEDED -> NickButton(CamText.OPEN_SETTINGS, onAction, style = BtnStyle.GHOST)
             // Outlined, not the filled secondary style: that fill is this tile's own background colour.
             TileDisplay.AUTO_OFF -> NickButton(CamText.TURN_ON_AGAIN, onAction, style = BtnStyle.GHOST)
             TileDisplay.TOO_HOT ->
-                if (retryInMs != null && retryInMs > 0) Words(CamText.retryIn(retryInMs), 15, 1)
+                if (retryInMs != null && retryInMs > 0) Words(CamText.retryIn(retryInMs), if (tab) 14 else 15, 1, if (tab) 20f / 14 else 1.4f)
                 else NickButton(CamText.TURN_ON_AGAIN, onAction, style = BtnStyle.GHOST)
             else -> {}
         }
@@ -235,8 +268,8 @@ private fun Placeholder(
 }
 
 @Composable
-private fun Words(text: String, size: Int, maxLines: Int) =
-    Text(text, style = body(size.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+private fun Words(text: String, size: Int, maxLines: Int, lineHeight: Float = 1.4f) =
+    Text(text, style = body(size.sp, 500, lineHeight), color = C.muted, textAlign = TextAlign.Center, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
 /** The news states that mean "no picture and a reason the parent can act on". */
 internal fun RtspNews.isFailure(): Boolean = when (this) {
@@ -258,6 +291,14 @@ internal fun WarmBadge(compact: Boolean, modifier: Modifier = Modifier) {
         // Phone: a fixed 36dp circle that never stretches into an oval; the tile's own words say why it is warm.
         Box(modifier.size(36.dp).clip(CircleShape).background(C.danger), contentAlignment = Alignment.Center) {
             Icon(Lucide.Thermometer, CamText.WARM_BADGE, tint = C.onAccent, modifier = Modifier.size(18.dp))
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // Tablet parent: a passive 28 high badge with a 12sp label.
+        Chip(modifier, height = 28.dp, bg = C.danger, padding = PaddingValues(horizontal = 10.dp)) {
+            Icon(Lucide.Thermometer, null, tint = C.onAccent, modifier = Modifier.size(16.dp))
+            if (!compact) Text(CamText.WARM_BADGE, style = body(12.sp, 700), color = C.onAccent, maxLines = 1)
         }
         return
     }

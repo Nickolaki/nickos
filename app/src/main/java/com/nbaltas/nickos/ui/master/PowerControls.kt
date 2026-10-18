@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import com.nbaltas.nickos.ui.theme.LocalPhone
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import com.nbaltas.nickos.power.PowerPolicy
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickSwitch
@@ -42,32 +43,54 @@ import com.nbaltas.nickos.ui.theme.body
  * plugged in, and a row of idle times for the screen to go off on battery. [problem] is the red line under them, if any.
  */
 @Composable
-fun PowerControls(wake: Boolean, offMin: Int, problem: String?, onChange: (wake: Boolean, offMin: Int) -> Unit, modifier: Modifier = Modifier) {
+fun PowerControls(
+    wake: Boolean, offMin: Int, problem: String?, onChange: (wake: Boolean, offMin: Int) -> Unit, modifier: Modifier = Modifier,
+    /** The inner width of the pane this sits in, when it is a full Settings pane (decides six across); 0 for a Device card. */
+    innerWidthDp: Float = 0f,
+) {
     if (LocalPhone.current) {
         PhonePowerControls(wake, offMin, problem, onChange, modifier)
         return
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            Modifier.fillMaxWidth().toggleable(wake, role = androidx.compose.ui.semantics.Role.Switch) { onChange(it, offMin) },
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("Wake the screen when plugged in", style = body(17.sp, 700), color = C.text, modifier = Modifier.weight(1f))
-            NickSwitch(wake) { onChange(it, offMin) }
-        }
-        Text("Screen off on battery", style = body(15.sp, 700), color = C.muted)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PowerControlsText.choices.forEach { min ->
-                val sel = min == offMin
-                Box(
-                    Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(22.dp)).background(if (sel) C.accent else C.surface2)
-                        .clickable { onChange(wake, min) },
-                    contentAlignment = Alignment.Center,
-                ) { Text(PowerControlsText.label(min), style = body(15.sp, 600), color = if (sel) C.onAccent else C.text, maxLines = 1) }
+    // Tablet: a wrapping switch row of at least 48, then the idle times as equal blocks (radius 12, gap 8, at least 56): three across and
+    // two rows in a Device card, six across in the wide Settings pane (inner width 720+ at normal font scale), two across at font scale 1.5+ there.
+    val fontScale = LocalDensity.current.fontScale
+    val columns = powerChoiceColumns(innerWidthDp, fontScale)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+        SwitchRow("Wake the screen when plugged in", wake, textStyle = body(15.sp, 700, 20f / 15)) { onChange(it, offMin) }
+        Text("Screen off on battery", style = body(14.sp, 700, 20f / 14), color = C.muted)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PowerControlsText.choices.chunked(columns).forEach { rowChoices ->
+                Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rowChoices.forEach { min ->
+                        val sel = min == offMin
+                        val bg by animateColorAsState(if (sel) C.accent else C.surface2, tween(120), label = "powerBg")
+                        val fg = if (sel) C.onAccent else C.text
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight().heightIn(min = 56.dp).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).background(bg)
+                                .selectable(selected = sel, role = Role.RadioButton) { onChange(wake, min) }
+                                .semantics { contentDescription = if (min == 0) "Off" else "$min minutes" }.padding(vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                        ) {
+                            if (min == 0) Text("Off", style = body(16.sp, 700, 20f / 16), color = fg)
+                            else {
+                                Text("$min", style = body(18.sp, 700, 22f / 18).copy(fontFeatureSettings = "tnum"), color = fg)
+                                Text("min", style = body(12.sp, 600, 16f / 12), color = fg.copy(alpha = 0.8f))
+                            }
+                        }
+                    }
+                }
             }
         }
-        if (problem != null) Text(problem, style = body(14.sp, 700), color = C.danger)
+        if (problem != null) Text(problem, style = body(14.sp, 700, 20f / 14), color = C.danger)
     }
+}
+
+/** Idle-time columns: six across only in a wide pane (inner width 720+, font scale under 1.5); two at font scale 1.5+ in a pane; else three. */
+internal fun powerChoiceColumns(innerWidthDp: Float, fontScale: Float): Int = when {
+    innerWidthDp >= 720f && fontScale < 1.5f -> 6
+    innerWidthDp > 0f && fontScale >= 1.5f -> 2
+    else -> 3
 }
 
 /** Phone: a full-width wrapping switch row, then the idle times as a 3x2 grid (two per row at large font sizes) of equal number-over-"min" cells, each at least 56dp high. */

@@ -51,6 +51,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.ParentContentCap
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import com.nbaltas.nickos.ui.theme.Card
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.graphics.Color
 import com.nbaltas.nickos.ui.theme.PhoneHeader
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
 import com.nbaltas.nickos.ui.theme.BtnStyle
@@ -80,6 +88,16 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
     val jfAccount by app.store.jellyfin.collectAsState()
     var legacy by rememberSaveable { mutableStateOf(false) }
 
+    if (legacy && LocalParentTablet.current) {
+        // The same two-choice source control as everywhere, with Jellyfin selected; the Jellyfin browser has its own category group below it.
+        ParentContentCap {
+            Column(Modifier.fillMaxSize().padding(top = TabletParentMetrics.contentTop), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+                TabletSourceControl(true) { jf -> legacy = jf }
+                Box(Modifier.weight(1f).fillMaxWidth()) { WatchTab(v, onPlayed = onPlayed, onSettings = onSettings) }
+            }
+        }
+        return
+    }
     if (legacy) {
         Column(Modifier.fillMaxSize()) {
             if (LocalPhone.current) {
@@ -148,6 +166,49 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         return
     }
 
+    if (LocalParentTablet.current) {
+        val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
+        val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
+        ParentContentCap { i ->
+            Column(Modifier.fillMaxSize().padding(top = TabletParentMetrics.contentTop), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+                // The source choice (when Jellyfin is set up) and the categories are separate groups: side by side from I = 960, stacked below.
+                val source: @Composable () -> Unit = { if (jfAccount != null) TabletSourceControl(false) { jf -> legacy = jf } }
+                val categories: @Composable () -> Unit = { Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it }) }
+                if (i.value >= 960f) Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) { source(); categories() }
+                else Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) { source(); categories() }
+                // Below the controls, so the source control sits at the same y as in Jellyfin mode.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                    Muted("$count on ${v.node.name}", 14)
+                    EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1))
+                }
+                if (visible.isEmpty()) {
+                    Box(Modifier.weight(1f)) {
+                        CenterMessage(
+                            if (segment == 0) "No movies yet" else "No shows yet",
+                            if (segment == 0) "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet."
+                            else "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.",
+                        ) {
+                            NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, leading = Lucide.RefreshCw)
+                        }
+                    }
+                } else {
+                    Box(Modifier.weight(1f)) {
+                        TabletArtGrid(visible, key = { it.fid }) { item, w ->
+                            Column(Modifier.width(w).clickable(role = Role.Button) { openFid = item.fid }) {
+                                MovieThumb(thumbs[item.fid], item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
+                                Spacer(Modifier.height(8.dp))
+                                Text(item.title, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.height(4.dp))
+                                Muted(if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown", 14)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         val visible = if (segment == 0) Library.movies(mine) else mine.filter { it.episode != null }
         val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
@@ -174,7 +235,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
                     if (segment == 0) "Copy MP4 or MKV files into the Movies or Download folder on this tablet, or send one from another tablet."
                     else "Copy episodes into a folder named after the show, inside Movies or Download on this tablet, or send them from another tablet.",
                 ) {
-                    NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = true, leading = Lucide.RefreshCw)
+                    NickButton("Look again", { sync.rescan() }, style = BtnStyle.PRIMARY, big = bigButtons(), leading = Lucide.RefreshCw)
                 }
             }
         } else {
@@ -262,6 +323,55 @@ internal fun TabletPickPanel(
             if (item.owners.any { it != nodeId }) {
                 Spacer(Modifier.height(PhoneMetrics.relatedGap))
                 EyebrowText("On other tablets")
+                Muted(others.ifEmpty { "Already on another tablet" }, 14)
+            }
+        }
+        return
+    }
+
+    if (LocalParentTablet.current) {
+        TabletMediaPage(
+            "Movies", onBack,
+            art = { MovieThumb(thumb, item.title, it, radius = TabletParentMetrics.mediaRadius, showTitle = false) },
+            eyebrow = item.episode?.let { TogetherText.episodeLine(it) }, title = item.title,
+            meta = if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown",
+        ) {
+            // The actions sit in one framed card (at most 400 wide) so they are anchored under the title rather than floating in the page.
+            Card(Modifier.widthIn(max = 400.dp).fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    when {
+                        has -> {
+                            NickButton("Play", { sync.start(item.fid, item.title, item.durMs, setOf(nodeId)) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Solid.Play)
+                            if (canDelete) {
+                                NickButton(
+                                    if (pendingDelete) "Deleting..." else if (confirmDelete) "Tap again to delete" else "Delete from this tablet",
+                                    { if (confirmDelete) { confirmDelete = false; transfer.delete(item.fid, nodeId) } else confirmDelete = true },
+                                    Modifier.fillMaxWidth(), style = BtnStyle.DANGER, enabled = !pendingDelete,
+                                )
+                            } else {
+                                Muted("Update this tablet to delete movies from here.", 14)
+                            }
+                        }
+                        job != null && jobState == JobState.FAILED -> {
+                            Text(TogetherText.jobError(job.err, job.size), style = body(14.sp, 500, 20f / 14), color = C.danger)
+                            NickButton("Try again", { transfer.retry(item.fid, nodeId) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                        }
+                        job != null && jobState != JobState.DONE && jobState != JobState.CANCELLED -> {
+                            TabletProgressLine(TogetherText.percent(job.done, job.size) / 100f, TogetherText.jobProgress(job))
+                            NickButton("Stop copying", { transfer.cancel(item.fid, nodeId) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+                        }
+                        else -> {
+                            val blocked = transfer.sendBlocked(item.fid)
+                            if (blocked != null) Muted(blocked, 14)
+                            else NickButton("Send to this tablet", { transfer.send(item.fid, setOf(nodeId)) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Lucide.Send)
+                        }
+                    }
+                }
+            }
+            if (item.owners.any { it != nodeId }) {
+                Spacer(Modifier.height(TabletParentMetrics.sectionGap))
+                EyebrowText("On other tablets")
+                Spacer(Modifier.height(TabletParentMetrics.labelGap))
                 Muted(others.ifEmpty { "Already on another tablet" }, 14)
             }
         }
