@@ -17,9 +17,19 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.unit.Constraints
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
 import com.nbaltas.nickos.ui.theme.LocalPhone
 import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import com.nbaltas.nickos.ui.theme.PhoneMetrics
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import com.nbaltas.nickos.ui.theme.homeCardMinHeight
+import com.nbaltas.nickos.ui.theme.homeColumns
+import com.nbaltas.nickos.ui.theme.tabletContentWidth
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +43,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -237,8 +248,10 @@ internal fun MasterHome(onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings:
     val pad = if (phone) PhoneMetrics.gutter else if (portrait) 32.dp else 40.dp
     var pauseSheet by remember { mutableStateOf(false) }
     val pausedMsg by app.store.pausedMsg.collectAsState()
+    val tablet = LocalParentTablet.current
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize()) {
+    if (tablet) TabletHome(views, poster, pausedMsg != null, onOpen, onAdd, onSettings, onDrawer, onUpdate, onCameras, onTogether) { pauseSheet = true }
+    else Column(Modifier.fillMaxSize()) {
         if (phone) PhoneTopBar(onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
         else TopBar(pad, onSettings, onDrawer, onUpdate, onCameras, onTogether, paused = pausedMsg != null, onPause = { pauseSheet = true })
         CarNetBanner(pad, onSettings)
@@ -302,6 +315,19 @@ private fun CarNetBanner(pad: Dp, onSettings: () -> Unit) {
         ) {
             Icon(Lucide.WifiOff, null, tint = C.danger, modifier = Modifier.size(20.dp))
             Text(carNetBanner(why), style = body(14.sp, 700, 1.3f), color = C.text, modifier = Modifier.weight(1f))
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // Compact warning: at least 48 high, radius 12, padding 12, 20dp glyph, 14/20 text. The grid below adds the 16dp gap.
+        val tShape = RoundedCornerShape(TabletParentMetrics.nestedRadius)
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(tShape).background(C.surface)
+                .border(1.dp, C.dangerLine, tShape).clickable(role = Role.Button, onClick = onSettings).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Lucide.WifiOff, null, tint = C.danger, modifier = Modifier.size(TabletParentMetrics.iconSize))
+            Text(carNetBanner(why), style = body(14.sp, 700, 20f / 14f), color = C.text, modifier = Modifier.weight(1f))
         }
         return
     }
@@ -378,6 +404,303 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
     }
 }
 
+/**
+ * Parent tablet Home (design §2.1): the header and the cards share one content width (min(W - 2 x gutter, 1152), centred); two columns
+ * when that is at least 800 wide (one below, and one below 1000 at font scale 1.5). Cards are content-high with a 248/216 minimum.
+ */
+@Composable
+private fun TabletHome(
+    views: List<NodeView>, poster: ((JfItem) -> String?)?, paused: Boolean,
+    onOpen: (String) -> Unit, onAdd: () -> Unit, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit,
+    onCameras: () -> Unit, onTogether: () -> Unit, onPause: () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = maxWidth.value
+        val i = tabletContentWidth(w)
+        val columns = homeColumns(i, LocalDensity.current.fontScale)
+        val minH = homeCardMinHeight(columns).dp
+        Column(Modifier.align(Alignment.TopCenter).width(i.dp).fillMaxHeight()) {
+            TabletTopBar(w, onSettings, onDrawer, onUpdate, onCameras, onTogether, paused, onPause)
+            CarNetBanner(0.dp, onSettings)
+            if (views.isEmpty()) {
+                EmptyHome(onAdd)
+                return@Column
+            }
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            ) {
+                if (columns == 2) {
+                    // The Add card always takes the next free cell; cards in a row are as high as the tallest.
+                    val cells = views.map { it as Any } + "add"
+                    cells.chunked(2).forEach { row ->
+                        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                            row.forEach { cell ->
+                                val m = Modifier.weight(1f).fillMaxHeight().heightIn(min = minH)
+                                if (cell is NodeView) TabletNodeCard(cell, poster, m) { onOpen(cell.node.id) } else AddCard(false, m, onAdd)
+                            }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                } else {
+                    views.forEach { v -> TabletNodeCard(v, poster, Modifier.fillMaxWidth().heightIn(min = minH)) { onOpen(v.node.id) } }
+                    AddCard(true, Modifier.fillMaxWidth().heightIn(min = 104.dp), onAdd)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Parent tablet top bar. At 960 or more of width: one 80dp row (clock and date, the apps button, pinned apps, the self-device badge,
+ * then Update / Pause / Cameras / Together / Settings). If that does not fit, the badge (and then the pinned apps) drop to a second
+ * row and the actions scroll sideways; no action is ever hidden. Between 600 and 959: a 72dp row with the clock, the apps button and
+ * Settings, and a row of at least 56dp under it with Pause, Cameras, Together, Update and the pinned apps in a scrolling strip.
+ */
+@Composable
+private fun TabletTopBar(w: Float, onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit, paused: Boolean, onPause: () -> Unit) {
+    val ctx = LocalContext.current
+    val app = App.get(ctx)
+    val session by app.master.sync.session.collectAsState()
+    val now = rememberNow(1000)
+    val name by app.store.name.collectAsState()
+    val quick by app.store.quickApps.collectAsState()
+    val update by com.nbaltas.nickos.update.Updater.state.collectAsState()
+    val hasUpdate = update is com.nbaltas.nickos.update.UpdateState.Available
+    val icons by produceState(emptyList<Triple<String, String, android.graphics.Bitmap>>(), quick) {
+        value = withContext(Dispatchers.IO) {
+            quick.mapNotNull { pkg ->
+                try {
+                    val pm = ctx.packageManager
+                    Triple(pkg, pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString(), pm.getApplicationIcon(pkg).toSmallBitmap(120))
+                } catch (e: Exception) { null }
+            }
+        }
+    }
+    val pill = RoundedCornerShape(50)
+    val clock: @Composable () -> Unit = {
+        Column(Modifier.widthIn(min = 112.dp)) {
+            Text(SimpleDateFormat("h:mm", Locale.getDefault()).format(Date(now)), style = disp(32.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = C.text, maxLines = 1, softWrap = false)
+            Text(SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(now)), style = body(14.sp, 600, 20f / 14f), color = C.muted, maxLines = 1, softWrap = false)
+        }
+    }
+    val drawer: @Composable () -> Unit = { IconCircle(Lucide.LayoutGrid, onDrawer, label = "All apps") }
+    val pinnedIcons: @Composable () -> Unit = {
+        icons.forEach { (pkg, label, bmp) ->
+            Box(
+                Modifier.size(48.dp).clip(RoundedCornerShape(TabletParentMetrics.buttonRadius)).background(C.surface2).clickable(role = Role.Button) { launchLocal(ctx, pkg) },
+                contentAlignment = Alignment.Center,
+            ) { Image(bmp.asImageBitmap(), label, Modifier.size(34.dp)) }
+        }
+    }
+    val badgeText = "${name.ifBlank { "Parent's Tablet" }} · Master"
+    val badge: @Composable () -> Unit = {
+        Chip(Modifier.widthIn(max = 220.dp).clip(pill).clickable(role = Role.Button, onClick = onSettings), height = 48.dp) {
+            Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(18.dp).rotate90())
+            Text(badgeText, style = body(15.sp, 700, 20f / 15f), color = C.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+    val updateAction: @Composable () -> Unit = {
+        if (hasUpdate) Chip(Modifier.clip(pill).clickable(role = Role.Button, onClick = onUpdate), height = 48.dp, bg = C.accent) {
+            Icon(Lucide.Download, null, tint = C.onAccent, modifier = Modifier.size(20.dp))
+            Text("Update", style = body(16.sp, 700, 1.25f), color = C.onAccent, maxLines = 1)
+        }
+    }
+    val pauseAction: @Composable () -> Unit = {
+        val fg = if (paused) C.onAccent else C.text
+        Chip(Modifier.clip(pill).clickable(role = Role.Button, onClick = onPause), height = 48.dp, bg = if (paused) C.accent else C.surface2) {
+            Icon(if (paused) Solid.Play else Solid.Pause, null, tint = fg, modifier = Modifier.size(20.dp))
+            Text(if (paused) "Resume everyone" else "Pause all", style = body(16.sp, 700, 1.25f), color = fg, maxLines = 1)
+        }
+    }
+    val camerasAction: @Composable () -> Unit = { IconCircle(Lucide.Cctv, onCameras, label = "Cameras") }
+    val togetherAction: @Composable () -> Unit = {
+        if (session != null) Chip(Modifier.clip(pill).clickable(role = Role.Button, onClick = onTogether), height = 48.dp, bg = C.accent) {
+            Icon(Lucide.Tv, null, tint = C.onAccent, modifier = Modifier.size(20.dp))
+            Text("Watching together", style = body(16.sp, 700, 1.25f), color = C.onAccent, maxLines = 1)
+        } else IconCircle(Lucide.Tv, onTogether, label = "Together")
+    }
+    val settingsAction: @Composable () -> Unit = { IconCircle(Lucide.Settings, onSettings, label = "Settings") }
+
+    if (w >= 960f) {
+        TabletBarLayout(
+            head = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { clock(); drawer() } },
+            strip = if (icons.isEmpty()) null else ({ Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { pinnedIcons() } }),
+            badge = badge,
+            actions = {
+                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    updateAction(); pauseAction(); camerasAction(); togetherAction(); settingsAction()
+                }
+            },
+        )
+        return
+    }
+    val bigFont = LocalDensity.current.fontScale >= 1.3f
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            clock()
+            drawer()
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { if (!bigFont) badge() }
+            settingsAction()
+        }
+        if (bigFont) Text(badgeText, style = body(14.sp, 600, 20f / 14f), color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp).horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            pauseAction(); camerasAction(); togetherAction(); updateAction(); pinnedIcons()
+        }
+    }
+}
+
+/** The wide top bar's own layout (see [TabletTopBar]): decides from measured widths what stays on the first row. */
+@Composable
+private fun TabletBarLayout(head: @Composable () -> Unit, strip: (@Composable () -> Unit)?, badge: @Composable () -> Unit, actions: @Composable () -> Unit) {
+    Layout(
+        content = {
+            Box(Modifier.layoutId("head")) { head() }
+            if (strip != null) Box(Modifier.layoutId("strip")) { strip() }
+            Box(Modifier.layoutId("badge")) { badge() }
+            Box(Modifier.layoutId("actions")) { actions() }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) { measurables, constraints ->
+        val maxW = constraints.maxWidth
+        val g = 12.dp.roundToPx()
+        val rowH = 80.dp.roundToPx()
+        val row2H = 48.dp.roundToPx()
+        val headM = measurables.first { it.layoutId == "head" }
+        val stripM = measurables.firstOrNull { it.layoutId == "strip" }
+        val badgeM = measurables.first { it.layoutId == "badge" }
+        val actionsM = measurables.first { it.layoutId == "actions" }
+        val headW = headM.maxIntrinsicWidth(rowH)
+        val stripNat = stripM?.maxIntrinsicWidth(rowH) ?: 0
+        val badgeW = minOf(badgeM.maxIntrinsicWidth(rowH), 220.dp.roundToPx(), maxW)
+        val actW = minOf(actionsM.maxIntrinsicWidth(rowH), (maxW - headW - g).coerceAtLeast(0))
+        val free = maxW - headW - actW - 2 * g
+        val stripInRow1 = stripM != null && free >= 60.dp.roundToPx()
+        val stripW1 = if (stripInRow1) minOf(stripNat, free) else 0
+        val free2 = free - (if (stripInRow1) stripW1 + g else 0)
+        val badgeInRow1 = free2 >= badgeW
+        val stripInRow2 = stripM != null && !stripInRow1
+        val badgeInRow2 = !badgeInRow1
+        val twoRows = stripInRow2 || badgeInRow2
+        val stripW2 = if (stripInRow2) minOf(stripNat, (maxW - (if (badgeInRow2) badgeW + g else 0)).coerceAtLeast(0)) else 0
+        val pHead = headM.measure(Constraints(maxWidth = headW))
+        val pActions = actionsM.measure(Constraints(maxWidth = actW))
+        val pBadge = badgeM.measure(Constraints(maxWidth = badgeW))
+        val pStrip = stripM?.measure(Constraints(maxWidth = if (stripInRow1) stripW1 else stripW2))
+        val height = rowH + if (twoRows) 8.dp.roundToPx() + row2H else 0
+        layout(maxW, height) {
+            pHead.placeRelative(0, (rowH - pHead.height) / 2)
+            pActions.placeRelative(maxW - actW, (rowH - pActions.height) / 2)
+            if (stripInRow1 && pStrip != null) pStrip.placeRelative(headW + g, (rowH - pStrip.height) / 2)
+            if (badgeInRow1) pBadge.placeRelative(maxW - actW - g - badgeW, (rowH - pBadge.height) / 2)
+            val y2 = rowH + 8.dp.roundToPx()
+            var x = 0
+            if (badgeInRow2) { pBadge.placeRelative(x, y2 + (row2H - pBadge.height) / 2); x += badgeW + g }
+            if (stripInRow2 && pStrip != null) pStrip.placeRelative(x, y2 + (row2H - pStrip.height) / 2)
+        }
+    }
+}
+
+/** Parent tablet tablet-card: padding 20, radius 20, avatar 44, name 20/24 (two lines), 14/20 status, battery 24 top-end; the body is as high as its content. */
+@Composable
+private fun TabletNodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier: Modifier, onClick: () -> Unit) {
+    val app = App.get(LocalContext.current)
+    val session by app.master.sync.session.collectAsState()
+    val receiving = app.master.transfer.receiving(v.node.id)
+    val headline: @Composable (String) -> Unit = { t ->
+        Text(t, style = disp(22.sp, 800, 26f / 22f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    val small: @Composable (String) -> Unit = { t -> Text(t, style = body(14.sp, 500, 20f / 14f), color = C.muted) }
+    Column(
+        modifier.clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface)
+            .clickable(role = Role.Button, onClick = onClick).padding(TabletParentMetrics.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Avatar(v.node.name, v.node.color, v.node.avatar, 44.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(v.node.name, style = disp(20.sp, 800, 24f / 20f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                StatusLine(v, 14, 8.dp)
+            }
+            Battery(v.battery, v.status?.charging == true && v.online, 24, 20.dp)
+        }
+        val pb = v.playback
+        val item = pb?.item
+        when {
+            !v.online -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(Modifier.size(80.dp).dashed(C.line, 16.dp, 1.dp), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.WifiOff, null, tint = C.muted, modifier = Modifier.size(32.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    headline("Can't reach this tablet")
+                    small("Check it's switched on and on the same WiFi. Reset it? Unlink it from the Device tab.")
+                }
+            }
+            pb != null && item != null -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Artwork(poster?.invoke(item), item.displayTitle, Modifier.size(80.dp, 120.dp), radius = 12.dp, showTitle = false)
+                Column(Modifier.weight(1f).heightIn(min = 120.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
+                        EyebrowText(if (pb.session.paused) "Paused" else "Now playing", C.accent)
+                    }
+                    headline(item.displayTitle)
+                    Text(episodeLine(item), style = body(14.sp, 500, 20f / 14f), color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.height(10.dp))
+                    val now = rememberNow(1000)
+                    val pos = pb.positionTicks(now)
+                    ProgressBar(if (item.runTicks > 0) pos.toFloat() / item.runTicks else 0f, height = 6.dp)
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(fmtTicks(pos), style = body(14.sp, 600, 20f / 14f).copy(fontFeatureSettings = "tnum"), color = C.muted)
+                        Text("${(item.runTicks - pos).coerceAtLeast(0) / JfItem.TICKS_PER_MIN} min left", style = body(14.sp, 600, 20f / 14f), color = C.muted)
+                    }
+                }
+            }
+            session != null && v.node.id in session!!.nodes -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val together = session!!
+                val frac = if (together.durMs > 0) app.master.sync.expectedPos().toFloat() / together.durMs else 0f
+                Artwork(together.art, together.title, Modifier.size(80.dp, 120.dp), radius = 12.dp, showTitle = false)
+                Column(Modifier.weight(1f).heightIn(min = 120.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    EyebrowText("Watching together", C.accent)
+                    headline(together.title)
+                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.height(10.dp))
+                    ProgressBar(frac, height = 6.dp)
+                }
+            }
+            receiving != null -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val locked = v.status?.lockedBy != null
+                AppTileIcon(if (locked) null else v.fgApp, Lucide.Download, 80.dp, 16.dp, v.node.color, glyph = 32.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    EyebrowText("Receiving")
+                    val pct = com.nbaltas.nickos.sync.TogetherText.percent(receiving.done, receiving.size)
+                    headline(receiving.title.ifEmpty { "a movie" })
+                    small("Receiving ${receiving.title} · $pct%")
+                }
+            }
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val st = v.status
+                val locked = st?.lockedBy != null
+                val (eyebrow, title) = when {
+                    locked -> "Locked" to "Screen locked"
+                    st?.fg != null -> "In an app" to (st.fgLabel ?: "An app")
+                    else -> "Home screen" to "Home"
+                }
+                AppTileIcon(if (locked) null else v.fgApp, if (locked) Lucide.Lock else if (st?.fg == null) Lucide.House else Lucide.LayoutGrid, 80.dp, 16.dp, v.node.color, glyph = 32.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    EyebrowText(eyebrow)
+                    headline(title)
+                    small("Nothing playing")
+                }
+            }
+        }
+    }
+}
+
 /** Phone Home header: NickOS + Settings on top (a badge when an update is waiting), four equal labelled quick actions below. */
 @Composable
 private fun PhoneTopBar(onSettings: () -> Unit, onDrawer: () -> Unit, onUpdate: () -> Unit, onCameras: () -> Unit, onTogether: () -> Unit, paused: Boolean, onPause: () -> Unit) {
@@ -448,6 +771,24 @@ private fun EmptyHome(onAdd: () -> Unit) {
         }
         return
     }
+    if (LocalParentTablet.current) {
+        // One 72dp-high icon group, a 30/35 title, 16/23 prose (at most 560 wide) and the 52dp button, centred and scrollable on short screens.
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabletParentMetrics.contentBottom),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        ) {
+            Box(Modifier.size(108.dp, 72.dp).dashed(C.line, 16.dp, 1.dp), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Link, null, tint = C.muted, modifier = Modifier.size(28.dp))
+            }
+            Text("No tablets linked yet", style = disp(30.sp, 800, 35f / 30f), color = C.text, textAlign = TextAlign.Center)
+            Text(
+                "Set up the kid's tablet as a Node. It will show a 6-digit code. Enter it here.",
+                style = body(16.sp, 500, 23f / 16f), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp),
+            )
+            NickButton("Add tablet", onAdd, style = BtnStyle.PRIMARY, leading = Lucide.Plus)
+        }
+        return
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 80.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
@@ -488,7 +829,9 @@ fun statusText(v: NodeView): String = when {
 fun StatusLine(v: NodeView, size: Int, dot: Dp, text: String = statusText(v)) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Dot(if (v.online) C.online else C.offline, dot)
-        Text(text, style = body(size.sp, 600), color = C.muted, maxLines = 1)
+        // Tablet parent: 14/20, and a long status may take a second line instead of being cut.
+        if (LocalParentTablet.current) Text(text, style = body(size.sp, 600, 20f / size), color = C.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        else Text(text, style = body(size.sp, 600), color = C.muted, maxLines = 1)
     }
 }
 
@@ -690,14 +1033,14 @@ private fun PhoneStatusLine(v: NodeView) {
 
 /** App icon on a tile: the real icon when the Node sent it, else a Lucide glyph on the kid's colour. */
 @Composable
-fun AppTileIcon(app: RemoteApp?, fallback: ImageVector, size: Dp, radius: Dp, colorIndex: Int) {
+fun AppTileIcon(app: RemoteApp?, fallback: ImageVector, size: Dp, radius: Dp, colorIndex: Int, glyph: Dp = size * 0.38f) {
     val icon = app?.icon
     Box(
         Modifier.size(size).clip(RoundedCornerShape(radius)).background(if (icon != null) C.surface2 else avatarColor(colorIndex)),
         contentAlignment = Alignment.Center,
     ) {
         if (icon != null) Image(icon.asImageBitmap(), null, Modifier.size(size * 0.7f))
-        else Icon(fallback, null, tint = OnAvatar, modifier = Modifier.size(size * 0.38f))
+        else Icon(fallback, null, tint = OnAvatar, modifier = Modifier.size(glyph))
     }
 }
 
@@ -718,6 +1061,31 @@ private fun AddCard(row: Boolean, modifier: Modifier, onAdd: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("Add tablet", style = disp(18.sp, 800, 1.15f), color = C.text)
                 Text("Pair a kid's tablet with its 6-digit code", style = body(14.sp, 500, 1.4f), color = C.muted)
+            }
+        }
+    } else if (LocalParentTablet.current) {
+        // Dashed 1dp border, radius 20, a 56dp plus disk, heading 22 and helper 14/20; icon and text side by side in one column.
+        val disk: @Composable () -> Unit = {
+            Box(Modifier.size(56.dp).clip(CircleShape).background(C.accent), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Plus, null, tint = C.onAccent, modifier = Modifier.size(24.dp))
+            }
+        }
+        val heading: @Composable () -> Unit = { Text("Add tablet", style = disp(22.sp, 800, 26f / 22f), color = C.text) }
+        val helper: @Composable (TextAlign) -> Unit = { a -> Text("Pair a kid's tablet with its 6-digit code", style = body(14.sp, 500, 20f / 14f), color = C.muted, textAlign = a) }
+        if (row) {
+            Row(
+                modifier.dashed(C.line, 20.dp, 1.dp).clip(RoundedCornerShape(20.dp)).clickable(role = Role.Button, onClick = onAdd).padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                disk()
+                Column(Modifier.weight(1f)) { heading(); helper(TextAlign.Start) }
+            }
+        } else {
+            Column(
+                modifier.dashed(C.line, 20.dp, 1.dp).clip(RoundedCornerShape(20.dp)).clickable(role = Role.Button, onClick = onAdd).padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            ) {
+                disk(); heading(); helper(TextAlign.Center)
             }
         }
     } else if (row) {

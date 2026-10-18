@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronLeft
 import androidx.compose.ui.platform.testTag
@@ -1092,12 +1093,29 @@ internal fun SourceChip(jellyfin: Boolean, onPick: (Boolean) -> Unit) {
                 Text(if (jellyfin) "Jellyfin" else "NickOS library", style = body(16.sp, 700), color = C.text, maxLines = 1)
                 Icon(Lucide.ChevronDown, null, tint = C.muted, modifier = Modifier.size(20.dp))
             }
-            androidx.compose.material3.DropdownMenu(open, { open = false }) {
+            // The menu is themed here with direct parameters (NickTheme supplies no MaterialTheme, so the stock light container showed
+            // white text on white). Light mode follows because every colour is a C value.
+            val maxMenuW = minOf(320, androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 32).coerceAtLeast(220)
+            androidx.compose.material3.DropdownMenu(
+                open, { open = false },
+                modifier = Modifier.widthIn(min = 220.dp, max = maxMenuW.dp),
+                shape = RoundedCornerShape(16.dp),
+                containerColor = C.surface2,
+                tonalElevation = 0.dp,
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, C.line),
+            ) {
                 listOf(false to "NickOS library", true to "Jellyfin").forEach { (jf, label) ->
+                    val selected = jf == jellyfin
                     androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(label, style = body(16.sp, if (jf == jellyfin) 700 else 500), color = C.text) },
+                        text = { Text(label, style = body(16.sp, if (selected) 700 else 500), color = C.text) },
+                        // The same 20dp slot on both rows, so the labels line up; only the selected row has the check.
+                        leadingIcon = { Box(Modifier.size(20.dp)) { if (selected) Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(20.dp)) } },
                         onClick = { open = false; onPick(jf) },
-                        modifier = Modifier.heightIn(min = PhoneMetrics.minTarget).then(if (jf) Modifier.testTag("jellyfin-library") else Modifier),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp).heightIn(min = PhoneMetrics.minTarget)
+                            .then(if (selected) Modifier.clip(RoundedCornerShape(8.dp)).background(C.surface) else Modifier)
+                            .then(if (jf) Modifier.testTag("jellyfin-library") else Modifier),
                     )
                 }
             }

@@ -150,22 +150,32 @@ class DesignScreensTest {
     private var sweepSuffix = ""
 
     private fun shot(name: String, content: @Composable () -> Unit) {
+        // A tablet mismatch must not hide the phone picture: the phone is checked either way, and its failure is the one reported.
+        var tabletFailure: AssertionError? = null
         try {
             captureRoboImage(
                 if (sweepSuffix.isEmpty()) "../design/screens/$name.png" else "../design/screens/sweep/$name$sweepSuffix.png",
                 roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
             ) {
-                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { content() } }
+                // Parent screens are rendered inside the real provider, as in the app: a fixture that skipped it would test the wrong
+                // (non-tablet) branch. Kid (Node-*) screens never get it.
+                NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { if (name.startsWith("Node-")) content() else ParentLayoutProvider { content() } } }
             }
         } catch (e: AssertionError) {
-            throw AssertionError(
+            tabletFailure = AssertionError(
                 "Screen \"$name\" no longer matches design/screens/$name.png. If the change is on purpose, " +
                     "re-record with: .\\gradlew.bat :app:recordRoborazziDebug  and commit design/screens. " +
                     "A side-by-side of what changed is in app/build/outputs/roborazzi. (${e.message})",
                 e,
             )
         }
-        phoneShot(name, content)
+        try {
+            phoneShot(name, content)
+        } catch (e: AssertionError) {
+            tabletFailure?.let { e.addSuppressed(it) }
+            throw e
+        }
+        tabletFailure?.let { throw it }
     }
 
     /**
@@ -276,6 +286,44 @@ class DesignScreensTest {
             }
         }
     }
+    /** The tablet Home (1280x800) with the system font at [scale]: the cards go to one column below 1000 of content width and nothing is cut off. */
+    private fun tabletFont(name: String, scale: Float, content: @Composable () -> Unit) {
+        captureRoboImage(
+            "../design/screens/$name.png",
+            roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+        ) {
+            NickTheme {
+                Box(Modifier.fillMaxSize().background(C.bg)) {
+                    val d = androidx.compose.ui.platform.LocalDensity.current
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
+                        ParentLayoutProvider { content() }
+                    }
+                }
+            }
+        }
+    }
+    @Test fun masterHomeFont150() = tabletFont("Master-Home-font150", 1.5f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    @Test fun masterHomeFont200() = tabletFont("Master-Home-font200", 2f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+
+    /**
+     * The phone Source menu OPEN (the dark-on-light defect fixed in JOB-0061): Together's library with the chip tapped. The menu is a popup
+     * window, so this uses the whole-screen capture rather than the root of the compose tree.
+     */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Config(qualifiers = PHONE_QUALIFIERS)
+    @Test fun togetherSourceOpenPhone() {
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("sh", "Star Harbour"), video("cc", "Captain Comet")))))
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { TogetherScreen({}, {}) } } } }
+            onNodeWithTag("source-chip").performClick()
+            waitForIdle()
+            com.github.takahirom.roborazzi.captureScreenRoboImage(
+                "../design/screens/phone/Together-Source-Open.png",
+                roborazziOptions = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = CHANGE_THRESHOLD)),
+            )
+        }
+    }
+
     /** A phone picture with the system font at 2.0, written to design/screens/phone/<name>.png. Phone only, so no tablet picture. */
     private fun phoneFont200(name: String, content: @Composable () -> Unit) {
         captureRoboImage(
@@ -884,7 +932,7 @@ class DesignScreensTest {
                                 if (together) TogetherScreen({}, {}, initialSegment = 2)
                                 else ControlScreen("aaaaaaaaaaaa", TAB_WATCH, {}, {}, {})
                             }
-                            if (phone) ParentLayoutProvider(screen) else screen()
+                            ParentLayoutProvider(screen)
                         }
                     }
                 }
@@ -1157,7 +1205,7 @@ class DesignScreensTest {
                 power = NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION))
         set(app.master, "_status", mapOf("aaaaaaaaaaaa" to s))
         androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
-            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } }
+            setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { ControlScreen("aaaaaaaaaaaa", TAB_DEVICE, {}, {}, {}) } } } }
             waitForIdle()
             repeat(3) { onRoot().performTouchInput { swipeUp() } }
             waitForIdle()

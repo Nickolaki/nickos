@@ -36,7 +36,11 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pin
 import com.nbaltas.nickos.ui.theme.BackButton
 import com.nbaltas.nickos.ui.theme.C
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
 import com.nbaltas.nickos.ui.theme.Muted
+import com.nbaltas.nickos.ui.theme.ParentContentCap
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import androidx.compose.foundation.layout.heightIn
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
 import com.nbaltas.nickos.ui.theme.toSmallBitmap
@@ -68,6 +72,48 @@ fun AppDrawer(
                 .map { LocalApp(it.activityInfo.packageName, it.loadLabel(pm).toString(), it.loadIcon(pm).toSmallBitmap()) }
                 .sortedBy { it.label.lowercase() }
         }
+    }
+    if (LocalParentTablet.current) {
+        // Parent tablet: 80dp header, content capped at 1152, adaptive cells of at least 128 with a 56dp icon and a two-line label.
+        Column(Modifier.fillMaxSize().background(C.bg)) {
+            ParentContentCap { _ ->
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier.fillMaxWidth().height(TabletParentMetrics.headerHeight),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+                    ) {
+                        BackButton(onBack)
+                        Title("All apps", 40, Modifier.weight(1f))
+                        if (onLongPress != null) Muted("Hold an app to pin it to the top bar", 14, Modifier.weight(1f, fill = false))
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(128.dp),
+                        contentPadding = PaddingValues(start = 0.dp, end = 0.dp, top = 16.dp, bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        items(apps.orEmpty(), key = { it.pkg }) { a ->
+                            Column(
+                                Modifier.heightIn(min = 124.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface)
+                                    .combinedClickable(onClick = { onOpen(a.pkg) }, onLongClick = onLongPress?.let { { it(a.pkg) } })
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                            ) {
+                                Box {
+                                    Image(a.icon.asImageBitmap(), null, Modifier.size(56.dp))
+                                    if (a.pkg in pinned) Box(
+                                        Modifier.align(Alignment.TopEnd).size(22.dp).clip(RoundedCornerShape(11.dp)).background(C.accent),
+                                        contentAlignment = Alignment.Center,
+                                    ) { Icon(Lucide.Pin, null, tint = C.onAccent, modifier = Modifier.size(12.dp)) }
+                                }
+                                Text(a.label, style = body(15.sp, 700, 20f / 15f), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
     }
     Column(Modifier.fillMaxSize().background(C.bg)) {
         Row(

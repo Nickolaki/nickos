@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -70,6 +71,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -182,6 +184,35 @@ fun NickButton(
         }
         return
     }
+    if (LocalParentTablet.current) {
+        val tShape = RoundedCornerShape(TabletParentMetrics.buttonRadius)
+        val minH = when {
+            sub != null -> TabletParentMetrics.subButtonHeight
+            big -> TabletParentMetrics.bigButtonHeight
+            style == BtnStyle.PRIMARY -> TabletParentMetrics.primaryButtonHeight
+            else -> TabletParentMetrics.buttonHeight
+        }
+        val alpha = if (enabled) 1f else 0.45f
+        Row(
+            modifier
+                .heightIn(min = minH)
+                .clip(tShape)
+                .background(bg)
+                .then(if (border != null) Modifier.border(1.dp, if (style == BtnStyle.GHOST) c.line else c.dangerLine, tShape) else Modifier)
+                .then(if (enabled) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (leading != null) Icon(leading, null, tint = fg.copy(alpha = alpha), modifier = Modifier.size(TabletParentMetrics.iconSize))
+            Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text, style = body(16.sp, 700, 1.25f), color = fg.copy(alpha = alpha), maxLines = 2, textAlign = TextAlign.Center)
+                if (sub != null) Text(sub, style = body(14.sp, 700, 20f / 14f), color = fg.copy(alpha = 0.75f * alpha), maxLines = 2, textAlign = TextAlign.Center)
+            }
+            if (trailing != null) Icon(trailing, null, tint = fg.copy(alpha = alpha), modifier = Modifier.size(TabletParentMetrics.iconSize))
+        }
+        return
+    }
     Row(
         modifier
             .height(if (sub != null) 80.dp else if (big) 72.dp else 60.dp)
@@ -207,11 +238,14 @@ fun NickButton(
 @Composable
 fun IconCircle(icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 60.dp, bg: Color = C.surface2, tint: Color = C.text, label: String? = null) {
     val phone = LocalPhone.current && size == 60.dp
-    val s = if (phone) PhoneMetrics.iconCircle else size
+    val tablet = !phone && LocalParentTablet.current && size == 60.dp
+    val s = if (phone) PhoneMetrics.iconCircle else if (tablet) TabletParentMetrics.minTarget else size
+    // Tablet parent: a 48dp box, glyph 20 (the Back glyph 22).
+    val glyph = if (phone) 22.dp else if (tablet) (if (label == "Back") 22.dp else TabletParentMetrics.iconSize) else size * 0.4f
     Box(
         modifier.size(s).clip(CircleShape).background(bg).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, label, tint = tint, modifier = Modifier.size(if (phone) 22.dp else size * 0.4f)) }
+    ) { Icon(icon, label, tint = tint, modifier = Modifier.size(glyph)) }
 }
 
 @Composable
@@ -279,6 +313,23 @@ fun SetupHeader(step: String?, onBack: (() -> Unit)?) {
         }
         return
     }
+    if (LocalParentTablet.current) {
+        // 72dp header whose inner bounds are the content cap: logo 36, wordmark 20, back 48, step 14.
+        BoxWithConstraints(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.Center) {
+            Row(
+                Modifier.width(tabletContentWidth(maxWidth.value).dp).fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+            ) {
+                if (onBack != null) BackButton(onBack) else Spacer(Modifier.width(TabletParentMetrics.minTarget))
+                NickLogo(36.dp)
+                Text("NickOS", style = disp(20.sp, 800, 1.15f), color = C.text)
+                Spacer(Modifier.weight(1f))
+                if (step != null) Text(step, style = body(14.sp, 600, 20f / 14f), color = C.muted)
+            }
+        }
+        return
+    }
     Row(
         Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -339,7 +390,7 @@ fun Battery(pct: Int?, charging: Boolean, textSize: Int, iconSize: Dp = 28.dp, d
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(batteryIcon(pct ?: 100, charging), null, tint = col, modifier = Modifier.size(iconSize))
-        if (pct != null) Text("$pct%", style = disp(textSize.sp, 800, 1f), color = col, maxLines = 1, softWrap = false)
+        if (pct != null) Text("$pct%", style = (if (LocalParentTablet.current) disp(textSize.sp, 800, 1.15f).copy(fontFeatureSettings = "tnum") else disp(textSize.sp, 800, 1f)), color = col, maxLines = 1, softWrap = false)
     }
 }
 
@@ -350,11 +401,11 @@ fun minutesLeft(ms: Long): Int = ((ms.coerceAtLeast(0) + 59_999) / 60_000).toInt
 
 @Composable
 fun EyebrowText(text: String, color: Color = C.muted, modifier: Modifier = Modifier) =
-    Text(text.uppercase(), style = if (LocalPhone.current) PhoneEyebrow else Eyebrow, color = color, modifier = modifier)
+    Text(text.uppercase(), style = if (LocalPhone.current || LocalParentTablet.current) PhoneEyebrow else Eyebrow, color = color, modifier = modifier)
 
 @Composable
 fun FieldLabel(text: String) =
-    if (LocalPhone.current) Text(text, style = body(14.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 6.dp))
+    if (LocalPhone.current || LocalParentTablet.current) Text(text, style = body(14.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 6.dp))
     else Text(text, style = body(15.sp, 700), color = C.muted, modifier = Modifier.padding(bottom = 10.dp))
 
 @Composable
@@ -369,14 +420,17 @@ fun NickField(
     val c = C
     var focused by remember { mutableStateOf(false) }
     val phone = LocalPhone.current
-    val shape = RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else 18.dp)
+    val tablet = !phone && LocalParentTablet.current
+    val shape = RoundedCornerShape(if (phone) PhoneMetrics.fieldRadius else if (tablet) TabletParentMetrics.fieldRadius else 18.dp)
     val bringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    // Tablet parent: 52 minimum, 14 side padding, 16/22 text, 1dp border (2 when focused).
+    val fieldText = if (tablet) body(16.sp, 500, 22f / 16f) else body(if (phone) 16.sp else 21.sp, 500)
     BasicTextField(
         value = value,
         onValueChange = onChange,
         singleLine = true,
-        textStyle = body(if (phone) 16.sp else 21.sp, 500).copy(color = c.text),
+        textStyle = fieldText.copy(color = c.text),
         cursorBrush = SolidColor(c.accent),
         visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboard),
@@ -387,11 +441,11 @@ fun NickField(
         },
         decorationBox = { inner ->
             Box(
-                Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.fieldHeight) else Modifier.height(68.dp)).clip(shape).background(c.surface2)
-                    .border(2.dp, if (focused) c.accent else c.line, shape).padding(horizontal = if (phone) 16.dp else 22.dp),
+                Modifier.fillMaxWidth().then(if (phone) Modifier.heightIn(min = PhoneMetrics.fieldHeight) else if (tablet) Modifier.heightIn(min = TabletParentMetrics.fieldHeight) else Modifier.height(68.dp)).clip(shape).background(c.surface2)
+                    .border(if (tablet && !focused) 1.dp else 2.dp, if (focused) c.accent else c.line, shape).padding(horizontal = if (phone) 16.dp else if (tablet) 14.dp else 22.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = body(if (phone) 16.sp else 21.sp), color = c.muted)
+                if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = if (tablet) fieldText else body(if (phone) 16.sp else 21.sp), color = c.muted)
                 inner()
             }
         },
@@ -439,7 +493,8 @@ fun Keypad(
 @Composable
 private fun Key(label: String, bg: Color, h: Dp, modifier: Modifier, onClick: () -> Unit) {
     Box(modifier.height(h).clip(RoundedCornerShape(22.dp)).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, style = body(if (LocalPhone.current) 26.sp else 34.sp, 700), color = C.text)
+        val tablet = !LocalPhone.current && LocalParentTablet.current
+        Text(label, style = if (tablet) body(24.sp, 700, 28f / 24f) else body(if (LocalPhone.current) 26.sp else 34.sp, 700), color = C.text)
     }
 }
 
@@ -474,7 +529,8 @@ fun NickSlider(
 ) {
     val c = C
     // Phone: the default slider becomes a 6dp track and 24dp thumb inside a 48dp touch box.
-    val phone = LocalPhone.current && thumb == 38.dp
+    // Tablet parent: the same geometry (6 / 24 / 48), and the fraction maths below uses the new thumb.
+    val phone = (LocalPhone.current || LocalParentTablet.current) && thumb == 38.dp
     val trackHeight = if (phone) 6.dp else trackHeight
     val thumb = if (phone) 24.dp else thumb
     val boxHeight = if (phone) PhoneMetrics.minTarget else thumb
@@ -518,6 +574,10 @@ fun NickSwitch(on: Boolean, enabled: Boolean = true, onToggle: (Boolean) -> Unit
         PhoneSwitch(on, enabled, onToggle)
         return
     }
+    if (LocalParentTablet.current) {
+        TabletSwitch(on, enabled, onToggle)
+        return
+    }
     Box(
         Modifier.size(60.dp, 34.dp).clip(RoundedCornerShape(17.dp))
             .background((if (on) c.accent else c.line).copy(alpha = if (enabled) 1f else 0.4f))
@@ -552,8 +612,31 @@ private fun PhoneSwitch(on: Boolean, enabled: Boolean, onToggle: (Boolean) -> Un
     }
 }
 
+/** Tablet parent: 48×28 track, 20dp thumb inset 4 (travel 20), in a 52×48 toggleable box. Colours fade over 120ms, the thumb moves over 140ms. */
+@Composable
+private fun TabletSwitch(on: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val c = C
+    val alpha = if (enabled) 1f else 0.4f
+    val track by animateColorAsState(if (on) c.accent else c.line, tween(120), label = "switchTrack")
+    val thumb by animateColorAsState(if (on) c.onAccent else Color(0xFFC5CBD6), tween(120), label = "switchThumb")
+    val x by animateDpAsState(if (on) 20.dp else 0.dp, tween(140), label = "switchThumbX")
+    Box(
+        Modifier.size(52.dp, TabletParentMetrics.minTarget)
+            .toggleable(value = on, enabled = enabled, role = Role.Switch, onValueChange = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(48.dp, 28.dp).clip(CircleShape).background(track.copy(alpha = track.alpha * alpha))) {
+            Box(
+                Modifier.align(Alignment.CenterStart).padding(4.dp).offset(x = x).size(20.dp).clip(CircleShape)
+                    .background(thumb.copy(alpha = thumb.alpha * (if (enabled) 1f else 0.6f)))
+            )
+        }
+    }
+}
+
 @Composable
 fun ProgressBar(frac: Float, modifier: Modifier = Modifier, height: Dp = 10.dp, track: Color = Color.White.copy(alpha = 0.14f), fill: Color = C.accent) {
+    val height = if (height == 10.dp && LocalParentTablet.current) 6.dp else height
     Box(modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(height)).background(track)) {
         Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(height).clip(RoundedCornerShape(height)).background(fill))
     }
@@ -573,6 +656,10 @@ fun Segmented(
     val c = C
     if (LocalPhone.current) {
         PhoneSegmented(items, selected, onSelect, modifier, compact)
+        return
+    }
+    if (LocalParentTablet.current) {
+        TabletSegmented(items, selected, onSelect, modifier, compact)
         return
     }
     Row(
@@ -625,6 +712,37 @@ private fun PhoneSegmented(items: List<Pair<String, ImageVector?>>, selected: In
     }
 }
 
+/**
+ * Tablet parent segments: outer radius 16, padding 4, gap 4; items at least 48 high (56 in all), radius 12, 16/20 labels, 20dp glyphs.
+ * More than 4 non-compact items scroll sideways instead of clipping. Colours fade over 120ms.
+ */
+@Composable
+private fun TabletSegmented(items: List<Pair<String, ImageVector?>>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier, compact: Boolean) {
+    val c = C
+    val scrolls = !compact && items.size > 4
+    Row(
+        modifier.selectableGroup().clip(RoundedCornerShape(TabletParentMetrics.segmentedRadius)).background(c.surface).padding(4.dp)
+            .then(if (scrolls) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        items.forEachIndexed { i, (label, icon) ->
+            val on = i == selected
+            val bg by animateColorAsState(if (on) c.accent else Color.Transparent, tween(120), label = "segBg")
+            val col by animateColorAsState(if (on) c.onAccent else c.muted, tween(120), label = "segText")
+            Row(
+                (if (compact) Modifier.weight(1f) else Modifier).heightIn(min = TabletParentMetrics.minTarget)
+                    .clip(RoundedCornerShape(TabletParentMetrics.segmentedSelectedRadius)).background(bg)
+                    .selectable(selected = on, role = Role.Tab) { onSelect(i) }.padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            ) {
+                if (icon != null) Icon(icon, if (compact) label else null, tint = col, modifier = Modifier.size(TabletParentMetrics.iconSize))
+                if (!compact || icon == null) Text(label, style = body(16.sp, 700, 1.25f), color = col, maxLines = if (scrolls) 1 else 2, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
 @Composable
 fun Chip(modifier: Modifier = Modifier, height: Dp = 44.dp, bg: Color = C.surface2, padding: PaddingValues = PaddingValues(horizontal = 18.dp), content: @Composable RowScope.() -> Unit) {
     if (LocalPhone.current) {
@@ -634,6 +752,17 @@ fun Chip(modifier: Modifier = Modifier, height: Dp = 44.dp, bg: Color = C.surfac
                 .padding(if (padding == PaddingValues(horizontal = 18.dp)) PaddingValues(horizontal = 12.dp) else padding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            content = content,
+        )
+        return
+    }
+    if (LocalParentTablet.current) {
+        // Tablet parent: a clickable chip is at least 48 high with 14 side padding; a small passive badge (height under 40) keeps its own height.
+        Row(
+            modifier.heightIn(min = if (height >= 40.dp) TabletParentMetrics.minTarget else height).clip(RoundedCornerShape(50)).background(bg)
+                .padding(if (padding == PaddingValues(horizontal = 18.dp)) PaddingValues(horizontal = 14.dp) else padding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             content = content,
         )
         return
@@ -685,8 +814,12 @@ fun Artwork(
     showTitle: Boolean = true,
 ) {
     val (top, bottom, sun) = posterArt[(title.hashCode() and 0x7fffffff) % posterArt.size]
+    // Tablet parent: the overlay title is a fixed 20/24 on landscape art and 18/22 on portrait art, whatever size the caller asked for.
+    val tablet = LocalParentTablet.current
+    var landscapeArt by remember { mutableStateOf(true) }
     Box(
-        modifier.clip(RoundedCornerShape(radius))
+        modifier.then(if (tablet) Modifier.onSizeChanged { landscapeArt = it.width > it.height } else Modifier)
+            .clip(RoundedCornerShape(radius))
             .background(Brush.verticalGradient(listOf(top, bottom)))
             .drawBehind {
                 val w = size.width; val h = size.height
@@ -704,7 +837,7 @@ fun Artwork(
     ) {
         if (showTitle) {
             Text(
-                title, style = disp(titleSize.sp, 800, 0.95f).copy(shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.45f), Offset(0f, 2f), 14f)),
+                title, style = (if (tablet) (if (landscapeArt) disp(20.sp, 800, 1.2f) else disp(18.sp, 800, 22f / 18f)) else disp(titleSize.sp, 800, 0.95f)).copy(shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.45f), Offset(0f, 2f), 14f)),
                 color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
             )
@@ -725,18 +858,22 @@ fun Drawable.toSmallBitmap(px: Int = 144) = toBitmap(px, px)
 @Composable
 fun Title(text: String, size: Int, modifier: Modifier = Modifier, color: Color = C.text, lineHeight: Float = 1.0f, maxLines: Int = 2) =
     if (LocalPhone.current) Text(text, style = disp(phoneTitleSize(size).sp, 800, 1.15f), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    else if (LocalParentTablet.current) Text(text, style = disp(tabletTitleSize(size).sp, 800, 1.15f), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
     else Text(text, style = disp(size.sp, 800, lineHeight), color = color, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
 /** On a phone the default three-line limit is lifted: essential instructions are never cut with "…". An explicit smaller limit still applies. */
 @Composable
 fun Muted(text: String, size: Int, modifier: Modifier = Modifier, weight: Int = 500, maxLines: Int = 3) =
     if (LocalPhone.current) Text(text, style = body(phoneMutedSize(size).sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = if (maxLines == 3) Int.MAX_VALUE else maxLines, overflow = TextOverflow.Ellipsis)
+    else if (LocalParentTablet.current) Text(text, style = body(tabletMutedSize(size).sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
     else Text(text, style = body(size.sp, weight, 1.4f), color = C.muted, modifier = modifier, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
 @Composable
 fun Card(modifier: Modifier = Modifier, radius: Dp = 28.dp, bg: Color = C.surface, padding: PaddingValues = PaddingValues(28.dp), content: @Composable () -> Unit) {
     val phone = LocalPhone.current
-    val r = if (phone && radius == 28.dp) PhoneMetrics.cardRadius else radius
-    val p = if (phone && padding == PaddingValues(28.dp)) PaddingValues(PhoneMetrics.cardPadding) else padding
+    val tablet = !phone && LocalParentTablet.current
+    val r = if (phone && radius == 28.dp) PhoneMetrics.cardRadius else if (tablet && radius == 28.dp) TabletParentMetrics.cardRadius else radius
+    val p = if (phone && padding == PaddingValues(28.dp)) PaddingValues(PhoneMetrics.cardPadding)
+        else if (tablet && padding == PaddingValues(28.dp)) PaddingValues(TabletParentMetrics.cardPadding) else padding
     Box(modifier.clip(RoundedCornerShape(r)).background(bg).padding(p)) { content() }
 }

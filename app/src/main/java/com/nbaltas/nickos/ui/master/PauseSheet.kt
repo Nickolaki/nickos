@@ -18,7 +18,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
 import com.nbaltas.nickos.ui.theme.disp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -86,6 +91,10 @@ fun PauseAllSheet(paused: Boolean, startMsg: String = "", onSubmit: (Boolean, St
         }
         return
     }
+    if (LocalParentTablet.current) {
+        TabletPauseSheet(paused, msg, { msg = it }, onSubmit, onClose)
+        return
+    }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onClose), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(30.dp)).background(C.surface).tap {}.padding(32.dp),
@@ -114,6 +123,60 @@ fun PauseAllSheet(paused: Boolean, startMsg: String = "", onSubmit: (Boolean, St
                     style = BtnStyle.PRIMARY, big = true, leading = if (paused) Solid.Play else Solid.Pause,
                     enabled = PauseAll.canSubmit(paused, msg),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Tablet parent pause panel: centred, at most 560 wide with 24 clearance, padding 24, radius 24, gaps 16. Two equal preset
+ * columns (48 high, wrapping 16sp labels, 12 gap); the actions sit side by side and stack at large font scales. The panel
+ * scrolls inside the usable height and above the keyboard. Tapping outside closes it, as before.
+ */
+@Composable
+private fun TabletPauseSheet(paused: Boolean, msg: String, setMsg: (String) -> Unit, onSubmit: (Boolean, String) -> Unit, onClose: () -> Unit) {
+    val stacked = LocalDensity.current.fontScale >= 1.5f
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).tap(onClose).imePadding(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.padding(24.dp).widthIn(max = 560.dp).fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.dialogRadius)).background(C.surface).tap {}
+                .verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(if (paused) "Everyone is paused" else "Pause all tablets", style = disp(26.sp, 800, 29.9f / 26f), color = C.text)
+            if (!paused) {
+                PAUSE_PRESETS.chunked(2).forEach { pair ->
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        pair.forEach { p ->
+                            val sel = msg == p
+                            Box(
+                                Modifier.weight(1f).fillMaxHeight().heightIn(min = 48.dp).clip(RoundedCornerShape(TabletParentMetrics.buttonRadius))
+                                    .background(if (sel) C.accent else C.surface2)
+                                    .selectable(selected = sel, role = Role.RadioButton) { setMsg(p) }.padding(horizontal = 16.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center,
+                            ) { Text(p, style = body(16.sp, 700, 1.25f), color = if (sel) C.onAccent else C.text, textAlign = TextAlign.Center) }
+                        }
+                    }
+                }
+                NickField(msg, { setMsg(it.take(NetMessages.MAX_PAUSE_MSG)) }, placeholder = "Or type a message")
+            }
+            val cancel: @Composable (Modifier) -> Unit = { m -> NickButton("Cancel", onClose, m, style = BtnStyle.GHOST) }
+            val submit: @Composable (Modifier) -> Unit = { m ->
+                NickButton(
+                    if (paused) "Resume everyone" else "Pause everyone", { onSubmit(!paused, msg) }, m.heightIn(min = 52.dp),
+                    style = BtnStyle.PRIMARY, leading = if (paused) Solid.Play else Solid.Pause,
+                    enabled = PauseAll.canSubmit(paused, msg),
+                )
+            }
+            if (stacked) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    submit(Modifier.fillMaxWidth())
+                    cancel(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    cancel(Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp))
+                    submit(Modifier.weight(1f).fillMaxHeight())
+                }
             }
         }
     }
