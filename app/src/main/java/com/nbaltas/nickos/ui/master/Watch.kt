@@ -523,7 +523,7 @@ private fun JfArtCard(item: JfItem, jf: Jellyfin, landscape: Boolean, w: android
         }
         return
     }
-    Column(Modifier.width(w).clip(RoundedCornerShape(radius)).clickable(role = Role.Button, onClick = onClick), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.width(w).clickable(role = Role.Button, onClick = onClick), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(radius))) {
             Artwork(jf.landscape(item), item.displayTitle, Modifier.fillMaxSize(), radius = radius, showTitle = false)
             if (item.inProgress) ProgressBar(item.progress, Modifier.align(Alignment.BottomStart), height = 4.dp)
@@ -1189,21 +1189,21 @@ internal fun SaveActions(
     send: () -> Unit,
 ) {
     // Parent tablet: a 4dp bar, 14/20 status, an 18dp check, a 48dp Cancel.
-    val tablet = LocalParentTablet.current
+    val parentTablet = LocalParentTablet.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             progress?.active == true -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                ProgressBar(progress.fraction, height = if (tablet) 4.dp else 8.dp)
+                ProgressBar(progress.fraction, height = if (parentTablet) 4.dp else 8.dp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val label = if (progress.state == DlState.QUEUED) "Waiting to save" else "Saving to this tablet"
-                    Muted(if (progress.state == DlState.DOWNLOADING && progress.total > 0) "$label · ${(progress.fraction * 100).toInt()}%" else label, if (tablet) 14 else 16, Modifier.weight(1f), weight = 600)
+                    Muted(if (progress.state == DlState.DOWNLOADING && progress.total > 0) "$label · ${(progress.fraction * 100).toInt()}%" else label, if (parentTablet) 14 else 16, Modifier.weight(1f), weight = 600)
                     NickButton("Cancel", cancel, leading = Lucide.X)
                 }
             }
             onTablet || progress?.state == DlState.DONE -> {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(if (tablet) 18.dp else 20.dp))
-                    Text("On this tablet", style = if (tablet) body(14.sp, 700, 20f / 14) else body(17.sp, 700), color = C.text)
+                    Icon(Lucide.Check, null, tint = C.accent, modifier = Modifier.size(if (parentTablet) 18.dp else 20.dp))
+                    Text("On this tablet", style = if (parentTablet) body(14.sp, 700, 20f / 14) else body(17.sp, 700), color = C.text)
                 }
                 if (onTablet) NickButton("Send to $tablet", send, Modifier.fillMaxWidth(), big = bigButtons(), leading = Lucide.Send)
             }

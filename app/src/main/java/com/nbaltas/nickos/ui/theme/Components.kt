@@ -467,8 +467,11 @@ fun Keypad(
 ) {
     val c = C
     val phone = LocalPhone.current
+    // Parent tablet: keys at least 56 high (the caller says 64 where there is room), radius 12, an 8 gap unless the caller asks for more.
+    val tablet = !phone && LocalParentTablet.current
     val gap = if (phone) 8.dp else gap
-    val keyHeight = if (phone) 56.dp else keyHeight
+    val keyHeight = if (phone) 56.dp else if (tablet) keyHeight.coerceAtLeast(56.dp) else keyHeight
+    val keyShape = RoundedCornerShape(if (tablet) TabletParentMetrics.nestedRadius else 22.dp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
         val rows = listOf("123", "456", "789")
         rows.forEach { r ->
@@ -478,13 +481,13 @@ fun Keypad(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
             if (leftLabel != null) {
-                Box(Modifier.weight(1f).height(keyHeight).clip(RoundedCornerShape(22.dp)).clickable(onClick = onLeft), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).height(keyHeight).clip(keyShape).clickable(onClick = onLeft), contentAlignment = Alignment.Center) {
                     Text(leftLabel, style = body(20.sp, 700), color = c.text)
                 }
             } else Spacer(Modifier.weight(1f))
             Key("0", keyColor, keyHeight, Modifier.weight(1f)) { onDigit('0') }
-            Box(Modifier.weight(1f).height(keyHeight).clip(RoundedCornerShape(22.dp)).clickable(onClick = onDelete), contentAlignment = Alignment.Center) {
-                Icon(Lucide.Delete, "Delete", tint = c.text, modifier = Modifier.size(32.dp))
+            Box(Modifier.weight(1f).height(keyHeight).clip(keyShape).clickable(onClick = onDelete), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Delete, "Delete", tint = c.text, modifier = Modifier.size(if (tablet) 24.dp else 32.dp))
             }
         }
     }
@@ -492,8 +495,8 @@ fun Keypad(
 
 @Composable
 private fun Key(label: String, bg: Color, h: Dp, modifier: Modifier, onClick: () -> Unit) {
-    Box(modifier.height(h).clip(RoundedCornerShape(22.dp)).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        val tablet = !LocalPhone.current && LocalParentTablet.current
+    val tablet = !LocalPhone.current && LocalParentTablet.current
+    Box(modifier.height(h).clip(RoundedCornerShape(if (tablet) TabletParentMetrics.nestedRadius else 22.dp)).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Text(label, style = if (tablet) body(24.sp, 700, 28f / 24f) else body(if (LocalPhone.current) 26.sp else 34.sp, 700), color = C.text)
     }
 }
@@ -502,11 +505,13 @@ private fun Key(label: String, bg: Color, h: Dp, modifier: Modifier, onClick: ()
 fun PinDots(filled: Int, total: Int = 4, color: Color = C.text) {
     val c = C
     val phone = LocalPhone.current
-    val dot = if (phone) 16.dp else 22.dp
-    Row(horizontalArrangement = Arrangement.spacedBy(if (phone) 12.dp else 22.dp)) {
+    // Parent entry (phone and parent tablet): 16 dots, 12 apart. The kid's PIN keeps 22.
+    val small = phone || LocalParentTablet.current
+    val dot = if (small) 16.dp else 22.dp
+    Row(horizontalArrangement = Arrangement.spacedBy(if (small) 12.dp else 22.dp)) {
         repeat(total) { i ->
             if (i < filled) Box(Modifier.size(dot).clip(CircleShape).background(color))
-            else Box(Modifier.size(dot).clip(CircleShape).border(if (phone) 2.dp else 3.dp, c.muted, CircleShape))
+            else Box(Modifier.size(dot).clip(CircleShape).border(if (small) 2.dp else 3.dp, c.muted, CircleShape))
         }
     }
 }

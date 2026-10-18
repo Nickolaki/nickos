@@ -1456,6 +1456,21 @@ class DesignScreensTest {
         }
     }
 
+    /** 700x1000 is under 840 of width, so Settings shows the category strip instead of the rail (JOB-0061 §2.6). */
+    @Config(qualifiers = "w700dp-h1000dp-port-mdpi")
+    @Test fun settingsTablets700() = shot("Settings-Tablets-${sizeTag()}") { SettingsScreen(0, {}, {}, {}) }
+
+    /** At font 1.5 the strip is used even on the 1280x800 tablet and nothing is cut off. */
+    @Test fun settingsTabletsFont150() = tabletFont("Settings-Tablets-font150", 1.5f) { SettingsScreen(0, {}, {}, {}) }
+
+    /** The QR setup at 960x600 with the system font at 1.5: the page scrolls and the code, the steps and both fields stay reachable. */
+    @Config(sdk = [27], qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun masterQrSetup960Font150() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.robolectric.Shadows.shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).signatures = arrayOf(android.content.pm.Signature("0102030405"))
+        tabletFont("Master-QrSetup-960x600-font150", 1.5f) { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) }
+    }
+
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun carNetRevealed960() = carNetRevealed()
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")

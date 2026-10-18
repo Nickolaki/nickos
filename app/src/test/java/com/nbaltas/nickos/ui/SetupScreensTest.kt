@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithText
 import com.nbaltas.nickos.ui.setup.AddTabletScreen
 import com.nbaltas.nickos.ui.setup.PairingCodeBody
 import com.nbaltas.nickos.ui.theme.NickTheme
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -60,7 +61,7 @@ class SetupScreensTest {
 
     private fun assertQrWholeAndBigEnough(minDp: Int) {
         giveAppASignature()
-        rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) } } }
+        rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { ParentLayoutProvider { com.nbaltas.nickos.ui.master.QrSetupScreen({}, kotlinx.coroutines.Dispatchers.Unconfined) } } } }
         rule.waitForIdle()
         val n = rule.onNodeWithContentDescription("Setup QR code").assertExists().fetchSemanticsNode()
         val b = n.boundsInRoot
@@ -70,8 +71,11 @@ class SetupScreensTest {
         assertTrue("the QR code is too small to scan reliably ($dp dp)", dp >= minDp)
     }
 
-    @Config(sdk = [27]) @Test fun qrSetupWholeAtLandscape960() = assertQrWholeAndBigEnough(380)
-    @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi") @Test fun qrSetupWholeAtLandscape1024() = assertQrWholeAndBigEnough(420)
+    // The parent tablet layout (design §2.8): a 320 code beside the steps from 880 of content width, 260 to 360 when stacked.
+    // (the 320 card holds a 288 code inside its 16 quiet padding)
+    @Config(sdk = [27]) @Test fun qrSetupWholeAtLandscape960() = assertQrWholeAndBigEnough(288)
+    @Config(sdk = [27], qualifiers = "w1024dp-h768dp-land-mdpi") @Test fun qrSetupWholeAtLandscape1024() = assertQrWholeAndBigEnough(288)
+    @Config(sdk = [27], qualifiers = "w600dp-h960dp-port-mdpi") @Test fun qrSetupWholeAtPortrait600() = assertQrWholeAndBigEnough(260)
 
     @Test fun addTabletStillOffersQrSetupWhenWired() {
         rule.setContent { NickTheme { Box(Modifier.fillMaxSize()) { AddTabletScreen({}, "Master · Add tablet", onQr = {}) {} } } }

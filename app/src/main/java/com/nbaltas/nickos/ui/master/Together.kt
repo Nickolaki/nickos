@@ -407,7 +407,7 @@ private fun LibraryGrid(
         TabletArtGrid(items, key = { it.fid }) { item, w ->
             val avail = TogetherText.availability(item.owners, expected, order, name)
             val jobs = transfer.cardJobs(item.fid)
-            Column(Modifier.width(w).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).clickable(role = Role.Button) { onOpen(item) }) {
+            Column(Modifier.width(w).clickable(role = Role.Button) { onOpen(item) }) {
                 MovieThumb(thumbs[item.fid], item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
                 Spacer(Modifier.height(8.dp))
                 Text(item.title, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -455,7 +455,7 @@ private fun ShowGrid(shows: List<Show>, thumbs: Map<String, Bitmap>, onOpen: (Sh
     if (LocalParentTablet.current) {
         TabletArtGrid(shows, key = { it.name }) { show, w ->
             val first = show.episodes.firstOrNull()
-            Column(Modifier.width(w).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).clickable(role = Role.Button) { onOpen(show) }) {
+            Column(Modifier.width(w).clickable(role = Role.Button) { onOpen(show) }) {
                 MovieThumb(first?.let { thumbs[it.fid] }, show.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
                 Spacer(Modifier.height(8.dp))
                 Text(show.name, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)

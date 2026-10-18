@@ -191,7 +191,7 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
                 } else {
                     Box(Modifier.weight(1f)) {
                         TabletArtGrid(visible, key = { it.fid }) { item, w ->
-                            Column(Modifier.width(w).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).clickable(role = Role.Button) { openFid = item.fid }) {
+                            Column(Modifier.width(w).clickable(role = Role.Button) { openFid = item.fid }) {
                                 MovieThumb(thumbs[item.fid], item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
                                 Spacer(Modifier.height(8.dp))
                                 Text(item.title, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)

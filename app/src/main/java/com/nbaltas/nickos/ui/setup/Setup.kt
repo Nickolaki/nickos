@@ -100,6 +100,10 @@ import com.nbaltas.nickos.ui.theme.NickField
 import com.nbaltas.nickos.ui.theme.NickLogo
 import com.nbaltas.nickos.ui.theme.OnAvatar
 import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.ParentContentCap
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import androidx.compose.foundation.layout.IntrinsicSize
 import com.nbaltas.nickos.ui.theme.SetupHeader
 import com.nbaltas.nickos.ui.theme.Title
 import com.nbaltas.nickos.ui.theme.body
@@ -174,23 +178,24 @@ internal fun Welcome(onStart: () -> Unit) {
         }
         return
     }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-    // A short landscape tablet (~600dp tall) must show "Get started" without scrolling.
-    val short = maxHeight < 700.dp
+    // Parent tablet: logo 88, wordmark 48 on 52, tagline 22 on 30 (max 480), helper 16 on 23 (max 520), 20 apart, a 280 wide button of at least 56.
+    // The whole centred group scrolls when it does not fit (short window, large font).
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (short) 24.dp else 40.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(if (short) 14.dp else 28.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
     ) {
-        NickLogo(if (short) 80.dp else 128.dp)
-        Text("NickOS", style = disp(if (short) 72.sp else 104.sp, 800, 1f).copy(letterSpacing = (-0.03).em), color = C.text)
+        NickLogo(88.dp)
+        Text("NickOS", style = disp(48.sp, 800, 52f / 48).copy(letterSpacing = (-0.03).em), color = C.text)
         Text(
-            "One home screen for every tablet in the family.", style = body(30.sp, 600, 1.25f), color = C.text,
+            "One home screen for every tablet in the family.", style = body(22.sp, 600, 30f / 22), color = C.text,
+            textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 480.dp),
+        )
+        Text(
+            "Tablets talk to each other over your home or car WiFi. No internet needed.", style = body(16.sp, 500, 23f / 16), color = C.muted,
             textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 520.dp),
         )
-        Muted("Tablets talk to each other over your home or car WiFi. No internet needed.", 20, Modifier.widthIn(max = 620.dp))
-        NickButton("Get started", onStart, Modifier.padding(top = if (short) 6.dp else 20.dp).widthIn(min = 320.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
-    }
+        NickButton("Get started", onStart, Modifier.width(280.dp), BtnStyle.PRIMARY, big = true, trailing = Lucide.ChevronRight)
     }
 }
 
@@ -213,12 +218,13 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
             }
             return@Column
         }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val narrow = maxWidth < 800.dp
+        // Parent tablet: inside the 1152 content cap, two equal cards from 800 of width and stacked below it. The cards grow with their text
+        // (no weight forcing them to the screen), and the whole page scrolls when it does not fit.
+        ParentContentCap(Modifier.weight(1f)) { i ->
+            val stacked = i < 800.dp
             Column(
-                Modifier.fillMaxSize().then(if (narrow) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                    .padding(start = if (narrow) 32.dp else 80.dp, end = if (narrow) 32.dp else 80.dp, top = 8.dp, bottom = 64.dp),
-                verticalArrangement = Arrangement.spacedBy(36.dp),
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
+                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.sectionGap),
             ) {
                 Title("What is this tablet?", 56)
                 val cards: @Composable (Modifier) -> Unit = { m ->
@@ -228,8 +234,8 @@ internal fun RoleScreen(onBack: () -> Unit, onMaster: () -> Unit, onNode: () -> 
                         "Locked down. Shows only the apps you allow. Controlled from the Master tablet.", "Choose Node", onNode,
                         enabled = nodeAllowed, note = if (nodeAllowed) null else NodeSupport.REFUSAL_COPY)
                 }
-                if (narrow) Column(verticalArrangement = Arrangement.spacedBy(24.dp)) { cards(Modifier.fillMaxWidth()) }
-                else Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(32.dp)) { cards(Modifier.weight(1f).fillMaxHeight()) }
+                if (stacked) Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) { cards(Modifier.fillMaxWidth()) }
+                else Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) { cards(Modifier.weight(1f).fillMaxHeight()) }
             }
         }
     }
@@ -260,6 +266,28 @@ private fun RoleCard(
             if (note != null) Text(note, style = body(16.sp, 700, 1.4f), color = C.danger)
             Muted(desc, 16, maxLines = Int.MAX_VALUE)
             if (enabled) NickButton(cta, onClick, Modifier.fillMaxWidth(), BtnStyle.PRIMARY, trailing = Lucide.ChevronRight)
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // Radius 20, padding 24, at least 320 high; icon 64 (glyph 32), title 30, subtitle 18, description 16 on 23, a 48 button; 16 apart.
+        val tShape = RoundedCornerShape(TabletParentMetrics.cardRadius)
+        Column(
+            modifier.heightIn(min = 320.dp).clip(tShape).background(C.surface).border(1.dp, C.line, tShape).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+        ) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(tile).alpha(if (enabled) 1f else 0.5f), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = OnAvatar, modifier = Modifier.size(32.dp).then(if (rotate) Modifier.rotate90() else Modifier))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Title(title, 46, color = if (enabled) C.text else C.muted)
+                Text(sub, style = body(18.sp, 700, 1.3f), color = subColor.copy(alpha = if (enabled) 1f else 0.6f))
+            }
+            // The reason a role is unavailable comes straight under its heading, never below the fold.
+            if (note != null) Text(note, style = body(16.sp, 700, 23f / 16), color = C.danger)
+            Text(desc, style = body(16.sp, 500, 23f / 16), color = C.muted)
+            Spacer(Modifier.weight(1f))
+            if (enabled) NickButton(cta, onClick, Modifier.fillMaxWidth(), BtnStyle.SECONDARY, trailing = Lucide.ChevronRight)
         }
         return
     }
@@ -486,6 +514,7 @@ internal const val MASTER_NET_BODY =
     "NickOS runs a small WiFi network from this tablet. In the car, the kids' tablets join it on their own. There is nothing to switch on."
 
 /** Setup, Master: ask for the one permission the car network needs. Skipped when there is nothing to ask. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
     val app = App.get(LocalContext.current)
@@ -514,23 +543,24 @@ internal fun MasterNetScreen(onBack: () -> Unit, onNext: () -> Unit) {
             }
             return@Column
         }
+        // Parent tablet: icon 64, title 32, prose 16 on 23 (max 560), status 14, the 52 primary; a centred group 16 apart that scrolls if it must.
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 64.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap, Alignment.CenterVertically),
         ) {
-            Box(Modifier.size(112.dp).clip(RoundedCornerShape(32.dp)).background(C.accent), contentAlignment = Alignment.Center) {
-                Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(52.dp))
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.accent), contentAlignment = Alignment.Center) {
+                Icon(Lucide.Wifi, null, tint = OnAvatar, modifier = Modifier.size(32.dp))
             }
-            Title(MASTER_NET_TITLE, 52, lineHeight = 1.05f)
-            Text(MASTER_NET_BODY, style = body(23.sp, 500, 1.4f), color = C.text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
-            Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(19.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 620.dp))
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Title(MASTER_NET_TITLE, 48)
+            Text(MASTER_NET_BODY, style = body(16.sp, 500, 23f / 16), color = C.text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+            Text(masterNetMuted(Build.VERSION.SDK_INT), style = body(14.sp, 500, 20f / 14), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
                 NickButton("Allow", {
                     val p = app.master.carNet.permissionToRequest()
                     if (p.isEmpty()) { app.master.carNet.recheck(); onNext() } else ask.launch(p.toTypedArray())
-                }, style = BtnStyle.PRIMARY, big = true)
-                NickButton("Not now", onNext, style = BtnStyle.GHOST, big = true)
+                }, Modifier.widthIn(min = 160.dp), style = BtnStyle.PRIMARY)
+                NickButton("Not now", onNext, Modifier.widthIn(min = 160.dp), style = BtnStyle.GHOST)
             }
         }
     }
@@ -597,6 +627,68 @@ fun AddTabletScreen(back: () -> Unit, step: String, onQr: (() -> Unit)? = null, 
                     NickField(address, { address = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri, placeholder = "192.168.1.23")
                 } else Box(Modifier.fillMaxWidth().heightIn(min = PhoneMetrics.minTarget).clickable { typing = true }, contentAlignment = Alignment.CenterStart) {
                     Text("Tablet not found? Type its address", style = body(16.sp, 700), color = C.accent)
+                }
+            }
+            return@Column
+        }
+        if (LocalParentTablet.current) {
+            ParentContentCap(Modifier.weight(1f)) { i ->
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    // Two panes (words, then a 400 pad) from 880 of content width; below it the words stack over a centred pad.
+                    val twoPanes = i >= 880.dp
+                    val roomy = maxHeight >= 700.dp
+                    val link: @Composable (String, () -> Unit) -> Unit = { label, click ->
+                        Box(Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.minTarget).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = click), contentAlignment = Alignment.CenterStart) {
+                            Text(label, style = body(16.sp, 700, 22f / 16), color = C.accent)
+                        }
+                    }
+                    val intro: @Composable (Modifier) -> Unit = { m ->
+                        Column(m, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                            Title("Add tablet", 56)
+                            Text("Enter the 6-digit code showing on the kid's tablet. Both tablets need to be on the same WiFi.", style = body(16.sp, 500, 23f / 16), color = C.muted, modifier = Modifier.widthIn(max = 460.dp))
+                            if (onQr != null) link("Brand-new or reset tablet? Set it up with a QR code", onQr)
+                            if (typing) Column {
+                                FieldLabel("Kid's tablet address (shown under its code)")
+                                NickField(address, { address = it.trim() }, Modifier.widthIn(max = 460.dp), keyboard = androidx.compose.ui.text.input.KeyboardType.Uri, placeholder = "192.168.1.23")
+                            } else link("Tablet not found? Type its address") { typing = true }
+                        }
+                    }
+                    val pad: @Composable () -> Unit = {
+                        // Six equal boxes across 400: (400 - 5 x 8) / 6 = 60 wide, 72 high, radius 12, a 1dp border (2 when it is the next one).
+                        Column(Modifier.widthIn(max = 400.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                (0 until 6).forEach { n ->
+                                    val active = n == digits.length && !busy
+                                    val slot = RoundedCornerShape(TabletParentMetrics.nestedRadius)
+                                    Box(
+                                        Modifier.weight(1f).height(72.dp).clip(slot).background(C.surface).border(if (active) 2.dp else 1.dp, if (active) C.accent else C.line, slot),
+                                        contentAlignment = Alignment.Center,
+                                    ) { Text(digits.getOrNull(n)?.toString() ?: "", style = disp(32.sp, 800, 36f / 32), color = C.text) }
+                                }
+                            }
+                            // The status slot is 40 high and grows for a long error.
+                            Box(Modifier.fillMaxWidth().heightIn(min = 40.dp), contentAlignment = Alignment.Center) {
+                                when {
+                                    busy -> Text("Looking for the tablet…", style = body(14.sp, 600, 20f / 14), color = C.muted, textAlign = TextAlign.Center)
+                                    error != null -> Text(error!!, style = body(14.sp, 600, 20f / 14), color = C.danger, textAlign = TextAlign.Center)
+                                }
+                            }
+                            Keypad(
+                                onDigit = { d -> if (!busy && digits.length < 6) { digits += d; error = null; if (digits.length == 6) submit(digits) } },
+                                onDelete = { if (!busy) digits = digits.dropLast(1) },
+                                modifier = Modifier.fillMaxWidth(),
+                                keyHeight = if (roomy) 64.dp else 56.dp,
+                                gap = 8.dp,
+                            )
+                        }
+                    }
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom)) {
+                        if (twoPanes) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                            intro(Modifier.weight(1f)); Box(Modifier.width(400.dp)) { pad() }
+                        } else Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                            intro(Modifier.fillMaxWidth()); pad()
+                        }
+                    }
                 }
             }
             return@Column
@@ -699,6 +791,28 @@ fun LinkedScreen(r: MasterRuntime.PairResult, onAnother: () -> Unit, onContinue:
             }
             return@Column
         }
+        if (LocalParentTablet.current) {
+            // Success disk 64, title 34, the summary panel (max 480), 16 apart, then Add another (48) and Continue (52).
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap, Alignment.CenterVertically),
+            ) {
+                Box(Modifier.size(64.dp).clip(CircleShape).background(C.online), contentAlignment = Alignment.Center) {
+                    Icon(Lucide.Check, null, tint = Color(0xFF0B2616), modifier = Modifier.size(32.dp))
+                }
+                Title("${r.node.name} is linked", 56, maxLines = Int.MAX_VALUE)
+                TabletSummaryRow(r.node.name, r.node.color, r.node.avatar, r.status)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+                ) {
+                    NickButton("Add another tablet", onAnother, style = BtnStyle.GHOST, leading = Lucide.Plus)
+                    NickButton(continueLabel, onContinue, Modifier.widthIn(min = 200.dp), BtnStyle.PRIMARY, trailing = Lucide.ChevronRight)
+                }
+            }
+            return@Column
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 40.dp, end = 40.dp, bottom = 72.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -741,6 +855,24 @@ private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeS
         }
         return
     }
+    if (LocalParentTablet.current) {
+        // Max 480, padding 16, avatar 40, name 20, status 14, battery 24, 16 apart.
+        Row(
+            Modifier.widthIn(max = 480.dp).fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Avatar(name, color, avatar, 40.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(name, style = body(20.sp, 800, 1.25f), color = C.text, maxLines = 2)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Dot(C.online)
+                    Text("Online · Screen ${if (st.screenOn) "on" else "off"}", style = body(14.sp, 500, 20f / 14), color = C.muted)
+                }
+            }
+            Text("${st.battery}%", style = disp(24.sp), color = C.text, maxLines = 1, softWrap = false)
+        }
+        return
+    }
     Row(
         Modifier.widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).padding(24.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -757,6 +889,7 @@ private fun TabletSummaryRow(name: String, color: Int, avatar: String, st: NodeS
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
@@ -781,6 +914,36 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         NickButton("Skip for now", onDone, Modifier.fillMaxWidth(), BtnStyle.GHOST)
                     }
                 })
+            }
+            return@Column
+        }
+        if (LocalParentTablet.current) {
+            ParentContentCap(Modifier.weight(1f)) { i ->
+                // Two panes only from 880 of content width; the form is at most 520 wide either way.
+                val intro: @Composable (Modifier) -> Unit = { m ->
+                    Column(m, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                        Box(Modifier.size(64.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface2), contentAlignment = Alignment.Center) {
+                            Icon(Lucide.Server, null, tint = C.accent, modifier = Modifier.size(32.dp))
+                        }
+                        Title("Connect Jellyfin (optional, legacy)", 48)
+                        Chip(height = 36.dp) { Text("Optional", style = body(14.sp, 600, 20f / 14), color = C.text) }
+                        Text("Browse your family's shows and movies from here, and play them on any tablet.", style = body(16.sp, 500, 23f / 16), color = C.muted)
+                    }
+                }
+                val form: @Composable (Modifier) -> Unit = { m ->
+                    Column(m.widthIn(max = 520.dp)) {
+                        JellyfinForm(onSaved = onDone, footer = { save, saving ->
+                            FlowRow(Modifier.fillMaxWidth().padding(top = TabletParentMetrics.cardGap), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap, Alignment.End), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+                                NickButton("Skip for now", onDone, style = BtnStyle.GHOST)
+                                NickButton(if (saving) "Saving…" else "Save & finish", save, style = BtnStyle.PRIMARY, enabled = !saving)
+                            }
+                        })
+                    }
+                }
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom)) {
+                    if (i >= 880.dp) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) { intro(Modifier.width(360.dp)); form(Modifier.weight(1f)) }
+                    else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(24.dp)) { intro(Modifier.fillMaxWidth()); form(Modifier.fillMaxWidth()) }
+                }
             }
             return@Column
         }
@@ -824,6 +987,7 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
  * Server address / username / password + Test connection. Shared by setup and Settings.
  * [footer] gets a save action (tests, then stores the account) and whether it's running.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun JellyfinForm(
     onSaved: () -> Unit,
@@ -848,6 +1012,36 @@ fun JellyfinForm(
     } catch (e: Exception) { result = false to (e.message?.takeIf { it.length < 60 } ?: "Couldn't connect"); null }
 
     val phone = LocalPhone.current
+    if (!phone && LocalParentTablet.current) {
+        // Parent tablet: at most 520 wide, 52 high fields, 12 apart; username and password share a row only from 600 of inner width.
+        Column(Modifier.widthIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+            Column { FieldLabel("Server address"); NickField(url, { url = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri) }
+            val userField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Username"); NickField(user, { user = it }) } }
+            val passField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Password"); NickField(pass, { pass = it }, password = true, placeholder = if (initial != null) "••••••••" else "") } }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 600.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { userField(Modifier.weight(1f)); passField(Modifier.weight(1f)) }
+                else Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) { userField(Modifier); passField(Modifier) }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap), itemVerticalAlignment = Alignment.CenterVertically) {
+                NickButton(if (busy == 1) "Testing…" else "Test connection", { busy = 1; scope.launch { login(); busy = 0 } }, leading = Lucide.RefreshCw, enabled = busy == 0)
+                result?.let { (ok, msg) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (ok) Icon(Lucide.Check, null, tint = C.online, modifier = Modifier.size(20.dp))
+                        Text(msg, style = body(16.sp, 700, 22f / 16), color = if (ok) C.online else C.danger)
+                    }
+                }
+            }
+        }
+        footer({
+            busy = 2
+            scope.launch {
+                val acc = login()
+                busy = 0
+                if (acc != null) { app.store.setJellyfin(acc); onSaved() }
+            }
+        }, busy == 2)
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 22.dp)) {
         Column { FieldLabel("Server address"); NickField(url, { url = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri) }
         if (phone) {
