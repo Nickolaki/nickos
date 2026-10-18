@@ -92,8 +92,8 @@ fun tabletContentWidth(widthDp: Float): Float = minOf(widthDp - 2 * tabletGutter
 fun homeColumns(contentWidthDp: Float, fontScale: Float): Int =
     if (contentWidthDp >= (if (fontScale >= 1.5f) 1000f else 800f)) 2 else 1
 
-/** Home card minimum height: 248 in two columns, 216 in one. */
-fun homeCardMinHeight(columns: Int): Int = if (columns == 2) 248 else 216
+/** Home card minimum height: 248 in two columns; in one column the height is content-driven (no floor). */
+fun homeCardMinHeight(columns: Int): Int = if (columns == 2) 248 else 0
 
 private val titleTable = sortedMapOf(
     18 to 18, 20 to 20, 24 to 22, 25 to 22, 26 to 20, 28 to 22, 30 to 22, 32 to 24, 34 to 24, 36 to 26, 38 to 28,
@@ -113,21 +113,21 @@ private val dispTable = sortedMapOf(
     72 to 48, 88 to 48, 104 to 48,
 )
 
-/** The value at [requested], else the row just below it (null when under the table). */
-private fun <V> java.util.SortedMap<Int, V>.lookup(requested: Int): V? =
-    this[requested] ?: headMap(requested).let { if (it.isEmpty()) null else it[it.lastKey()] }
+/** The table row at [requested], exactly. An unsupported size is a bug in the caller: it throws in tests and debug builds; add the real size as an explicit row. */
+private fun <V> java.util.SortedMap<Int, V>.lookup(requested: Int, what: String): V? =
+    this[requested].also { check(it != null || !com.nbaltas.nickos.BuildConfig.DEBUG) { "No tablet $what mapping for ${requested}sp: add a row to ParentLayout" } }
 
-/** Tablet parent type mapping for [Title] (spec §1.2): requested sp in, final sp out. A size between two rows takes the row below it; under the table it is kept. */
-fun tabletTitleSize(requested: Int): Int = titleTable.lookup(requested) ?: requested
+/** Tablet parent type mapping for [Title] (spec §1.2): requested sp in, final sp out. Exact rows only. */
+fun tabletTitleSize(requested: Int): Int = titleTable.lookup(requested, "title") ?: requested
 
-/** Tablet parent type mapping for [Muted]. Under the table: 12, the floor. */
-fun tabletMutedSize(requested: Int): Int = bodyTable.lookup(requested)?.first ?: 12
+/** Tablet parent type mapping for [Muted]. Exact rows only. */
+fun tabletMutedSize(requested: Int): Int = bodyTable.lookup(requested, "muted")?.first ?: 12
 
 /** Tablet parent mapping for a direct `body(...)` call. */
-fun tabletBodySize(requested: Int): Int = bodyTable.lookup(requested)?.second ?: 12
+fun tabletBodySize(requested: Int): Int = bodyTable.lookup(requested, "body")?.second ?: 12
 
 /** Tablet parent mapping for a direct `disp(...)` call. */
-fun tabletDispSize(requested: Int): Int = dispTable.lookup(requested) ?: requested
+fun tabletDispSize(requested: Int): Int = dispTable.lookup(requested, "disp") ?: requested
 
 /** A direct body call at a tablet-parent call site: mapped once, Figtree, 1.35x line height. */
 fun parentBody(requested: Int, weight: Int = 500): TextStyle = body(tabletBodySize(requested).sp, weight, 1.35f)

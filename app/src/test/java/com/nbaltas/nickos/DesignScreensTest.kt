@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -304,6 +308,55 @@ class DesignScreensTest {
     }
     @Test fun masterHomeFont150() = tabletFont("Master-Home-font150", 1.5f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     @Test fun masterHomeFont200() = tabletFont("Master-Home-font200", 2f) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+
+    /** Everything that competes for room in the top bar at once: an update, a pinned app, the paused state, a Together session, a long parent name. */
+    private fun seedHomeStress() {
+        set(com.nbaltas.nickos.update.Updater, "_state", com.nbaltas.nickos.update.UpdateState.Available(com.nbaltas.nickos.update.UpdateInfo(9999, "9.9", null, "https://example.invalid/nickos.apk", null)))
+        app.store.setQuickApps(listOf(app.packageName))
+        app.store.setPausedMsg("Time to eat")
+        app.store.setName("Alexandria-Bartholomew's Family Tablet")
+        val now = android.os.SystemClock.elapsedRealtime()
+        set(app.master.sync, "_session", SyncSession("jf:ab12cd34:m1", "Captain Comet", 90 * 60_000L, setOf("aaaaaaaaaaaa", "bbbbbbbbbbbb"), 12 * 60_000L, now, true, "http://jf.local/x"))
+    }
+
+    private fun homeStress(w: Int, h: Int, scale: Float) {
+        seedHomeStress()
+        org.robolectric.RuntimeEnvironment.setQualifiers("w${w}dp-h${h}dp-${if (w > h) "land" else "port"}-mdpi")
+        val tag = if (scale == 1.5f) "-font150" else if (scale == 2f) "-font200" else ""
+        tabletFont("Master-Home-Stress-${w}x$h$tag", scale) { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+    }
+    @Test fun masterHomeStress600x960() = homeStress(600, 960, 1f)
+    @Test fun masterHomeStress600x960Font150() = homeStress(600, 960, 1.5f)
+    @Test fun masterHomeStress960x600() = homeStress(960, 600, 1f)
+    @Test fun masterHomeStress960x600Font150() = homeStress(960, 600, 1.5f)
+    @Test fun masterHomeStress1024x768() = homeStress(1024, 768, 1f)
+    @Test fun masterHomeStress1024x768Font150() = homeStress(1024, 768, 1.5f)
+    @Test fun masterHomeStress1024x768Font200() = homeStress(1024, 768, 2f)
+
+    /** At 960x600 and font 1.5 every top-bar action is there by its accessibility name and can be brought into view. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Test fun masterHomeTopBarActionsReachableAt960x600Font150() {
+        seedHomeStress()
+        org.robolectric.RuntimeEnvironment.setQualifiers("w960dp-h600dp-land-mdpi")
+        androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+            setContent {
+                NickTheme {
+                    Box(Modifier.fillMaxSize().background(C.bg)) {
+                        val d = androidx.compose.ui.platform.LocalDensity.current
+                        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 1.5f)) {
+                            ParentLayoutProvider { MasterHome({}, {}, {}, {}, {}, {}, {}) }
+                        }
+                    }
+                }
+            }
+            for (name in listOf("All apps", "Settings", "Update", "Resume everyone", "Cameras", "Watching together")) {
+                val node = onNode(androidx.compose.ui.test.hasContentDescription(name) or androidx.compose.ui.test.hasText(name, substring = true), useUnmergedTree = true)
+                node.assertExists("$name is missing from the top bar")
+                runCatching { node.performScrollTo() }
+                node.assertIsDisplayed()
+            }
+        }
+    }
 
     /**
      * The phone Source menu OPEN (the dark-on-light defect fixed in JOB-0061): Together's library with the chip tapped. The menu is a popup
@@ -643,6 +696,20 @@ class DesignScreensTest {
         jellyfinShot("Together-Jellyfin-Browse", null, "Continue Watching", together = true)
     }
 
+    /** Tablet-only: the Jellyfin browse with the source control and the category group at 960x600 (search below the categories). */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun togetherJellyfinBrowse960x600() {
+        addStatus("cccccccccccc", 23)
+        set(app.master.sync, "_videos", mapOf(Library.SELF to DeviceLibrary(true, listOf(video("cc", "Captain Comet")))))
+        jellyfinShotOnce("Together-Jellyfin-Browse-960x600", null, "Continue Watching", together = true, phone = false)
+    }
+
+    /** Tablet-only: the Together pick panel with the system font at 1.5 (art stacks over the title, rows keep 72 high). */
+    @Test fun togetherPickFont150() {
+        val item = seedTogetherPick()
+        tabletFont("Together-Pick-font150", 1.5f) { TogetherPickContent(item) }
+    }
+
     @Test fun togetherJellyfinPick() {
         addStatus("cccccccccccc", 23)
         shot("Together-Jellyfin-Pick") {
@@ -937,9 +1004,14 @@ class DesignScreensTest {
                     }
                 }
                 if (!together) {
-                    // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
-                    if (phone) onNodeWithTag("source-chip").performClick()
-                    onNodeWithTag("jellyfin-library").performClick()
+                    if (phone) {
+                        // Phone: the source chip opens a menu, whose Jellyfin entry carries the tag.
+                        onNodeWithTag("source-chip").performClick()
+                        onNodeWithTag("jellyfin-library").performClick()
+                    } else {
+                        // Tablet: the two-choice source control; Jellyfin is its second choice.
+                        onNode(hasText("Jellyfin") and hasAnyAncestor(hasTestTag("tablet-source"))).performClick()
+                    }
                 }
                 fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
                 waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
@@ -1046,7 +1118,7 @@ class DesignScreensTest {
         return "${c.screenWidthDp}x${c.screenHeightDp}"
     }
 
-    private fun nodeCodeAt() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916") } }
+    private fun nodeCodeAt() { nodeSeed(); shot("Node-Code-${sizeTag()}") { PairingCodeBody("Hailey's Tablet", 0, "initial", "482916", address = "192.168.1.20") } }
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun nodeCode960() = nodeCodeAt()
@@ -1110,7 +1182,7 @@ class DesignScreensTest {
     private fun nodeCodeBigFont(scale: Float) { nodeSeed(); shot("Node-Code-${sizeTag()}-font${(scale * 100).toInt()}") {
         val d = androidx.compose.ui.platform.LocalDensity.current
         androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, scale)) {
-            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916")
+            PairingCodeBody("Hailey's Tablet", 0, "initial", "482916", address = "192.168.1.20")
         }
     } }
 

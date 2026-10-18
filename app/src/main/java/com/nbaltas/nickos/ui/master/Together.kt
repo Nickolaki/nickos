@@ -15,6 +15,14 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.platform.LocalDensity
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import com.nbaltas.nickos.ui.theme.ParentContentCap
+import com.nbaltas.nickos.ui.theme.TabletParentMetrics
+import kotlin.math.floor
+import com.nbaltas.nickos.ui.theme.tabletContentWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.semantics.Role
@@ -225,15 +233,27 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
     }
 
     val phone = LocalPhone.current
-    val edge = if (phone) PhoneMetrics.gutter else 40.dp
+    val tablet = LocalParentTablet.current
+    // Parent tablet: the page sits in the content cap (min(W - 2 x gutter, 1152)), so nothing below pads the sides again.
+    val edge = if (phone) PhoneMetrics.gutter else if (tablet) 0.dp else 40.dp
+    val page: @Composable (Float) -> Unit = { i ->
     Column(Modifier.fillMaxSize()) {
         if (phone) PhoneHeader("Watch together", onBack) { IconCircle(Lucide.RefreshCw, { sync.rescan() }, label = "Look again") }
+        else if (tablet) Row(
+            Modifier.fillMaxWidth().height(TabletParentMetrics.headerHeight),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BackButton(onBack)
+            Title("Watch together", 40, Modifier.weight(1f))
+            IconCircle(Lucide.RefreshCw, { sync.rescan() }, label = "Look again")
+        }
         else Row(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BackButton(onBack)
             Spacer(Modifier.width(20.dp))
             Title("Watch together", 40, Modifier.weight(1f))
             IconCircle(Lucide.RefreshCw, { sync.rescan() })
         }
+        if (tablet) Spacer(Modifier.height(TabletParentMetrics.contentTop))
         // A streamed movie that no tablet could play ended the session: say why, and offer the save.
         val streamFails by sync.failed.collectAsState()
         val failScope = rememberCoroutineScope()
@@ -254,8 +274,11 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             }
         }
         // Phone: 56dp pills in a row that scrolls, 16dp from the edge; the next pill peeks out at the end.
+        // Tablet: 56dp chips with 36dp avatars, a 15/20 name over a 14/20 state, 12 apart; the row scrolls sideways.
+        val chipH = if (phone || tablet) 56.dp else 44.dp
+        val nameStyle = if (tablet) body(15.sp, 700, 20f / 15) else body(16.sp, 700)
         LazyRow(
-            if (phone) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            if (phone) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().padding(horizontal = edge),
             contentPadding = if (phone) PaddingValues(horizontal = edge) else PaddingValues(0.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -263,9 +286,9 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                 val label = TogetherText.chip(true, true, Library.SELF in scanning, selfPerm, Library.ownedBy(library, Library.SELF).size, 0)
                 Chip(Modifier.clickable {
                     if (label == "No video access") videosLauncher.launch(LocalVideos.permissions().toTypedArray())
-                }, height = if (phone) 56.dp else 44.dp) {
-                    Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(if (phone) 24.dp else 28.dp))
-                    Column { Text("This ${selfNoun(phone)}", style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
+                }, height = chipH) {
+                    Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(if (phone) 24.dp else if (tablet) 36.dp else 28.dp))
+                    Column { Text("This ${selfNoun(phone)}", style = nameStyle, color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone || tablet) 1 else 3) }
                 }
             }
             items(nodes) { n ->
@@ -277,14 +300,23 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                         "No video access" -> master.say("On ${n.node.name}, hold the avatar, enter the PIN, then tap Allow videos")
                         else -> {}
                     }
-                }, height = if (phone) 56.dp else 44.dp) {
-                    Avatar(n.node.name, n.node.color, n.node.avatar, if (phone) 32.dp else 28.dp)
-                    Column { Text(n.node.name, style = body(16.sp, 700), color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone) 1 else 3) }
+                }, height = chipH) {
+                    Avatar(n.node.name, n.node.color, n.node.avatar, if (phone) 32.dp else if (tablet) 36.dp else 28.dp)
+                    Column { Text(n.node.name, style = nameStyle, color = C.text, maxLines = 1); Muted(label, 15, maxLines = if (phone || tablet) 1 else 3) }
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
-        if (phone) {
+        Spacer(Modifier.height(if (tablet) TabletParentMetrics.relatedGap else 16.dp))
+        if (tablet) {
+            // One two-choice source control (the same one the per-tablet Watch uses), the library categories in a group of their own:
+            // side by side from I = 960 with 24 between, stacked with 12 below that.
+            val categories: @Composable () -> Unit = {
+                if (segment != 2) Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it; openShow = null })
+            }
+            val source: @Composable () -> Unit = { TabletSourceControl(segment == 2) { jfPicked -> segment = if (jfPicked) 2 else 0; openShow = null } }
+            if (i >= 960f) Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) { source(); categories() }
+            else Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) { source(); categories() }
+        } else if (phone) {
             // One source chip; the Movies/Shows bar is only for the NickOS library (Jellyfin has its own Home/Movies/Shows/History bar).
             SourceChip(segment == 2) { jfPicked -> segment = if (jfPicked) 2 else 0; openShow = null }
             if (segment != 2) {
@@ -305,17 +337,17 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
 
         when {
             !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this ${selfNoun(phone)} are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
-                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
+                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
             }
             segment == 2 && jf == null -> CenterMessage("Connect Jellyfin", "Add your Jellyfin server in Settings to pick a movie or show and watch it together.") {
-                NickButton("Open Settings", { onSettings(1) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
+                NickButton("Open Settings", { onSettings(1) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
             }
             segment == 2 -> JellyfinBrowser(jf!!, jfAccount!!.userId, "together", null, onPick = { openJf = it })
             onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this ${selfNoun(phone)}, show up here.") {
-                NickButton("All tablets", onBack, fullOnPhone(), style = BtnStyle.GHOST, big = !LocalPhone.current)
+                NickButton("All tablets", onBack, fullOnPhone(), style = BtnStyle.GHOST, big = bigButtons())
             }
             onlineNodes.isNotEmpty() && capableOnline.isEmpty() -> CenterMessage("Update the kids' tablets", "Watch together needs the latest NickOS on each tablet. Update them from Settings, then come back.") {
-                NickButton("Open Settings", { onSettings(5) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current)
+                NickButton("Open Settings", { onSettings(5) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
             }
             else -> {
                 val visible = if (segment == 0) Library.movies(library) else null
@@ -325,10 +357,10 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
                     if (scanningCount > 0) Muted("Looking for movies on $scanningCount tablets...", 18, Modifier.padding(start = if (phone) edge else 0.dp, end = if (phone) edge else 0.dp, bottom = 12.dp))
                     when {
                         segment == 0 && visible!!.isEmpty() && scanningCount == 0 -> CenterMessage("No movies yet", "Copy MP4 or MKV files into the Movies or Download folder on this ${selfNoun(phone)} or any kid's tablet. From here you can send a movie to the other tablets and play it on all of them at once.") {
-                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
+                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons(), leading = Lucide.RefreshCw)
                         }
                         segment == 1 && openShow == null && shows.isEmpty() && scanningCount == 0 -> CenterMessage("No shows yet", "Copy episodes into a folder named after the show, inside Movies or Download on this ${selfNoun(phone)}, or send them from another tablet.") {
-                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Lucide.RefreshCw)
+                            NickButton("Look again", { sync.rescan() }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons(), leading = Lucide.RefreshCw)
                         }
                         segment == 0 -> LibraryGrid(visible!!, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
                         openShow != null -> LibraryGrid(openShow!!.episodes, thumbs, nodes, order, expected, name, transfer) { openItem = it.fid }
@@ -338,6 +370,8 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
             }
         }
     }
+    }
+    if (tablet) ParentContentCap { w -> page(w.value) } else page(0f)
 }
 
 @Composable
@@ -364,6 +398,23 @@ private fun LibraryGrid(
                     Text(avail.text, style = body(14.sp, 600, 1.3f), color = if (avail.all) C.online else C.muted)
                     TogetherText.jobLine(jobs)?.let { Text(it, style = body(14.sp, 600, 1.3f), color = C.accent) }
                 }
+            }
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // 200-260 wide 16:9 art in whole columns; the title is under the art only (never drawn on it as well).
+        TabletArtGrid(items, key = { it.fid }) { item, w ->
+            val avail = TogetherText.availability(item.owners, expected, order, name)
+            val jobs = transfer.cardJobs(item.fid)
+            Column(Modifier.width(w).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).clickable(role = Role.Button) { onOpen(item) }) {
+                MovieThumb(thumbs[item.fid], item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
+                Spacer(Modifier.height(8.dp))
+                Text(item.title, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Muted(if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown", 14)
+                Text(avail.text, style = body(14.sp, 600, 20f / 14), color = if (avail.all) C.online else C.muted)
+                TogetherText.jobLine(jobs)?.let { Text(it, style = body(14.sp, 600, 20f / 14), color = C.accent) }
             }
         }
         return
@@ -397,6 +448,19 @@ private fun ShowGrid(shows: List<Show>, thumbs: Map<String, Bitmap>, onOpen: (Sh
                     art = { MovieThumb(show.episodes.firstOrNull()?.let { thumbs[it.fid] }, show.name, it, radius = PhoneMetrics.nestedRadius, showTitle = false) },
                     title = show.name, onClick = { onOpen(show) },
                 ) { Muted("${show.episodes.size} episodes", 14) }
+            }
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        TabletArtGrid(shows, key = { it.name }) { show, w ->
+            val first = show.episodes.firstOrNull()
+            Column(Modifier.width(w).clip(RoundedCornerShape(TabletParentMetrics.nestedRadius)).clickable(role = Role.Button) { onOpen(show) }) {
+                MovieThumb(first?.let { thumbs[it.fid] }, show.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = TabletParentMetrics.mediaRadius, showTitle = false)
+                Spacer(Modifier.height(8.dp))
+                Text(show.name, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Muted("${show.episodes.size} episodes", 14)
             }
         }
         return
@@ -485,6 +549,56 @@ internal fun PickPanel(
         return
     }
 
+    if (LocalParentTablet.current) {
+        TabletMediaPage(
+            backLabel, onBack,
+            art = { MovieThumb(thumb, item.title, it, radius = TabletParentMetrics.mediaRadius, showTitle = false) },
+            eyebrow = epLabel, title = item.title,
+            meta = if (item.durMs > 0) minutesText((item.durMs / 60_000).toInt()) else "Length unknown",
+        ) {
+            nodes.forEach { n ->
+                val has = n.node.id in item.owners
+                val capable = n.status?.supportsSync == true
+                val job = transfer.jobFor(n.node.id, item.fid)
+                val jobState = job?.let { JobState.of(it.state) }
+                val failed = job != null && jobState == JobState.FAILED
+                val running = job != null && jobState != JobState.FAILED && jobState != JobState.DONE && jobState != JobState.CANCELLED
+                TabletDeviceRow(
+                    n,
+                    status = when {
+                        !capable -> "Update needed"
+                        running || failed -> null
+                        has && n.online -> "Ready"
+                        has -> "Offline"
+                        n.online -> if (sendBlocked != null) sendBlocked else "Not on this tablet"
+                        else -> "Offline"
+                    },
+                    trailingMin = if (capable && (running || failed)) 360.dp else 120.dp,
+                ) {
+                    if (capable) when {
+                        failed -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(TogetherText.jobError(job!!.err, job.size), style = body(14.sp, 500, 20f / 14), color = C.danger)
+                            NickButton("Try again", { transfer.retry(item.fid, n.node.id) }, style = BtnStyle.SECONDARY)
+                        }
+                        running -> TabletProgressLine(TogetherText.percent(job!!.done, job.size) / 100f, TogetherText.jobProgress(job)) { transfer.cancel(item.fid, n.node.id) }
+                        has && n.online -> NickSwitch(n.node.id in selected) { on -> selected = if (on) selected + n.node.id else selected - n.node.id }
+                        has -> NickSwitch(on = false, enabled = false) {}
+                        n.online && sendBlocked == null -> NickButton("Send", { transfer.send(item.fid, setOf(n.node.id)) }, style = BtnStyle.SECONDARY)
+                    }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            val k = selected.size
+            val playLabel = if (k == 1) "Play on ${nodes.firstOrNull { it.node.id == selected.first() }?.node?.name ?: sync.kid(selected.first())}" else "Play on $k tablets"
+            val j = lacking.size
+            Column(Modifier.widthIn(max = 400.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0)
+                if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY, leading = Lucide.Send, enabled = sendBlocked == null)
+            }
+        }
+        return
+    }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
             Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
@@ -543,10 +657,10 @@ internal fun PickPanel(
         Spacer(Modifier.height(20.dp))
         val k = selected.size
         val playLabel = if (k == 1) "Play on ${nodes.firstOrNull { it.node.id == selected.first() }?.node?.name ?: sync.kid(selected.first())}" else "Play on $k tablets"
-        NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0)
+        NickButton(playLabel, { sync.start(item.fid, item.title, item.durMs, selected) }, style = BtnStyle.PRIMARY, big = bigButtons(), leading = Solid.Play, enabled = k > 0)
         Spacer(Modifier.height(12.dp))
         val j = lacking.size
-        if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.Send, enabled = sendBlocked == null)
+        if (j > 0) NickButton("Send to $j tablet${if (j == 1) "" else "s"}", { transfer.send(item.fid, lacking) }, style = BtnStyle.SECONDARY, big = bigButtons(), leading = Lucide.Send, enabled = sendBlocked == null)
     }
 }
 
@@ -740,6 +854,10 @@ internal fun JfPickContent(
         PhoneJfPickContent(item, nodes, selected, onToggle, prep, note, onBack, onPrimary, onRetryRow, onRetrySave, onCancel, stream, art)
         return
     }
+    if (LocalParentTablet.current) {
+        TabletJfPickContent(item, nodes, selected, onToggle, prep, note, onBack, onPrimary, onRetryRow, onRetrySave, onCancel, stream, art)
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(40.dp)) {
         Chip(Modifier.clickable(onClick = onBack)) {
             Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(18.dp))
@@ -783,18 +901,18 @@ internal fun JfPickContent(
             if (stream != null) {
                 NickButton(
                     if (k == 0) "Pick a tablet" else if (stream.count == 0) "No tablet can stream yet" else stream.label, stream.onStream,
-                    style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
+                    style = BtnStyle.PRIMARY, big = bigButtons(), leading = Solid.Play, enabled = k > 0 && stream.count > 0,
                 )
                 Spacer(Modifier.height(12.dp))
                 NickButton(
                     "Save to tablets", onPrimary,
-                    style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.Tablet, enabled = k > 0,
+                    style = BtnStyle.SECONDARY, big = bigButtons(), leading = Lucide.Tablet, enabled = k > 0,
                 )
                 Muted(TogetherText.STREAM_HINT, 15, Modifier.padding(top = 10.dp))
                 stream.convertedLine?.let { Muted(it, 15, Modifier.padding(top = 4.dp)) }
             } else NickButton(
                 if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary,
-                style = BtnStyle.PRIMARY, big = !LocalPhone.current, leading = Solid.Play, enabled = k > 0,
+                style = BtnStyle.PRIMARY, big = bigButtons(), leading = Solid.Play, enabled = k > 0,
             )
         } else {
             Title("Getting ready", 30)
@@ -832,7 +950,7 @@ internal fun JfPickContent(
             }
             note?.let { Muted(it, 16, Modifier.padding(top = 8.dp)) }
             Spacer(Modifier.height(20.dp))
-            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, big = !LocalPhone.current, leading = Lucide.X)
+            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, big = bigButtons(), leading = Lucide.X)
         }
     }
 }
@@ -845,6 +963,15 @@ internal fun StreamFailRow(f: com.nbaltas.nickos.master.StreamFail, who: String,
         Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PhoneMetrics.relatedGap)) {
             Text(TogetherText.streamError(who, f.code), style = body(14.sp, 500, 1.3f), color = C.danger)
             if (f.canSaveInstead) NickButton(TogetherText.SAVE_INSTEAD, onSave, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY)
+        }
+        return
+    }
+    if (LocalParentTablet.current) {
+        // The reason (14/20, at most 560 wide) and the action wrap onto their own lines rather than squeeze each other.
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+            Text(TogetherText.streamError(who, f.code), style = body(14.sp, 500, 20f / 14), color = C.danger, modifier = Modifier.widthIn(max = 560.dp))
+            if (f.canSaveInstead) NickButton(TogetherText.SAVE_INSTEAD, onSave, style = BtnStyle.SECONDARY)
         }
         return
     }
@@ -879,6 +1006,50 @@ internal fun TogetherRemote(onBack: () -> Unit, onSaveInstead: (com.nbaltas.nick
     val names = TogetherText.join(nodes.map { it.node.name })
     val next = sync.next()
     val starting = sync.starting()
+
+    if (LocalParentTablet.current) {
+        val statuses = master.status.collectAsState().value
+        TabletRemoteLayout(
+            onBack = onBack, bg = thumbs[s.fid], art = s.art, title = s.title,
+            main = { mod ->
+                TabletRemoteMain(
+                    sync, s, thumbs[s.fid], epLabel, "On $names", pos, starting, waiting, streamFails.values.filter { it.fid == s.fid }, onSaveInstead,
+                    showNext = item?.episode != null, nextEnabled = next != null, stopLabel = if (nodes.size <= 1) "Stop" else "Stop for everyone", modifier = mod,
+                )
+            },
+            side = { mod ->
+                Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                    val avgVol = nodes.mapNotNull { statuses[it.node.id]?.volume }.let { if (it.isEmpty()) 50 else it.average().toInt() }
+                    VolumeCard(if (nodes.size <= 1) "Volume" else "Everyone's volume", avgVol) { v -> nodes.filter { it.online }.forEach { master.setVolume(it.node.id, v) } }
+                    if (nodes.size > 1) {
+                        EyebrowText("Tablets")
+                        nodes.forEach { n ->
+                            val line = sync.stateLine(n.node.id)
+                            val inSync = sync.inSync(n.node.id)
+                            Column(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface).padding(TabletParentMetrics.cardPadding),
+                                verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Avatar(n.node.name, n.node.color, n.node.avatar, 36.dp)
+                                    Column(Modifier.weight(1f)) {
+                                        Text(n.node.name, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            if (inSync) Dot(C.online, 8.dp)
+                                            Muted(line, 15)
+                                        }
+                                    }
+                                    IconCircle(Lucide.X, { sync.remove(n.node.id) }, label = "Remove ${n.node.name}")
+                                }
+                                NickSlider((statuses[n.node.id]?.volume ?: 50) / 100f, {}, { f -> master.setVolume(n.node.id, (f * 100).toInt()) })
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        return
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val narrow = maxWidth < 1000.dp
@@ -995,6 +1166,26 @@ fun TabletRemote(nodeId: String) {
     val thumbs by sync.thumbs.collectAsState()
     val next = sync.next()
 
+    if (LocalParentTablet.current) {
+        val master = app.master
+        val statuses = master.status.collectAsState().value
+        TabletRemoteLayout(
+            onBack = null, bg = thumbs[s.fid], art = s.art, title = s.title,
+            main = { mod ->
+                TabletRemoteMain(
+                    sync, s, thumbs[s.fid], epLabel, null, pos, 0, null, emptyList(), {},
+                    showNext = item?.episode != null, nextEnabled = next != null, stopLabel = "Stop", modifier = mod,
+                )
+            },
+            side = { mod ->
+                Column(mod, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                    VolumeCard("Volume", statuses[nodeId]?.volume ?: 50) { v -> master.setVolume(nodeId, v) }
+                }
+            },
+        )
+        return
+    }
+
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
         val bg = thumbs[s.fid]
@@ -1037,6 +1228,17 @@ fun TabletRemote(nodeId: String) {
 
 @Composable
 private fun SkipButtonWatch(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
+    if (LocalParentTablet.current) {
+        // A real 48dp circle, 22dp glyph; the seconds stay 12sp whatever the system font.
+        Box(
+            Modifier.size(TabletParentMetrics.minTarget).clip(androidx.compose.foundation.shape.CircleShape).background(C.surface2).clickable(role = Role.Button, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(22.dp))
+            Text("$secs", style = body((12f / LocalDensity.current.fontScale).sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
+        }
+        return
+    }
     Box(
         Modifier.size(76.dp).clip(androidx.compose.foundation.shape.CircleShape).background(C.surface2).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -1052,15 +1254,335 @@ private fun SkipButtonWatch(back: Boolean, secs: Int = 10, onClick: () -> Unit) 
 @Composable
 private fun VolumeCard(label: String, value: Int, onCommit: (Int) -> Unit) {
     val phone = LocalPhone.current
+    val tablet = LocalParentTablet.current
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.cardRadius else 26.dp)).background(C.surface).padding(if (phone) PhoneMetrics.cardPadding else 18.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(if (phone) PhoneMetrics.cardRadius else if (tablet) TabletParentMetrics.cardRadius else 26.dp)).background(C.surface)
+            .padding(if (phone) PhoneMetrics.cardPadding else if (tablet) TabletParentMetrics.cardPadding else 18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Lucide.Volume2, null, tint = C.text, modifier = Modifier.size(20.dp))
-            Text(label, style = body(17.sp, 700), color = C.text)
+            Text(label, style = if (tablet) body(16.sp, 700, 22f / 16) else body(17.sp, 700), color = C.text)
         }
         NickSlider(value / 100f, {}, { f -> onCommit((f * 100).toInt()) })
+    }
+}
+
+// ---------------- parent tablet (JOB-0061 design §2.4, §2.5) ----------------
+
+/** Primary and secondary buttons are the 52 / 48 ones on a parent tablet; `big` (56) stays for the old non-parent layout. */
+@Composable
+internal fun bigButtons(): Boolean = !LocalPhone.current && !LocalParentTablet.current
+
+/** The gap between pictures in an art grid. */
+private const val ART_GAP = 16f
+
+/** Whole columns and the width of one picture in an art grid on a parent tablet. */
+internal data class ArtGrid(val columns: Int, val artWidth: Float) {
+    /** The width the columns take; the rest of the row stays empty rather than enlarging the art. */
+    val gridWidth: Float get() = columns * artWidth + (columns - 1) * ART_GAP
+}
+
+/**
+ * The art-grid column rule (design §2.4 / §2.5): columns = floor((I + 16) / (min + 16)), at least 1; the picture is the content width
+ * shared between those columns, never wider than [maxArt]. A short last row keeps the same width, so a sparse row is never stretched.
+ */
+internal fun artGrid(contentWidthDp: Float, minArt: Float = 200f, maxArt: Float = 260f): ArtGrid {
+    val columns = floor((contentWidthDp + ART_GAP) / (minArt + ART_GAP)).toInt().coerceAtLeast(1)
+    val art = ((contentWidthDp - ART_GAP * (columns - 1)) / columns).coerceIn(0f, maxArt)
+    return ArtGrid(columns, art)
+}
+
+/** Whole-column grid of art cards. [content] gets the item and the art width; it is left-aligned and does not stretch to the row. */
+@Composable
+internal fun <T> TabletArtGrid(
+    items: List<T>, key: (T) -> Any, minArt: Float = 200f, maxArt: Float = 260f,
+    content: @Composable (T, Dp) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val g = artGrid(maxWidth.value, minArt, maxArt)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(g.columns),
+            modifier = Modifier.width(g.gridWidth.dp).fillMaxHeight(),
+            horizontalArrangement = Arrangement.spacedBy(ART_GAP.dp),
+            verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            contentPadding = PaddingValues(bottom = TabletParentMetrics.contentBottom),
+        ) {
+            items(items, key = key) { item -> content(item, g.artWidth.dp) }
+        }
+    }
+}
+
+/**
+ * The tablet source control, the same one in Together and in each tablet's Watch: `NickOS library | Jellyfin`, two equal choices at most
+ * 360 wide (48 high items, 56 outer). [onPick] gets true for Jellyfin.
+ */
+@Composable
+internal fun TabletSourceControl(jellyfin: Boolean, modifier: Modifier = Modifier, onPick: (Boolean) -> Unit) {
+    Segmented(
+        listOf("NickOS library" to null, "Jellyfin" to null), if (jellyfin) 1 else 0, { onPick(it == 1) },
+        modifier.widthIn(max = 360.dp).fillMaxWidth().testTag("tablet-source"), compact = true,
+    )
+}
+
+/** A 48dp "back to ..." pill. */
+@Composable
+internal fun TabletBackChip(label: String, onBack: () -> Unit) {
+    Chip(Modifier.clip(RoundedCornerShape(50)).clickable(role = Role.Button, onClick = onBack), height = TabletParentMetrics.minTarget) {
+        Icon(Lucide.ChevronLeft, null, tint = C.text, modifier = Modifier.size(20.dp))
+        Text(label, style = body(16.sp, 700, 1.25f), color = C.text, maxLines = 1)
+    }
+}
+
+/**
+ * A media pick / detail page on a parent tablet: capped at 1000 and centred, a 48dp back pill in an 80dp header, the 288x162 art beside the
+ * title and meta (stacked under 720 of width or at font scale 1.5), then [content] below. The page scrolls as a whole.
+ */
+@Composable
+internal fun TabletMediaPage(
+    backLabel: String, onBack: () -> Unit,
+    art: @Composable (Modifier) -> Unit, eyebrow: String?, title: String, meta: String?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val fontScale = LocalDensity.current.fontScale
+    ParentContentCap { i ->
+        val stacked = minOf(i.value, 1000f) < 720f || fontScale >= 1.5f
+        Column(
+            Modifier.align(Alignment.TopCenter).widthIn(max = 1000.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(bottom = TabletParentMetrics.contentBottom),
+        ) {
+            Row(Modifier.fillMaxWidth().heightIn(min = TabletParentMetrics.headerHeight), verticalAlignment = Alignment.CenterVertically) { TabletBackChip(backLabel, onBack) }
+            Spacer(Modifier.height(TabletParentMetrics.contentTop))
+            val titles: @Composable (Modifier) -> Unit = { m ->
+                Column(m, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.labelGap)) {
+                    eyebrow?.let { EyebrowText(it) }
+                    Title(title, 44, maxLines = 3)
+                    meta?.let { Muted(it, 16) }
+                }
+            }
+            if (stacked) Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { art(Modifier.size(288.dp, 162.dp)); titles(Modifier.fillMaxWidth()) }
+            else Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) { art(Modifier.size(288.dp, 162.dp)); titles(Modifier.weight(1f)) }
+            Spacer(Modifier.height(TabletParentMetrics.sectionGap))
+            content()
+        }
+    }
+}
+
+/**
+ * One tablet in a pick or progress list: at least 72 high, 12 padding, a 1dp divider under it. Avatar, a name column of at least 240, and
+ * [trailing] (at most 360) at the end. When the trailing part (which needs [trailingMin]) cannot fit beside a 240 name it moves to a
+ * full-width row under the name instead of squeezing it.
+ */
+@Composable
+internal fun TabletDeviceRowBase(
+    avatar: @Composable () -> Unit, name: String, status: String?, statusColor: Color = C.muted,
+    trailingMin: Dp = 120.dp, trailing: @Composable () -> Unit = {},
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val inline = maxWidth - 24.dp - 36.dp - 12.dp - 240.dp - 12.dp >= trailingMin
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                avatar()
+                Column(Modifier.weight(1f)) {
+                    Text(name, style = body(16.sp, 700, 22f / 16), color = C.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (status != null) Text(status, style = body(14.sp, 500, 20f / 14), color = statusColor)
+                }
+                if (inline) Box(Modifier.widthIn(max = 360.dp)) { trailing() }
+            }
+            if (!inline) Box(Modifier.fillMaxWidth().padding(start = 12.dp + 36.dp + 12.dp, end = 12.dp, bottom = 12.dp)) { trailing() }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
+        }
+    }
+}
+
+@Composable
+internal fun TabletDeviceRow(n: NodeView, status: String?, trailingMin: Dp = 120.dp, statusColor: Color = C.muted, trailing: @Composable () -> Unit = {}) =
+    TabletDeviceRowBase({ Avatar(n.node.name, n.node.color, n.node.avatar, 36.dp) }, n.node.name, status, statusColor, trailingMin, trailing)
+
+/** A 4dp bar that fills the room it is given (no fixed width), then the figures (14/20, tabular digits) with a 48dp cancel at the end. */
+@Composable
+internal fun TabletProgressLine(fraction: Float, text: String, onCancel: (() -> Unit)? = null) {
+    val shown by animateFloatAsState(fraction, tween(150), label = "progress")
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ProgressBar(shown, Modifier.fillMaxWidth(), height = 4.dp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, style = body(14.sp, 600, 20f / 14).copy(fontFeatureSettings = "tnum"), color = C.muted, modifier = Modifier.weight(1f))
+            if (onCancel != null) IconCircle(Lucide.X, onCancel, label = "Cancel")
+        }
+    }
+}
+
+/** The Jellyfin pick / stream / Getting ready page on a parent tablet. Same states, buttons and callbacks as the phone and old layouts. */
+@Composable
+private fun TabletJfPickContent(
+    item: JfItem, nodes: List<NodeView>, selected: Set<String>, onToggle: (String, Boolean) -> Unit,
+    prep: JfPrep?, note: String?, onBack: () -> Unit, onPrimary: () -> Unit,
+    onRetryRow: (String) -> Unit, onRetrySave: () -> Unit, onCancel: () -> Unit, stream: JfStreamUi?, art: String?,
+) {
+    TabletMediaPage(
+        "Jellyfin", onBack,
+        art = { MovieThumb(null, item.displayTitle, it, radius = TabletParentMetrics.mediaRadius, showTitle = false, art = art) },
+        eyebrow = if (item.isEpisode) "${item.epCode} · ${item.name}" else null, title = item.displayTitle,
+        meta = if (item.runMin > 0) minutesText(item.runMin) else "Length unknown",
+    ) {
+        val small = body(14.sp, 500, 20f / 14)
+        if (prep == null) {
+            nodes.forEach { n ->
+                val capable = n.status?.supportsSync == true
+                TabletDeviceRow(n, status = if (!capable) "Update needed" else if (!n.online) "Offline" else null) {
+                    if (capable && n.online) NickSwitch(n.node.id in selected) { on -> onToggle(n.node.id, on) }
+                }
+            }
+            note?.let { Text(it, style = small, color = C.muted, modifier = Modifier.padding(top = 12.dp).widthIn(max = 560.dp)) }
+            stream?.failures?.forEach { f ->
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                    Text(f.text, style = small, color = C.danger, modifier = Modifier.widthIn(max = 560.dp))
+                    if (f.canSave) NickButton(TogetherText.SAVE_INSTEAD, { stream.onSaveInstead(f.id) }, style = BtnStyle.SECONDARY)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            val k = selected.size
+            Column(Modifier.widthIn(max = 400.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (stream != null) {
+                    NickButton(
+                        if (k == 0) "Pick a tablet" else if (stream.count == 0) "No tablet can stream yet" else stream.label, stream.onStream, Modifier.fillMaxWidth(),
+                        style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0 && stream.count > 0,
+                    )
+                    NickButton("Save to tablets", onPrimary, Modifier.fillMaxWidth(), style = BtnStyle.SECONDARY, leading = Lucide.Tablet, enabled = k > 0)
+                    Text(TogetherText.STREAM_HINT, style = small, color = C.muted)
+                    // The converted-stream copy is 14/20, at most 560 wide, and never cut to fit.
+                    stream.convertedLine?.let { Text(it, style = small, color = C.muted, modifier = Modifier.widthIn(max = 560.dp)) }
+                } else NickButton(
+                    if (k == 0) "Pick a tablet" else "Watch together on $k tablet${if (k == 1) "" else "s"}", onPrimary, Modifier.fillMaxWidth(),
+                    style = BtnStyle.PRIMARY, leading = Solid.Play, enabled = k > 0,
+                )
+            }
+        } else {
+            Title("Getting ready", 40)
+            if (prep.saveFraction != null) {
+                TabletDeviceRowBase({ Icon(Lucide.Tablet, null, tint = C.text, modifier = Modifier.size(36.dp)) }, "Saving to this ${selfNoun()}", null, trailingMin = 360.dp) {
+                    TabletProgressLine(prep.saveFraction, "${(prep.saveFraction * 100).toInt()}%")
+                }
+            }
+            (prep.saveError ?: prep.stuck)?.let {
+                Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(it, style = small, color = if (prep.saveError != null) C.danger else C.text, modifier = Modifier.widthIn(max = 560.dp))
+                    NickButton("Try again", onRetrySave, style = BtnStyle.SECONDARY)
+                }
+            }
+            prep.rows.forEach { r ->
+                val n = nodes.firstOrNull { it.node.id == r.id } ?: return@forEach
+                val bar = r.fraction != null && !r.ready && !r.failed
+                TabletDeviceRow(n, status = if (r.failed || bar) null else r.text, trailingMin = if (r.failed || bar) 360.dp else 120.dp) {
+                    if (r.failed) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(r.error ?: r.text, style = small, color = C.danger)
+                        NickButton("Try again", { onRetryRow(r.id) }, style = BtnStyle.SECONDARY)
+                    } else if (bar) TabletProgressLine(r.fraction!!, r.text)
+                }
+            }
+            note?.let { Text(it, style = small, color = C.muted, modifier = Modifier.padding(top = 12.dp).widthIn(max = 560.dp)) }
+            Spacer(Modifier.height(20.dp))
+            NickButton("Cancel", onCancel, style = BtnStyle.SECONDARY, leading = Lucide.X)
+        }
+    }
+}
+
+/**
+ * The remote's frame on a parent tablet: the backdrop, the content cap (1152), and [main] beside a 288 [side] pane from I = 960 at
+ * normal font scale, stacked (and scrolling as one page) otherwise. [onBack] adds the 80dp header with Back.
+ */
+@Composable
+private fun TabletRemoteLayout(
+    onBack: (() -> Unit)?, bg: Bitmap?, art: String?, title: String,
+    main: @Composable (Modifier) -> Unit, side: @Composable (Modifier) -> Unit,
+) {
+    val fontScale = LocalDensity.current.fontScale
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
+            if (bg != null) Image(bg.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
+            else if (art != null) Artwork(art, title, Modifier.fillMaxSize().alpha(0.35f), radius = 0.dp, showTitle = false)
+        }
+        val i = tabletContentWidth(maxWidth.value)
+        val twoPane = controlTwoPane(i, fontScale)
+        val backRow: @Composable () -> Unit = {
+            if (onBack != null) Row(Modifier.fillMaxWidth().height(TabletParentMetrics.headerHeight), verticalAlignment = Alignment.CenterVertically) { BackButton(onBack) }
+        }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.width(i.dp).fillMaxHeight()) {
+                if (twoPane) {
+                    Column(Modifier.fillMaxSize()) {
+                        backRow()
+                        Row(
+                            Modifier.fillMaxWidth().weight(1f).padding(top = if (onBack == null) TabletParentMetrics.contentTop else 0.dp, bottom = TabletParentMetrics.contentBottom),
+                            horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        ) {
+                            main(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
+                            side(Modifier.width(288.dp).fillMaxHeight().verticalScroll(rememberScrollState()))
+                        }
+                    }
+                } else {
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = if (onBack == null) TabletParentMetrics.contentTop else 0.dp, bottom = TabletParentMetrics.contentBottom),
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
+                    ) { backRow(); main(Modifier.fillMaxWidth()); side(Modifier.fillMaxWidth()) }
+                }
+            }
+        }
+    }
+}
+
+/** The remote's primary pane: 288x162 art beside the title (36), the seek bar, play 64 / skips 48, then Next and Stop in a wrapping row. */
+@Composable
+private fun TabletRemoteMain(
+    sync: com.nbaltas.nickos.master.SyncController, s: com.nbaltas.nickos.sync.SyncSession, thumb: Bitmap?, epLabel: String?, subtitle: String?,
+    pos: Long, starting: Int, waiting: String?, fails: List<com.nbaltas.nickos.master.StreamFail>,
+    onSaveInstead: (com.nbaltas.nickos.master.StreamFail) -> Unit,
+    showNext: Boolean, nextEnabled: Boolean, stopLabel: String, modifier: Modifier = Modifier,
+) {
+    val stackArt = LocalDensity.current.fontScale >= 1.5f
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.sectionGap)) {
+        val art: @Composable () -> Unit = { MovieThumb(thumb, s.title, Modifier.size(288.dp, 162.dp), radius = TabletParentMetrics.mediaRadius, showTitle = false, art = s.art) }
+        val titles: @Composable (Modifier) -> Unit = { m ->
+            Column(m, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.labelGap)) {
+                EyebrowText(if (epLabel != null) "Watching together · $epLabel" else "Watching together", C.accent)
+                Title(s.title, 64, maxLines = 3)
+                subtitle?.let { Muted(it, 22) }
+            }
+        }
+        if (stackArt) Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { art(); titles(Modifier.fillMaxWidth()) }
+        else Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) { art(); titles(Modifier.weight(1f)) }
+        val times = body(14.sp, 700, 20f / 14).copy(fontFeatureSettings = "tnum")
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (s.durMs > 0) {
+                NickSlider((pos.toFloat() / s.durMs).coerceIn(0f, 1f), {}, { f -> sync.seek((f * s.durMs).toLong()) })
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(fmtMs(pos), style = times, color = C.text)
+                    Text(fmtMs(s.durMs), style = times, color = C.muted)
+                }
+            } else {
+                Box(Modifier.fillMaxWidth().height(TabletParentMetrics.minTarget), contentAlignment = Alignment.Center) { ProgressBar(0f) }
+                Text("--:--", style = times, color = C.muted)
+            }
+            // Status lines stay right under the seek bar, 14/20.
+            if (starting > 0) Text("Starting on $starting tablets...", style = body(14.sp, 500, 20f / 14), color = C.muted)
+            waiting?.let { Text(it, style = body(14.sp, 700, 20f / 14), color = C.accent) }
+            fails.forEach { f -> StreamFailRow(f, sync.kid(f.id), Modifier) { onSaveInstead(f) } }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            SkipButtonWatch(back = true) { sync.skip(-10_000) }
+            Box(
+                Modifier.size(64.dp).clip(androidx.compose.foundation.shape.CircleShape).background(C.accent).clickable(role = Role.Button) { sync.toggle() },
+                contentAlignment = Alignment.Center,
+            ) { Icon(if (s.playing) Solid.Pause else Solid.Play, if (s.playing) "Pause" else "Play", tint = C.onAccent, modifier = Modifier.size(28.dp)) }
+            SkipButtonWatch(back = false) { sync.skip(10_000) }
+        }
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (showNext) NickButton("Next episode", { sync.playNext() }, style = BtnStyle.SECONDARY, leading = Solid.Next, enabled = nextEnabled)
+            NickButton(stopLabel, { sync.stop() }, style = BtnStyle.SECONDARY, leading = Solid.Stop)
+        }
     }
 }
 

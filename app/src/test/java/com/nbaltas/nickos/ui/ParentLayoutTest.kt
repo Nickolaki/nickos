@@ -23,6 +23,7 @@ import com.nbaltas.nickos.ui.theme.phoneMutedSize
 import com.nbaltas.nickos.ui.theme.phoneTitleSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -96,7 +97,7 @@ class ParentLayoutTest {
         assertEquals(2, homeColumns(1000f, 1.5f))
         assertEquals(2, homeColumns(1152f, 1.5f))
         assertEquals(248, homeCardMinHeight(2))
-        assertEquals(216, homeCardMinHeight(1))
+        assertEquals("one column is content-driven", 0, homeCardMinHeight(1))
     }
 
     @Test fun tabletTitleTableMatchesTheSpec() {
@@ -105,8 +106,7 @@ class ParentLayoutTest {
             40 to 28, 44 to 30, 46 to 30, 48 to 32, 52 to 32, 56 to 34, 64 to 36, 72 to 36,
         )
         spec.forEach { (requested, out) -> assertEquals("Title $requested", out, tabletTitleSize(requested)) }
-        assertEquals("between rows takes the row below", 22, tabletTitleSize(29))
-        assertEquals("under the table is kept", 14, tabletTitleSize(14))
+        assertThrows(IllegalStateException::class.java) { tabletTitleSize(29) }
     }
 
     @Test fun tabletMutedAndBodyTablesMatchTheSpec() {
@@ -121,7 +121,7 @@ class ParentLayoutTest {
             assertEquals("Muted $requested", out.first, tabletMutedSize(requested))
             assertEquals("body $requested", out.second, tabletBodySize(requested))
         }
-        assertEquals(12, tabletMutedSize(9))
+        assertThrows(IllegalStateException::class.java) { tabletMutedSize(9) }
     }
 
     @Test fun tabletDispTableMatchesTheSpec() {

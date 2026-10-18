@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -406,7 +408,7 @@ private fun TopBar(pad: Dp, onSettings: () -> Unit, onDrawer: () -> Unit, onUpda
 
 /**
  * Parent tablet Home (design §2.1): the header and the cards share one content width (min(W - 2 x gutter, 1152), centred); two columns
- * when that is at least 800 wide (one below, and one below 1000 at font scale 1.5). Cards are content-high with a 248/216 minimum.
+ * when that is at least 800 wide (one below, and one below 1000 at font scale 1.5). Cards are content-high with a 248 minimum in two columns and none in one.
  */
 @Composable
 private fun TabletHome(
@@ -521,7 +523,40 @@ private fun TabletTopBar(w: Float, onSettings: () -> Unit, onDrawer: () -> Unit,
         } else IconCircle(Lucide.Tv, onTogether, label = "Together")
     }
     val settingsAction: @Composable () -> Unit = { IconCircle(Lucide.Settings, onSettings, label = "Settings") }
+    // Icon + text chips (48 high) for the second row, like Pause all.
+    val camerasChip: @Composable () -> Unit = {
+        Chip(Modifier.clip(pill).clickable(role = Role.Button, onClick = onCameras), height = 48.dp) {
+            Icon(Lucide.Cctv, null, tint = C.text, modifier = Modifier.size(20.dp))
+            Text("Cameras", style = body(16.sp, 700, 1.25f), color = C.text, maxLines = 1)
+        }
+    }
+    val togetherChip: @Composable () -> Unit = {
+        val on = session != null
+        val fg = if (on) C.onAccent else C.text
+        Chip(Modifier.clip(pill).clickable(role = Role.Button, onClick = onTogether), height = 48.dp, bg = if (on) C.accent else C.surface2) {
+            Icon(Lucide.Tv, null, tint = fg, modifier = Modifier.size(20.dp))
+            Text(if (on) "Watching together" else "Together", style = body(16.sp, 700, 1.25f), color = fg, maxLines = 1)
+        }
+    }
 
+    if (LocalDensity.current.fontScale >= 1.5f) {
+        // Large text: identity + Settings grow in the first row, the actions wrap (12 gaps, 48 minimum items), pinned apps scroll on their own.
+        // Nothing here has a fixed height: the header is as high as it measures.
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 72.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                clock()
+                drawer()
+                Text(badgeText, style = body(14.sp, 600, 20f / 14f), color = C.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                settingsAction()
+            }
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                updateAction(); pauseAction(); camerasChip(); togetherChip()
+            }
+            if (icons.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { pinnedIcons() }
+        }
+        return
+    }
     if (w >= 960f) {
         TabletBarLayout(
             head = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { clock(); drawer() } },
@@ -548,7 +583,7 @@ private fun TabletTopBar(w: Float, onSettings: () -> Unit, onDrawer: () -> Unit,
             Modifier.fillMaxWidth().heightIn(min = 56.dp).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            pauseAction(); camerasAction(); togetherAction(); updateAction(); pinnedIcons()
+            pauseAction(); camerasChip(); togetherChip(); updateAction(); pinnedIcons()
         }
     }
 }
@@ -641,19 +676,22 @@ private fun TabletNodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier
             }
             pb != null && item != null -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Artwork(poster?.invoke(item), item.displayTitle, Modifier.size(80.dp, 120.dp), radius = 12.dp, showTitle = false)
-                Column(Modifier.weight(1f).heightIn(min = 120.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
-                        EyebrowText(if (pb.session.paused) "Paused" else "Now playing", C.accent)
+                // No spacedBy around the spacers: exactly 12 above the bar and 6 between the bar and the times.
+                Column(Modifier.weight(1f).heightIn(min = 120.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Solid.Play, null, tint = C.accent, modifier = Modifier.size(12.dp))
+                            EyebrowText(if (pb.session.paused) "Paused" else "Now playing", C.accent)
+                        }
+                        headline(item.displayTitle)
+                        Text(episodeLine(item), style = body(14.sp, 500, 20f / 14f), color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    headline(item.displayTitle)
-                    Text(episodeLine(item), style = body(14.sp, 500, 20f / 14f), color = C.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.weight(1f))
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     val now = rememberNow(1000)
                     val pos = pb.positionTicks(now)
                     ProgressBar(if (item.runTicks > 0) pos.toFloat() / item.runTicks else 0f, height = 6.dp)
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(fmtTicks(pos), style = body(14.sp, 600, 20f / 14f).copy(fontFeatureSettings = "tnum"), color = C.muted)
                         Text("${(item.runTicks - pos).coerceAtLeast(0) / JfItem.TICKS_PER_MIN} min left", style = body(14.sp, 600, 20f / 14f), color = C.muted)
@@ -664,11 +702,13 @@ private fun TabletNodeCard(v: NodeView, poster: ((JfItem) -> String?)?, modifier
                 val together = session!!
                 val frac = if (together.durMs > 0) app.master.sync.expectedPos().toFloat() / together.durMs else 0f
                 Artwork(together.art, together.title, Modifier.size(80.dp, 120.dp), radius = 12.dp, showTitle = false)
-                Column(Modifier.weight(1f).heightIn(min = 120.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    EyebrowText("Watching together", C.accent)
-                    headline(together.title)
+                Column(Modifier.weight(1f).heightIn(min = 120.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        EyebrowText("Watching together", C.accent)
+                        headline(together.title)
+                    }
                     Spacer(Modifier.weight(1f))
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     ProgressBar(frac, height = 6.dp)
                 }
             }
