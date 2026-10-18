@@ -113,6 +113,8 @@ fun CamTile(
     prefs: CamPrefs,
     live: Boolean = true,
     compact: Boolean = false,
+    /** A short regular tile (not a spotlight thumbnail) still gets the pencil when its RTSP camera has failed, because the words tell the parent to tap it. */
+    editWhenShort: Boolean = false,
     leaving: Boolean = false,
     retryInMs: Long? = null,
     minutes: Int = prefs.maxMin,
@@ -133,13 +135,14 @@ fun CamTile(
     var news by remember(source.id, live) { mutableStateOf(if (live) RtspNews.CONNECTING else preset ?: RtspNews.CONNECTING) }
     // Looking and Moved are the screen's own words about this camera and win over what the player last said.
     val shown = if (preset == RtspNews.LOOKING || preset == RtspNews.MOVED) preset else news
+    val shortEdit = compact && editWhenShort && tablet == null && !leaving && shown.isFailure()
     val picture = if (tablet != null) (frame != null && display.showsVideo) || (leaving && last[0] != null) else shown == RtspNews.LIVE
 
     val phone = LocalPhone.current
     // Tablet parent tiles: radius 16, overlay controls 48 inset 8 with 4 between, passive labels 28 high at 14sp.
     val tab = LocalParentTablet.current
     Box(Modifier.fillMaxSize().clip(RoundedCornerShape(if (phone) 20.dp else if (tab) 16.dp else 22.dp)).background(C.surface2).tap(onTap).clipToBounds()) {
-        Placeholder(source, display, shown, preset != null || live, compact, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
+        Placeholder(source, display, shown, preset != null || live, compact, shortEdit, live, retryInMs, minutes, onAction, Modifier.align(Alignment.Center))
 
         if (tablet != null) {
             AnimatedVisibility(visible = picture, enter = fadeIn(tween(prefs.fadeMs)), exit = fadeOut(tween(prefs.fadeMs))) {
@@ -174,6 +177,8 @@ fun CamTile(
             }
         }
 
+        if (shortEdit) Box(Modifier.align(Alignment.TopEnd).padding(if (tab) 8.dp else 12.dp)) { SmallIcon(Lucide.Pencil, onEdit) }
+
         if (!compact && !leaving) {
             if (tab) {
                 // One row of 48 targets with 4 between; it wraps to a second row only if the tile is too narrow, never smaller targets.
@@ -207,6 +212,7 @@ private fun Placeholder(
     news: RtspNews,
     words: Boolean,
     compact: Boolean,
+    clearOfEdit: Boolean,
     live: Boolean,
     retryInMs: Long?,
     minutes: Int,
@@ -219,7 +225,7 @@ private fun Placeholder(
     val actionable = tablet != null && !compact && display in setOf(TileDisplay.UPDATE_NEEDED, TileDisplay.AUTO_OFF, TileDisplay.TOO_HOT)
     Column(
         // A strip tile is short: keep clear of the name label along its bottom edge.
-        modifier.padding(start = 16.dp, end = 16.dp, top = if (compact) 8.dp else 16.dp, bottom = if (compact) 44.dp else 16.dp).widthIn(max = 360.dp)
+        modifier.padding(start = 16.dp, end = 16.dp, top = if (clearOfEdit) 60.dp else if (compact) 8.dp else 16.dp, bottom = if (compact) 44.dp else 16.dp).widthIn(max = 360.dp)
             .then(if (tab && actionable) Modifier.verticalScroll(rememberScrollState()) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp),
     ) {

@@ -139,7 +139,10 @@ private fun TabletTalkBar(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean
             Text(bar.line, style = body(14.sp, 500, 20f / 14), color = C.muted, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp))
         } else Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             button(Modifier)
-            Text(bar.line, style = body(14.sp, 500, 20f / 14), color = C.muted, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            // A 40dp slot (two lines fit) keeps one line centred beside the button.
+            Box(Modifier.weight(1f).heightIn(min = 40.dp), contentAlignment = Alignment.CenterStart) {
+                Text(bar.line, style = body(14.sp, 500, 20f / 14), color = C.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

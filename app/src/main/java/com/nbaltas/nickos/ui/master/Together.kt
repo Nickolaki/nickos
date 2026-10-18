@@ -1229,14 +1229,7 @@ fun TabletRemote(nodeId: String) {
 @Composable
 private fun SkipButtonWatch(back: Boolean, secs: Int = 10, onClick: () -> Unit) {
     if (LocalParentTablet.current) {
-        // A real 48dp circle, 22dp glyph; the seconds stay 12sp whatever the system font.
-        Box(
-            Modifier.size(TabletParentMetrics.minTarget).clip(androidx.compose.foundation.shape.CircleShape).background(C.surface2).clickable(role = Role.Button, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(22.dp))
-            Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text, modifier = Modifier.padding(top = 2.dp))
-        }
+        TabletSkip(back, secs, onClick)
         return
     }
     Box(

@@ -377,7 +377,8 @@ fun CamerasScreen(
 
     // Tablet parent chrome (JOB-0061 §2.7): 80 header, the page gutter, the mode control beside Add or, when it cannot fit, in its own row.
     val widthDp = LocalConfiguration.current.screenWidthDp
-    val chromeGutter = if (parentPhone) 16.dp else tabletGutter(widthDp.toFloat()).dp
+    // The same 24dp edge as the stage, and the same centred 1536 inner bounds above that width, so chrome and tiles line up.
+    val chromeGutter = if (parentPhone) 16.dp else (24 + maxOf(0, (widthDp - 48 - 1536) / 2)).dp
     val modeInHeader = widthDp >= 960 && LocalDensity.current.fontScale < 1.5f
     val modeItems = listOf("Auto" to null, "Grid" to null, "Spotlight" to null)
     Box(Modifier.fillMaxSize()) {
@@ -504,7 +505,7 @@ fun CamerasScreen(
                                     // connection per camera, as before. The other tiles stay connected behind the
                                     // full screen view (simpler, and the small extra cost is theirs to keep).
                                     is RtspSource -> CamTile(
-                                        src, TileDisplay.LIVE, null, src.camera.rotation, prefs, live = live && full != id, compact = compact, leaving = leaving,
+                                        src, TileDisplay.LIVE, null, src.camera.rotation, prefs, live = live && full != id, compact = compact, editWhenShort = !(big >= 0 && i != big), leaving = leaving,
                                         onTap = onTap, onMaximize = { full = id }, onEdit = { openEditor(src.camera) },
                                         preset = says[src.camera.id] ?: rtspPreset[src.camera.id],
                                         onNews = { n -> onRtspNews(src.camera, n) },
@@ -687,7 +688,7 @@ private fun TabletTile(
     // The tablet's "try again at" is on its own clock; retryAtLocal has already moved it onto this one.
     val retryIn = if (display == TileDisplay.TOO_HOT) cam?.retryAtLocal?.let { it - now } else null
     CamTile(
-        src, display, frame, rotation, prefs, live, compact, leaving, retryIn, cam?.minutes ?: prefs.maxMin,
+        src, display, frame, rotation, prefs, live, compact, leaving = leaving, retryInMs = retryIn, minutes = cam?.minutes ?: prefs.maxMin,
         onTap = onTap, onMaximize = onMaximize, onEdit = onRotate, onAction = onAction, talk = talk,
     )
 }

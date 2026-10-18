@@ -764,7 +764,7 @@ fun Chip(modifier: Modifier = Modifier, height: Dp = 44.dp, bg: Color = C.surfac
     if (LocalParentTablet.current) {
         // Tablet parent: a clickable chip is at least 48 high with 14 side padding; a small passive badge (height under 40) keeps its own height.
         Row(
-            modifier.heightIn(min = if (height >= 40.dp) TabletParentMetrics.minTarget else height).clip(RoundedCornerShape(50)).background(bg)
+            modifier.heightIn(min = if (height >= 40.dp) maxOf(height, TabletParentMetrics.minTarget) else height).clip(RoundedCornerShape(50)).background(bg)
                 .padding(if (padding == PaddingValues(horizontal = 18.dp)) PaddingValues(horizontal = 14.dp) else padding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

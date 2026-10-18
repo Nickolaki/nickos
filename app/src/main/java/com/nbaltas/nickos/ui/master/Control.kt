@@ -140,6 +140,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -662,10 +663,29 @@ private fun PhoneNowPlaying(
 }
 
 @Composable
-private fun TabletSkip(back: Boolean, secs: Int, onClick: () -> Unit) {
+internal fun TabletSkip(back: Boolean, secs: Int, onClick: () -> Unit) {
     Box(Modifier.size(TabletParentMetrics.minTarget).clip(CircleShape).background(C.surface2).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(22.dp))
-        Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text, modifier = Modifier.padding(top = 2.dp))
+        // A 36dp open ring with an arrowhead leaves the middle clear, so the scaled seconds never overprint the arrow.
+        val tint = C.text
+        val label = if (back) "Back $secs seconds" else "Forward $secs seconds"
+        androidx.compose.foundation.Canvas(Modifier.size(36.dp).semantics { contentDescription = label }) {
+            val w = 2.dp.toPx()
+            val r = (size.minDimension - w) / 2
+            val cap = androidx.compose.ui.graphics.StrokeCap.Round
+            // Drawn clockwise for Forward and mirrored for Back: 300 degrees from just right of the top round to the upper left.
+            scale(if (back) -1f else 1f, 1f, pivot = center) {
+                drawArc(tint, startAngle = -80f, sweepAngle = 300f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(center.x - r, center.y - r), size = androidx.compose.ui.geometry.Size(2 * r, 2 * r), style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = cap))
+                val end = Math.toRadians(220.0)
+                val tip = androidx.compose.ui.geometry.Offset(center.x + r * Math.cos(end).toFloat(), center.y + r * Math.sin(end).toFloat())
+                val back0 = Math.atan2(-Math.cos(end), Math.sin(end)) // direction pointing back along the arc
+                val h = 6.dp.toPx()
+                for (d in listOf(-0.6, 0.6)) {
+                    val a = back0 + d
+                    drawLine(tint, tip, androidx.compose.ui.geometry.Offset(tip.x + h * Math.cos(a).toFloat(), tip.y + h * Math.sin(a).toFloat()), w, cap)
+                }
+            }
+        }
+        Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text)
     }
 }
 
