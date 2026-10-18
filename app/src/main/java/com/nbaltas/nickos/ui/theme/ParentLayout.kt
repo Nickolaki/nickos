@@ -113,9 +113,20 @@ private val dispTable = sortedMapOf(
     72 to 48, 88 to 48, 104 to 48,
 )
 
-/** The table row at [requested], exactly. An unsupported size is a bug in the caller: it throws in tests and debug builds; add the real size as an explicit row. */
-private fun <V> java.util.SortedMap<Int, V>.lookup(requested: Int, what: String): V? =
-    this[requested].also { check(it != null || !com.nbaltas.nickos.BuildConfig.DEBUG) { "No tablet $what mapping for ${requested}sp: add a row to ParentLayout" } }
+/** Tests set this so an unsupported size fails loudly. Builds never crash on a missing row. */
+@androidx.annotation.VisibleForTesting
+var strictSizes = false
+
+private val warnedSizes = mutableSetOf<String>()
+
+/** The table row at [requested]. An unsupported size is a bug in the caller: it throws when [strictSizes] is set; otherwise it uses the nearest lower row (or the lowest) and logs once. */
+private fun <V> java.util.SortedMap<Int, V>.lookup(requested: Int, what: String): V? {
+    this[requested]?.let { return it }
+    check(!strictSizes) { "No tablet $what mapping for ${requested}sp: add a row to ParentLayout" }
+    if (warnedSizes.add("$what$requested")) android.util.Log.w("ParentLayout", "No tablet $what mapping for ${requested}sp; using the nearest lower row")
+    val lower = headMap(requested)
+    return if (lower.isEmpty()) get(firstKey()) else lower[lower.lastKey()]
+}
 
 /** Tablet parent type mapping for [Title] (spec §1.2): requested sp in, final sp out. Exact rows only. */
 fun tabletTitleSize(requested: Int): Int = titleTable.lookup(requested, "title") ?: requested

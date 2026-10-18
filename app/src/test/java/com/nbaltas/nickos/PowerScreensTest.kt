@@ -3,7 +3,6 @@ package com.nbaltas.nickos
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
@@ -18,6 +17,7 @@ import com.nbaltas.nickos.ui.master.BatteryBody
 import com.nbaltas.nickos.ui.master.SettingsScreen
 import com.nbaltas.nickos.ui.theme.C
 import com.nbaltas.nickos.ui.theme.NickTheme
+import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,10 +32,12 @@ import org.robolectric.annotation.GraphicsMode
 class PowerScreensTest {
     @get:Rule val rule = createComposeRule()
 
+    init { com.nbaltas.nickos.ui.theme.strictSizes = true }
+
     private val options = RoborazziOptions(compareOptions = RoborazziOptions.CompareOptions(changeThreshold = 0.0005f))
 
     @Test fun settingsCard() {
-        rule.setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { SettingsScreen(0, {}, {}, {}) } } }
+        rule.setContent { NickTheme { ParentLayoutProvider { Box(Modifier.fillMaxSize().background(C.bg)) { SettingsScreen(0, {}, {}, {}) } } } }
         rule.waitForIdle()
         rule.onNodeWithText("Wake the screen when plugged in").assertExists()
         rule.onRoot().captureRoboImage("../design/screens/Master-Settings-Power.png", roborazziOptions = options)
@@ -44,9 +46,12 @@ class PowerScreensTest {
     @Test fun controlCard() {
         rule.setContent {
             NickTheme {
-                Box(Modifier.fillMaxSize().background(C.bg).padding(24.dp)) {
-                    Box(Modifier.width(400.dp).height(217.dp).background(C.surface).padding(20.dp)) {
-                        BatteryBody(62, false, NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION)) { _, _ -> }
+                ParentLayoutProvider {
+                    Box(Modifier.fillMaxSize().background(C.bg).padding(24.dp)) {
+                        // A content-height card: it grows with the choices and the permission line.
+                        Box(Modifier.width(400.dp).background(C.surface).padding(20.dp)) {
+                            BatteryBody(62, false, NetMessages.PowerStatus(true, 5, NetMessages.STATE_NO_PERMISSION)) { _, _ -> }
+                        }
                     }
                 }
             }
@@ -57,7 +62,7 @@ class PowerScreensTest {
     }
 
     @Test fun oldNodeHidesTheControls() {
-        rule.setContent { NickTheme { BatteryBody(62, false, null) { _, _ -> } } }
+        rule.setContent { NickTheme { ParentLayoutProvider { BatteryBody(62, false, null) { _, _ -> } } } }
         rule.waitForIdle()
         rule.onNodeWithText("Wake the screen when plugged in").assertDoesNotExist()
     }

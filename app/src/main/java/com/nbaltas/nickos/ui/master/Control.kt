@@ -2,6 +2,7 @@ package com.nbaltas.nickos.ui.master
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import com.nbaltas.nickos.master.Reason
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -526,7 +527,7 @@ private fun TabletNowPlaying(
                     TabletSkip(false, fwdSecs) { m.control(v.node.id, "Seek", (pos + fwdSecs * JfItem.TICKS_PER_SEC).coerceAtMost(item.runTicks)) }
                 }
                 @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     next?.let { n -> NickButton("Next episode", { m.playOn(v.node.id, n.id, 0, n.displayTitle) }, leading = Solid.Next) }
                     NickButton("Stop", { m.control(v.node.id, "Stop") }, leading = Solid.Stop)
                 }
@@ -664,8 +665,7 @@ private fun PhoneNowPlaying(
 private fun TabletSkip(back: Boolean, secs: Int, onClick: () -> Unit) {
     Box(Modifier.size(TabletParentMetrics.minTarget).clip(CircleShape).background(C.surface2).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(22.dp))
-        // The seconds are a glyph inside a fixed circle: they keep 12sp when the system font grows.
-        Text("$secs", style = body((12f / LocalDensity.current.fontScale).sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
+        Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
@@ -732,8 +732,9 @@ private fun SliderCard(icon: ImageVector, label: String, value: Int, big: Boolea
         if (unavailable != null) {
             Text(unavailable, style = body(14.sp, 500, 20f / 14), color = C.muted)
             if (askedLine != null) Text(askedLine, style = body(14.sp, 700, 20f / 14), color = C.accent)
+            if (onAsk != null) StartButton(Lucide.Settings, "Ask for permission", height = TabletParentMetrics.minTarget, onClick = onAsk)
         } else {
-            if (big) Text("${(shown * 100).roundToInt()}%", style = disp(40.sp, 800, 1.15f).copy(fontFeatureSettings = "tnum"), color = C.text)
+            if (big) Text("${(shown * 100).roundToInt()}%", style = disp(40.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = C.text)
             NickSlider(shown, onChange = { dragging = it }, onCommit = { dragging = null; onCommit((it * 100).roundToInt()) })
         }
     }
@@ -894,7 +895,18 @@ private fun OfflineBody(v: NodeView, onAll: () -> Unit, phoneScroll: ScrollState
             )
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 tips.forEach { (icon, text) ->
-                    Tip(when (icon) { TipIcon.WIFI_OFF -> Lucide.WifiOff; TipIcon.WIFI -> Lucide.Wifi; TipIcon.POWER -> Lucide.Power }, text)
+                    val glyph = when (icon) { TipIcon.WIFI_OFF -> Lucide.WifiOff; TipIcon.WIFI -> Lucide.Wifi; TipIcon.POWER -> Lucide.Power }
+                    if (reason is Reason.CarNetDown) {
+                        // The same compact warning card as the Home banner: min 48, radius 12, padding 12, 14/20 text.
+                        val warnShape = RoundedCornerShape(TabletParentMetrics.nestedRadius)
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(warnShape).background(C.surface).border(1.dp, C.dangerLine, warnShape).padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(glyph, null, tint = C.danger, modifier = Modifier.size(TabletParentMetrics.iconSize))
+                            Text(text, style = body(14.sp, 700, 20f / 14), color = C.text, modifier = Modifier.weight(1f))
+                        }
+                    } else Tip(glyph, text)
                 }
             }
             NickButton("Try again", { m.reconnect(v.node.id) }, Modifier.fillMaxWidth(), style = BtnStyle.PRIMARY, leading = Lucide.RefreshCw)
@@ -1281,19 +1293,22 @@ private fun DeviceTab(v: NodeView, onUnlinked: () -> Unit, scroll: ScrollState? 
             ) { cards.forEach { it(Modifier.fillMaxWidth()) } }
             return@BoxWithConstraints
         }
-        // Tablet: equal columns at the content cap, 16 gaps; a row is as tall as its tallest card (at least 248), so no card
-        // has a fixed height and no copy is cut. Reading order is the card order, row by row.
+        // Tablet: masonry. One scrolling page holding equal-width independent columns (16 apart, 16 between cards), each card as tall as
+        // its own content: no row minimum, no stretching. Cards are Screen 0, Bedtime 1, Battery 2, Volume 3, Brightness 4, Tablet 5.
+        val columns: List<List<Int>> = when (cols) {
+            3 -> listOf(listOf(0, 3), listOf(1, 4), listOf(2, 5))
+            2 -> listOf(listOf(0, 2, 4), listOf(1, 3, 5))
+            else -> listOf(listOf(0, 1, 2, 3, 4, 5))
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(scroll ?: ownScroll).padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            cards.chunked(cols).forEach { row ->
-                Row(
-                    Modifier.width(contentI.dp).heightIn(min = 248.dp).height(IntrinsicSize.Min),
-                    horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap),
-                ) {
-                    row.forEach { it(Modifier.weight(1f).fillMaxHeight()) }
-                    repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
+            Row(Modifier.width(contentI.dp), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                columns.forEach { idx ->
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.cardGap)) {
+                        idx.forEach { cards[it](Modifier.fillMaxWidth()) }
+                    }
                 }
             }
         }
@@ -1346,7 +1361,7 @@ internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.Pow
         val status = if (charging) "Charging" else "Not charging"
         if (power == null) {
             Column {
-                Text("$battery%", style = disp(48.sp, 800, 1.15f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
+                Text("$battery%", style = disp(48.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
                 Spacer(Modifier.height(12.dp))
                 ProgressBar(battery / 100f, height = 6.dp, fill = track)
                 Spacer(Modifier.height(8.dp))
@@ -1354,7 +1369,7 @@ internal fun BatteryBody(battery: Int, charging: Boolean, power: NetMessages.Pow
             }
         } else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("$battery%", style = disp(36.sp, 800, 1.15f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
+                Text("$battery%", style = disp(36.sp, 800, 1f).copy(fontFeatureSettings = "tnum"), color = if (low) C.danger else C.text)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ProgressBar(battery / 100f, height = 6.dp, fill = track)
                     Text(status, style = body(14.sp, 600, 20f / 14), color = C.muted)

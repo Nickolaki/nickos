@@ -119,6 +119,8 @@ import org.robolectric.annotation.GraphicsMode
 class DesignScreensTest {
     private val app get() = ApplicationProvider.getApplicationContext<App>()
 
+    init { com.nbaltas.nickos.ui.theme.strictSizes = true }
+
     companion object {
         /** Mon 12 Oct 2026, 12:00 in Sydney (AEDT, UTC+11). */
         val FIXED_NOW: Long = java.time.ZonedDateTime.of(2026, 10, 12, 12, 0, 0, 0, java.time.ZoneId.of("Australia/Sydney")).toInstant().toEpochMilli()
@@ -418,6 +420,7 @@ class DesignScreensTest {
     @Config(qualifiers = "w800dp-h1280dp-port-mdpi")
     @Test fun masterHomePortrait() = shot("Master-Home-Portrait") { MasterHome({}, {}, {}, {}, {}, {}, {}) }
     @Test fun controlNowPlaying() = shot("Control-NowPlaying") { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
+    @Test fun controlNowPlayingFont150() = tabletFont("Control-NowPlaying-font150", 1.5f) { ControlScreen("aaaaaaaaaaaa", TAB_NOW, {}, {}, {}) }
     @Test fun controlNothingPlaying() = shot("Control-NothingPlaying") { ControlScreen("bbbbbbbbbbbb", TAB_NOW, {}, {}, {}) }
     @Test fun controlOffline() = shot("Control-Offline") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
     @Test fun controlApps() = shot("Control-Apps") { ControlScreen("aaaaaaaaaaaa", TAB_APPS, {}, {}, {}) }
@@ -512,13 +515,24 @@ class DesignScreensTest {
         shot("Cameras-Pair") { CamerasScreen({}, {}, live = false) }
     }
 
-    @Test fun camerasGrid() {
+    private fun seedCamerasGrid() {
         seedCams()
         cams(setOf(CH, CL, CM), mapOf(CH to camLive(), CL to camLive(NodeCam.LEVEL_HOT), CM to NodeCam(NodeCam.WARMING, port = 47472, key = "k", receivedAt = camNow())))
         camPicture(CH, camBlue.first, camBlue.second)
         camPicture(CL, camGreen.first, camGreen.second)
         camRtsp("front", "Front door")
+    }
+
+    @Test fun camerasGrid() {
+        seedCamerasGrid()
         shot("Cameras-Grid") { CamerasScreen({}, {}, live = false) }
+    }
+
+    /** The same four feeds at 960x600 (JOB-0061): the mode control moves to its own row, the stage gutter is 24 and the gap 16. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasGrid960() {
+        seedCamerasGrid()
+        shot("Cameras-Grid-960x600") { CamerasScreen({}, {}, live = false) }
     }
 
     @Test fun camerasSpotlight() {
@@ -1073,7 +1087,7 @@ class DesignScreensTest {
     }
 
     @Test fun controlOfflineNoDetails() {
-        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", lastSeen = FIXED_NOW - 12 * 60_000, lastBattery = 23, wifiSaved = false))
+        app.store.upsertNode(LinkedNode("cccccccccccc", "Mia's Tablet", 5, "initial", "t", wifiSaved = false))
         shot("Control-Offline-NoDetails") { ControlScreen("cccccccccccc", TAB_NOW, {}, {}, {}) }
     }
 
@@ -1383,6 +1397,15 @@ class DesignScreensTest {
 
     @Config(qualifiers = "w960dp-h600dp-land-mdpi")
     @Test fun camerasAdd960() = camerasAdd()
+
+    /** The editor at 960x600 with the system font at 1.5: the body scrolls, Cancel and Save stay reachable under it. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasAdd960Font150() {
+        seedCams()
+        tabletFont("Cameras-Add-960x600-font150", 1.5f) {
+            CamerasScreen({}, {}, live = false, startEditor = Camera(com.nbaltas.nickos.data.Store.randomHex(6), ""), foundPreset = listOf("192.168.49.23"))
+        }
+    }
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun camerasAdd1024() = camerasAdd()
 

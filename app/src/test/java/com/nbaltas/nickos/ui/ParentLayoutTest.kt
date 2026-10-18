@@ -13,6 +13,7 @@ import com.nbaltas.nickos.ui.theme.ParentLayoutProvider
 import com.nbaltas.nickos.ui.theme.homeCardMinHeight
 import com.nbaltas.nickos.ui.theme.homeColumns
 import com.nbaltas.nickos.ui.theme.isPhoneWidth
+import com.nbaltas.nickos.ui.theme.strictSizes
 import com.nbaltas.nickos.ui.theme.tabletBodySize
 import com.nbaltas.nickos.ui.theme.tabletContentWidth
 import com.nbaltas.nickos.ui.theme.tabletDispSize
@@ -106,7 +107,20 @@ class ParentLayoutTest {
             40 to 28, 44 to 30, 46 to 30, 48 to 32, 52 to 32, 56 to 34, 64 to 36, 72 to 36,
         )
         spec.forEach { (requested, out) -> assertEquals("Title $requested", out, tabletTitleSize(requested)) }
-        assertThrows(IllegalStateException::class.java) { tabletTitleSize(29) }
+        val was = strictSizes
+        strictSizes = true
+        try {
+            assertThrows(IllegalStateException::class.java) { tabletTitleSize(29) }
+        } finally { strictSizes = was }
+    }
+
+    @Test fun unsupportedSizeFallsBackToTheNearestLowerRowOutsideStrictMode() {
+        val was = strictSizes
+        strictSizes = false
+        try {
+            assertEquals(tabletTitleSize(28), tabletTitleSize(29))
+            assertEquals(tabletTitleSize(18), tabletTitleSize(10))
+        } finally { strictSizes = was }
     }
 
     @Test fun tabletMutedAndBodyTablesMatchTheSpec() {

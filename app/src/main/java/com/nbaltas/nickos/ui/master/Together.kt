@@ -1235,7 +1235,7 @@ private fun SkipButtonWatch(back: Boolean, secs: Int = 10, onClick: () -> Unit) 
             contentAlignment = Alignment.Center,
         ) {
             Icon(if (back) Lucide.RotateCcw else Lucide.RotateCw, if (back) "Back $secs seconds" else "Forward $secs seconds", tint = C.text, modifier = Modifier.size(22.dp))
-            Text("$secs", style = body((12f / LocalDensity.current.fontScale).sp, 800), color = C.text, modifier = Modifier.padding(top = 2.dp))
+            Text("$secs", style = body(12.sp, 800, 14f / 12).copy(fontFeatureSettings = "tnum"), color = C.text, modifier = Modifier.padding(top = 2.dp))
         }
         return
     }
@@ -1579,7 +1579,7 @@ private fun TabletRemoteMain(
             SkipButtonWatch(back = false) { sync.skip(10_000) }
         }
         @OptIn(ExperimentalLayoutApi::class)
-        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (showNext) NickButton("Next episode", { sync.playNext() }, style = BtnStyle.SECONDARY, leading = Solid.Next, enabled = nextEnabled)
             NickButton(stopLabel, { sync.stop() }, style = BtnStyle.SECONDARY, leading = Solid.Stop)
         }

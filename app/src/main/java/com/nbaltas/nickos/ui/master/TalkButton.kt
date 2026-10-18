@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
 import com.nbaltas.nickos.ui.theme.LocalPhone
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,6 +92,7 @@ private fun Modifier.holdToTalk(label: String, talking: Boolean, onPress: () -> 
 @Composable
 fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     if (LocalPhone.current) { PhoneTalkBar(bar, onPress, onRelease, modifier); return }
+    if (LocalParentTablet.current) { TabletTalkBar(bar, onPress, onRelease, modifier); return }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
             Modifier.height(52.dp).clip(RoundedCornerShape(26.dp))
@@ -101,6 +106,41 @@ fun TalkBarRow(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, 
             Text(bar.button, style = body(17.sp, 700), color = if (bar.talking) C.onAccent else C.text, maxLines = 1)
         }
         Muted(bar.line, 16, Modifier, maxLines = 2)
+    }
+}
+
+/**
+ * Tablet parent: the bar is at least 64 high; the hold button is 52 (radius 14, 20 glyph, 16 label) and only its colours animate (120ms).
+ * The helper is 14/20 beside the button. When the stage is under 720 wide or the font is at 1.5 or more the helper goes under the button
+ * with 8 between, in a slot that is at least 40 high in every state, so the camera feeds below never move.
+ */
+@Composable
+private fun TabletTalkBar(bar: TalkBar, onPress: () -> Unit, onRelease: (Boolean) -> Unit, modifier: Modifier) {
+    val bg by animateColorAsState(if (bar.talking) C.accent else C.surface2, tween(120), label = "talkBg")
+    val fg by animateColorAsState(if (bar.talking) C.onAccent else C.text, tween(120), label = "talkFg")
+    val stackedByFont = LocalDensity.current.fontScale >= 1.5f
+    BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = 64.dp)) {
+        val stacked = maxWidth < 720.dp || stackedByFont
+        val button: @Composable (Modifier) -> Unit = { m ->
+            Row(
+                m.heightIn(min = 52.dp).clip(RoundedCornerShape(14.dp))
+                    .background(bg)
+                    .alpha(if (bar.enabled || bar.talking) 1f else 0.5f)
+                    .holdToTalk(bar.button, bar.talking, onPress, onRelease)
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            ) {
+                Icon(Lucide.Mic, null, tint = fg, modifier = Modifier.size(20.dp))
+                Text(bar.button, style = body(16.sp, 700, 1.25f), color = fg, maxLines = 1)
+            }
+        }
+        if (stacked) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            button(Modifier.fillMaxWidth())
+            Text(bar.line, style = body(14.sp, 500, 20f / 14), color = C.muted, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp))
+        } else Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            button(Modifier)
+            Text(bar.line, style = body(14.sp, 500, 20f / 14), color = C.muted, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
     }
 }
 

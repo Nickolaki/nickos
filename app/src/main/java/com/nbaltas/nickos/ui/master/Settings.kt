@@ -315,15 +315,19 @@ private fun TabletsSection(onAdd: () -> Unit) {
                 owner.lifecycle.addObserver(obs)
                 onDispose { owner.lifecycle.removeObserver(obs) }
             }
-            PowerControls(wake, offMin, if (offMin > 0 && !canWrite) PowerPolicy.NEEDS_PERMISSION else null, { w, m ->
-                // Only picking a time opens the permission page, never the wake switch.
-                if (m > 0 && m != offMin && !canWrite) {
-                    try {
-                        ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } catch (_: Exception) {}
-                }
-                app.master.setOwnPower(w, m)
-            })
+            val power: @Composable (Float) -> Unit = { innerWidth ->
+                PowerControls(wake, offMin, if (offMin > 0 && !canWrite) PowerPolicy.NEEDS_PERMISSION else null, { w, m ->
+                    // Only picking a time opens the permission page, never the wake switch.
+                    if (m > 0 && m != offMin && !canWrite) {
+                        try {
+                            ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) {}
+                    }
+                    app.master.setOwnPower(w, m)
+                }, innerWidthDp = innerWidth)
+            }
+            // The tablet card measures its inner width (after the card padding) so the time choices can go six across; the phone keeps its own layout.
+            if (phone) power(0f) else BoxWithConstraints(Modifier.fillMaxWidth()) { power(maxWidth.value) }
         }
         CarNetCard()
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -8,7 +8,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.nbaltas.nickos.ui.theme.LocalParentTablet
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -86,6 +90,18 @@ fun ScreenTab(v: NodeView) {
 
 @Composable
 internal fun ScreenStart(problem: String?, button: String?, onWatch: (() -> Unit)?) {
+    if (LocalParentTablet.current) {
+        // Tablet parent: one centred group of at most 560 (title 24, helper 15/22, a 52 action) that scrolls when the window is short.
+        Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Screen", style = disp(24.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center)
+                Text(problem ?: "See what this tablet shows right now, and tap or swipe it if you turned that on.", style = body(15.sp, 500, 22f / 15), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                if (button != null && onWatch != null) NickButton(button, onWatch, style = BtnStyle.PRIMARY, leading = Lucide.Monitor)
+                if (problem == null) Text(SCREEN_SECOND_PARENT, style = body(14.sp, 500, 20f / 14), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            }
+        }
+        return
+    }
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Title("Screen", 32, maxLines = 1)
@@ -119,6 +135,7 @@ internal fun ScreenViewer(
     onLockNow: (() -> Unit)? = null,
 ) {
     val phone = LocalPhone.current
+    val tab = LocalParentTablet.current
     Column(Modifier.fillMaxSize().background(Color.Black).then(if (phone) Modifier.navigationBarsPadding() else Modifier)) {
         if (phone && control && LocalDensity.current.fontScale >= 1.5f) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Large font: three labels cannot share one row without breaking words, so Stop gets its own row.
@@ -134,6 +151,17 @@ internal fun ScreenViewer(
                 NickButton("Back", onBack, Modifier.weight(1f).heightIn(min = 48.dp), leading = Lucide.ArrowLeft)
                 NickButton("Home", onHome, Modifier.weight(1f).heightIn(min = 48.dp), leading = Lucide.House)
             }
+        } else if (tab) Row(
+            // Tablet: a toolbar of at least 64 (8 above and below, 16 at the sides) with 48 targets (16sp labels, 20 glyphs).
+            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            NickButton("Stop", onStop, style = BtnStyle.DANGER)
+            Box(Modifier.weight(1f))
+            if (control) {
+                NickButton("Back", onBack, leading = Lucide.ArrowLeft)
+                NickButton("Home", onHome, leading = Lucide.House)
+            }
         } else Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             NickButton("Stop", onStop, style = BtnStyle.DANGER)
             Box(Modifier.weight(1f))
@@ -144,13 +172,15 @@ internal fun ScreenViewer(
         }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val shown = frame
+            // Phone and tablet parents share the centred no-picture group; only its sizes differ.
+            val states = phone || tab
             when {
                 shown != null && !lost -> Picture(shown, control, onTap, onSwipe)
-                phone && lost -> ViewerState(nodeName ?: "Screen", "The picture stopped. Watch again to carry on.", "Watch again", onWatchAgain)
-                phone && state == RemoteMessages.NEEDS_PERMISSION -> ViewerState("Screen sharing", SCREEN_NEEDS_PERMISSION)
-                phone && (state == RemoteMessages.NEEDS_CONSENT || state == RemoteMessages.OFF && frame == null) ->
+                states && lost -> ViewerState(nodeName ?: "Screen", "The picture stopped. Watch again to carry on.", "Watch again", onWatchAgain)
+                states && state == RemoteMessages.NEEDS_PERMISSION -> ViewerState("Screen sharing", SCREEN_NEEDS_PERMISSION)
+                states && (state == RemoteMessages.NEEDS_CONSENT || state == RemoteMessages.OFF && frame == null) ->
                     ViewerState("Screen sharing", if (nodeName != null) "Screen: tap Allow on $nodeName" else SCREEN_NEEDS_CONSENT)
-                phone -> ViewerState(nodeName ?: "Screen", "Connecting")
+                states -> ViewerState(nodeName ?: "Screen", "Connecting")
                 lost -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Muted("The picture stopped.", 20)
                     NickButton("Watch again", onWatchAgain, style = BtnStyle.PRIMARY)
@@ -162,7 +192,12 @@ internal fun ScreenViewer(
             }
         }
         // Two separate things: the picture (screen sharing allowed on the tablet) and touch (the accessibility switch).
-        if (maintenance) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (tab && maintenance) StatusStrip("Settings open on ${nodeName ?: "the tablet"}", if (onLockNow != null) "Lock now" else null, true, onLockNow ?: {})
+        else if (tab && !control) StatusStrip(
+            if (nodeName != null) "Touch control: off. $SCREEN_VIEW_ONLY" else SCREEN_VIEW_ONLY,
+            if (onOpenSetting != null) openSettingLabel ?: "Open setting" else null, false, onOpenSetting ?: {},
+        )
+        else if (maintenance) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Muted("Settings open on ${nodeName ?: "the tablet"}", 14, Modifier.weight(1f), maxLines = 2)
             if (onLockNow != null) NickButton("Lock now", onLockNow, style = BtnStyle.DANGER)
         } else if (!control && phone) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -176,9 +211,23 @@ internal fun ScreenViewer(
     }
 }
 
-/** Phone: the viewer's no-picture states as one centred group, title 20, the full body at 16 and a 52dp action. */
+/**
+ * The viewer's no-picture states as one centred group. Phone: title 20, the full body at 16 and a 52dp action. Tablet parent: at most 560
+ * wide, title 24, body 16/23 and the 52dp action; the group scrolls if the window is shorter than it.
+ */
 @Composable
 private fun ViewerState(title: String, message: String, action: String? = null, onAction: () -> Unit = {}) {
+    if (LocalParentTablet.current) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        ) {
+            Text(title, style = disp(24.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+            Text(message, style = body(16.sp, 500, 23f / 16), color = C.muted, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+            if (action != null) NickButton(action, onAction, Modifier.widthIn(max = 560.dp).heightIn(min = 52.dp), style = BtnStyle.PRIMARY)
+        }
+        return
+    }
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -186,6 +235,26 @@ private fun ViewerState(title: String, message: String, action: String? = null, 
         Text(title, style = disp(20.sp, 800, 1.15f), color = C.text, textAlign = TextAlign.Center)
         Text(message, style = body(16.sp, 500, 1.4f), color = C.muted, textAlign = TextAlign.Center)
         if (action != null) NickButton(action, onAction, Modifier.fillMaxWidth().heightIn(min = 52.dp), style = BtnStyle.PRIMARY)
+    }
+}
+
+/**
+ * Tablet parent: the bottom status strip, at least 48 high, text 14/20 and a 48 action. It puts the action under the text on a narrow width
+ * or a large font instead of squeezing either.
+ */
+@Composable
+private fun StatusStrip(text: String, action: String?, danger: Boolean, onAction: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        val stack = action != null && (maxWidth < 600.dp || LocalDensity.current.fontScale >= 1.5f)
+        val words: @Composable (Modifier) -> Unit = { m -> Text(text, style = body(14.sp, 500, 20f / 14), color = C.muted, modifier = m) }
+        val button: @Composable (Modifier) -> Unit = { m ->
+            if (action != null) NickButton(action, onAction, m, style = if (danger) BtnStyle.DANGER else BtnStyle.SECONDARY)
+        }
+        if (stack) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            words(Modifier.fillMaxWidth()); button(Modifier.fillMaxWidth())
+        } else Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            words(Modifier.weight(1f)); button(Modifier)
+        }
     }
 }
 
