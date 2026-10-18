@@ -932,14 +932,15 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
                 }
                 val form: @Composable (Modifier) -> Unit = { m ->
                     // The action row lives in this same column, so it ends at the fields' right edge.
-                    Column(m.widthIn(max = 520.dp).fillMaxWidth()) {
+                    // `m` carries a tight weight width, so the 520 cap goes on an inner column that gets loose constraints.
+                    Column(m) { Column(Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
                         JellyfinForm(onSaved = onDone, footer = { save, saving ->
                             FlowRow(Modifier.fillMaxWidth().padding(top = TabletParentMetrics.cardGap), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap, Alignment.End), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
                                 NickButton("Skip for now", onDone, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
                                 NickButton(if (saving) "Saving…" else "Save & finish", save, style = BtnStyle.PRIMARY, enabled = !saving)
                             }
                         })
-                    }
+                    } }
                 }
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(top = TabletParentMetrics.contentTop, bottom = TabletParentMetrics.contentBottom)) {
                     if (i >= 880.dp) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) { intro(Modifier.width(360.dp)); form(Modifier.weight(1f)) }
