@@ -925,13 +925,14 @@ internal fun JellyfinSetupScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         Box(Modifier.size(64.dp).clip(RoundedCornerShape(TabletParentMetrics.cardRadius)).background(C.surface2), contentAlignment = Alignment.Center) {
                             Icon(Lucide.Server, null, tint = C.accent, modifier = Modifier.size(32.dp))
                         }
-                        Title("Connect Jellyfin (optional, legacy)", 48)
+                        Title("Connect Jellyfin", 48)
                         Chip(height = 36.dp) { Text("Optional", style = body(14.sp, 600, 20f / 14), color = C.text) }
                         Text("Browse your family's shows and movies from here, and play them on any tablet.", style = body(16.sp, 500, 23f / 16), color = C.muted)
                     }
                 }
                 val form: @Composable (Modifier) -> Unit = { m ->
-                    Column(m.widthIn(max = 520.dp)) {
+                    // The action row lives in this same column, so it ends at the fields' right edge.
+                    Column(m.widthIn(max = 520.dp).fillMaxWidth()) {
                         JellyfinForm(onSaved = onDone, footer = { save, saving ->
                             FlowRow(Modifier.fillMaxWidth().padding(top = TabletParentMetrics.cardGap), horizontalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap, Alignment.End), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
                                 NickButton("Skip for now", onDone, Modifier.heightIn(min = TabletParentMetrics.primaryButtonHeight), style = BtnStyle.GHOST)
@@ -1014,7 +1015,7 @@ fun JellyfinForm(
     val phone = LocalPhone.current
     if (!phone && LocalParentTablet.current) {
         // Parent tablet: at most 520 wide, 52 high fields, 12 apart; username and password share a row only from 600 of inner width.
-        Column(Modifier.widthIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
+        Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
             Column { FieldLabel("Server address"); NickField(url, { url = it.trim() }, keyboard = androidx.compose.ui.text.input.KeyboardType.Uri) }
             val userField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Username"); NickField(user, { user = it }) } }
             val passField: @Composable (Modifier) -> Unit = { m -> Column(m) { FieldLabel("Password"); NickField(pass, { pass = it }, password = true, placeholder = if (initial != null) "••••••••" else "") } }

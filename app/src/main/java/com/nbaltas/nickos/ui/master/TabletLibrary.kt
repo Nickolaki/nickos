@@ -171,13 +171,16 @@ fun TabletLibrary(nodeId: String, v: NodeView, onPlayed: () -> Unit, onSettings:
         val count = if (segment == 0) visible.size else visible.mapNotNull { it.episode?.show?.lowercase() }.distinct().size
         ParentContentCap { i ->
             Column(Modifier.fillMaxSize().padding(top = TabletParentMetrics.contentTop), verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) {
-                EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1))
                 // The source choice (when Jellyfin is set up) and the categories are separate groups: side by side from I = 960, stacked below.
                 val source: @Composable () -> Unit = { if (jfAccount != null) TabletSourceControl(false) { jf -> legacy = jf } }
                 val categories: @Composable () -> Unit = { Segmented(listOf("Movies" to null, "Shows" to null), segment, { segment = it }) }
                 if (i.value >= 960f) Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) { source(); categories() }
                 else Column(verticalArrangement = Arrangement.spacedBy(TabletParentMetrics.relatedGap)) { source(); categories() }
-                Muted("$count on ${v.node.name}", 14)
+                // Below the controls, so the source control sits at the same y as in Jellyfin mode.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                    Muted("$count on ${v.node.name}", 14)
+                    EyebrowText(TogetherText.libraryHeader(Library.movies(mine).size, videosMap[nodeId]?.free ?: -1))
+                }
                 if (visible.isEmpty()) {
                     Box(Modifier.weight(1f)) {
                         CenterMessage(

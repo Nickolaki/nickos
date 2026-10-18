@@ -967,17 +967,12 @@ private fun EpisodeRow(
                     }
                 }
             }
-            when {
-                e.inProgress -> Chip(height = TabletParentMetrics.minTarget, bg = C.accent) {
-                    Icon(Solid.Play, null, tint = C.onAccent, modifier = Modifier.size(14.dp))
-                    Text("Resume", style = body(16.sp, 700, 1.25f), color = C.onAccent)
-                }
-                e.played -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Lucide.Check, null, tint = C.muted, modifier = Modifier.size(18.dp))
-                    Text("Watched", style = body(14.sp, 600, 20f / 14), color = C.muted)
-                }
-                else -> Box(Modifier.size(TabletParentMetrics.minTarget).clip(CircleShape).background(C.surface2), contentAlignment = Alignment.Center) {
-                    Icon(Solid.Play, "Play", tint = C.text, modifier = Modifier.size(18.dp))
+            // One fixed 48dp slot at the end, so the save button before it sits in the same column on every row.
+            Box(Modifier.size(TabletParentMetrics.minTarget).clip(CircleShape).background(if (e.inProgress) C.accent else C.surface2), contentAlignment = Alignment.Center) {
+                when {
+                    e.inProgress -> Icon(Solid.Play, "Resume", tint = C.onAccent, modifier = Modifier.size(18.dp))
+                    e.played -> Icon(Lucide.Check, "Watched", tint = C.muted, modifier = Modifier.size(TabletParentMetrics.iconSize))
+                    else -> Icon(Solid.Play, "Play", tint = C.text, modifier = Modifier.size(18.dp))
                 }
             }
         }

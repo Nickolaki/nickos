@@ -1045,6 +1045,22 @@ class DesignScreensTest {
     @Test fun controlWatch() = jellyfinShot("Control-Watch", null, "Continue Watching")
     @Test fun controlMovie() = jellyfinShot("Control-Movie", "Captain Comet", "Play from start")
     @Test fun controlSeries() = jellyfinShot("Control-Series", "Star Harbour", "Fog Horn")
+    /** Jellyfin in Together needs no local-video access: with it denied, the Jellyfin browser shows, not the permission prompt. */
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Test fun togetherJellyfinWithoutVideoPermission() {
+        val server = fakeJellyfin()
+        try {
+            app.store.setJellyfin(JellyfinAccount("http://127.0.0.1:${server.localPort}", "dad", "tok", "u1", true))
+            Shadows.shadowOf(app).denyPermissions(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_EXTERNAL_STORAGE)
+            androidx.compose.ui.test.runAndroidComposeUiTest<androidx.activity.ComponentActivity> {
+                setContent { NickTheme { Box(Modifier.fillMaxSize().background(C.bg)) { ParentLayoutProvider { TogetherScreen({}, {}, initialSegment = 2) } } } }
+                fun has(t: String) = onAllNodes(hasText(t, substring = true)).fetchSemanticsNodes().isNotEmpty()
+                waitUntil(timeoutMillis = 20_000) { has("Continue Watching") }
+                org.junit.Assert.assertFalse(has("Let NickOS see your videos"))
+            }
+        } finally { server.close() }
+    }
+
     @Test fun nodeBedtime() { nodeSeed(); shot("Node-Bedtime") { kidHome(); BedtimeToastAtBottom(300) } }
 
     // ---- car network (F2B revised) ----

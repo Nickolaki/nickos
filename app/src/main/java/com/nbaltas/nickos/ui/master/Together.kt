@@ -336,13 +336,14 @@ fun TogetherScreen(onBack: () -> Unit, onSettings: (Int) -> Unit, initialSegment
         val scanningCount = scanning.size
 
         when {
-            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this ${selfNoun(phone)} are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
-                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
-            }
+            // Jellyfin needs no local-video access, so it is decided before the permission prompt.
             segment == 2 && jf == null -> CenterMessage("Connect Jellyfin", "Add your Jellyfin server in Settings to pick a movie or show and watch it together.") {
                 NickButton("Open Settings", { onSettings(1) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
             }
             segment == 2 -> JellyfinBrowser(jf!!, jfAccount!!.userId, "together", null, onPick = { openJf = it })
+            !selfPerm -> CenterMessage("Let NickOS see your videos", "Movies on this ${selfNoun(phone)} are what you send to the kids' tablets. Allow video access once.", titleLines = 3) {
+                NickButton("Allow videos on this ${selfNoun(phone)}", { videosLauncher.launch(LocalVideos.permissions().toTypedArray()) }, fullOnPhone(), style = BtnStyle.PRIMARY, big = bigButtons())
+            }
             onlineNodes.isEmpty() && selfHasNone -> CenterMessage("No tablets online", "Turn the kids' tablets on and connect them to this WiFi. Movies on them, and on this ${selfNoun(phone)}, show up here.") {
                 NickButton("All tablets", onBack, fullOnPhone(), style = BtnStyle.GHOST, big = bigButtons())
             }
