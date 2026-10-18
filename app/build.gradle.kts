@@ -22,8 +22,8 @@ android {
         applicationId = "com.nbaltas.nickos"
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.13"
+        versionCode = 14
+        versionName = "0.14"
 
         // Public NickOS update track on nickflix-config (see its nickos.js). Overridable for a
         // friend's own server via local.properties.
