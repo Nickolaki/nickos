@@ -1404,6 +1404,22 @@ class DesignScreensTest {
     @Config(qualifiers = "w1024dp-h768dp-land-mdpi")
     @Test fun camerasTapoStates1024() = camerasTapoStates()
 
+    /** The same two failure tiles at 960x600 with the system font at 1.5: the short tiles show the whole recovery text. */
+    @Config(qualifiers = "w960dp-h600dp-land-mdpi")
+    @Test fun camerasTapoStates960Font150() {
+        seedCams()
+        cams(setOf(CH), mapOf(CH to camLive()))
+        camPicture(CH, camBlue.first, camBlue.second)
+        tapo("baby", "Baby cam", "192.168.49.23")
+        tapo("nursery", "Nursery", "192.168.49.24")
+        tabletFont("Cameras-Tapo-States-960x600-font150", 1.5f) {
+            CamerasScreen(
+                {}, {}, live = false,
+                rtspPreset = mapOf("baby" to com.nbaltas.nickos.cam.RtspNews.UNREACHABLE, "nursery" to com.nbaltas.nickos.cam.RtspNews.WRONG_PASSWORD),
+            )
+        }
+    }
+
     private fun camerasAdd() {
         seedCams()
         shot("Cameras-Add-${sizeTag()}") {

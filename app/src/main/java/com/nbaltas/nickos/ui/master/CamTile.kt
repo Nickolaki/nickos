@@ -226,12 +226,13 @@ private fun Placeholder(
     Column(
         // A strip tile is short: keep clear of the name label along its bottom edge.
         modifier.padding(start = 16.dp, end = 16.dp, top = if (clearOfEdit) 60.dp else if (compact) 8.dp else 16.dp, bottom = if (compact) 44.dp else 16.dp).widthIn(max = 360.dp)
-            .then(if (tab && actionable) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+            .then(if (tab && (actionable || clearOfEdit)) Modifier.verticalScroll(rememberScrollState()) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp),
     ) {
         // Tablet parent: a 40 avatar or glyph in every size.
         if (tablet != null) Avatar(tablet.name, tablet.color, tablet.avatar, if (compact || tab) 40.dp else 72.dp)
-        else Icon(if (news.isFailure()) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (tab) 40.dp else if (compact) 28.dp else 44.dp))
+        // A short failure tile with the pencil: the words get the room, so no glyph (name label and pencil stay).
+        else if (!(tab && clearOfEdit)) Icon(if (news.isFailure()) Lucide.VideoOff else Lucide.Cctv, null, tint = C.muted, modifier = Modifier.size(if (tab) 40.dp else if (compact) 28.dp else 44.dp))
 
         val text = when {
             tablet != null -> CamText.tile(display, tablet.name, minutes)
@@ -247,6 +248,7 @@ private fun Placeholder(
                     if (phone) Box(Modifier.padding(top = 4.dp)) { PulseDot(live) } else PulseDot(live)
                 }
                 if (phone) Box(Modifier.weight(1f, fill = false)) { Words(text, 14, 4) }
+                else if (tab && clearOfEdit) Words(text, 14, Int.MAX_VALUE, 20f / 14)
                 else Words(text, if (compact) 14 else 18, if (compact) 2 else 3)
             }
         }
